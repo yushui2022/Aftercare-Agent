@@ -2,6 +2,8 @@
 
 核实日期：2026-09-06。用于跨境电商售后 Agent 的设计参考，非已上线系统或实测报告。以下项目事实与架构建议分开陈述。
 
+选型补充：当前优先评估 EGM 承担案件证据准入，Letta 与 TencentDB Agent Memory 保留为长期上下文与经验管理候选。见 [EGM 接入决策](../decisions/0001-evidence-gated-memory.md)及[代码验证记录](evidence-gated-memory.md)；并非计划把三套记忆运行时同时接入。
+
 ## 1. ACP：交互协议，不是任务队列
 
 此处 ACP 专指 **Agent Client Protocol**。官方定位是编辑器／客户端与 Agent 的互操作协议，不是 Agent Communication Protocol，也不是消息中间件。自建售后平台只有在需要接入 ACP 兼容客户端／运行时时才有采用价值，并非企业级 Agent 必备组件。后一句为结合协议范围的架构判断。[官方介绍](https://agentclientprotocol.com/get-started/introduction)
@@ -34,12 +36,21 @@ Archival memory 是按需检索的长期存储；Agent 可以通过工具插入�
 
 WeKnora 是另一套知识平台，不能因为同属腾讯，就当成上述 Agent Memory 项目。[WeKnora](https://github.com/Tencent/WeKnora)
 
-## 3. 售后系统的数据边界（设计建议）
+## 3. EGM 的位置不同于一般偏好记忆
+
+EGM 已实现证据引用、门控、时效与事实血缘，可用于限制当前案件中缺乏支持的结论；其 Fact 是通过特定规则的数据对象，不等于完整业务真值证明。
+
+修复前 a16e3de 的退款门控没有验证回执正文成功状态或订单相等关系，task_id 也未过滤长期记忆。随后本地 0.5.0 源码已增加原始 JSON 契约、任务来源链过滤与租户/工单隔离的 HTTP 服务。来源认证仍依赖可信连接器；task_id 过滤不是 Python 库的 ACL，不能用 Prompt 代替服务权限。新旧版本边界见[服务接入记录](../integrations/egm-service.md)。
+
+Aftercare 的适配层应优先实现来源认证、对象绑定、响应语义与访问范围校验，再将核验后的证据导入 EGM。EGM 只作受控、可重建的案件解释投影；审批、操作台账、租约与持久调度仍由 Aftercare 负责。
+
+## 4. 售后系统的数据边界（设计建议）
 
 | 数据 | 示例与责任 |
 |---|---|
 | 业务事实库 | 订单状态、退款金额、承运商回执；由权威系统与事务记录确认 |
 | 执行 checkpoint | 当前步骤、待审核动作、幂等键、已完成调用；用于决定从哪里继续 |
+| 证据准入与解释图 | EGM 的 Evidence、Claim、Fact、TaskGraph；用于检查声明的证据条件，不替代业务事实与执行权 |
 | Agent memory | 客户语言偏好、审核过的处理经验、历史案件摘要；用于减少重复调查 |
 | 本轮上下文 | 当前 prompt 中实际装入的事实、消息和检索片段；受 Token 上限约束 |
 

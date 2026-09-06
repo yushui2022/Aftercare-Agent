@@ -8,7 +8,7 @@
 
 2026-09-06 随后的 EGM 0.5.0 本地源码升级已修复以下路径：失败回执与错误订单被 JSON 契约拒绝；task_id 限制 Facts 和 L1/L2/L3 来源链；增加受认证的租户/工单 HTTP 边界、原子事务、幂等回执与 revision 检查。原始探针与 True/True 结果保留，**仅代表 a16e3de 修复前行为，不代表新源码**。
 
-新实现、验收测试路径和部署限制见[服务接入记录](../integrations/egm-service.md)。新源码尚未发布/推送，Aftercare 运行时仍未实现。EGM 仍不验证任意自然语言真值、外部签名、审批或退款幂等，也未实现 PostgreSQL 多机后端。下文的“当前”“本次”均指上面的固定历史提交。
+0.5 修复记录见[服务接入记录](../integrations/egm-service.md)；后续 0.6 已实现共享应用层、PostgreSQL 后端和 Aftercare 证据 Adapter，见[嵌入式接入](../integrations/egm-embedded.md)。EGM 仍不验证任意自然语言真值、外部签名、审批或退款幂等，完整 Aftercare 运行时未完成。下文的“当前”“本次”均指上面的固定历史提交。
 
 ## 1. 总结：有用，但需要准确定位
 

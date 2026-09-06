@@ -1,5 +1,9 @@
 # Aftercare 接入 EGM 0.5.0：服务契约与验收
 
+> 历史版本记录：下面的“当前/尚未”及 269 项测试对应 0.5，不是最新实现状态。
+> 0.6 已实现共享应用层、PostgreSQL 后端和 Aftercare 证据 Adapter，默认改为进程内
+> 调用；HTTP 仍兼容。最新架构与限制见[嵌入式接入](egm-embedded.md)。
+
 更新日期：2026-09-06。本次实现位于独立的 Evidence-Gated-Memory 本地源码工作树，目标版本 0.5.0，尚未发布或推送。本仓库仍是 Aftercare 架构文档，没有因此自动获得完整售后运行时、PostgreSQL Adapter 或生产部署。
 
 ## 1. 修复了哪些问题

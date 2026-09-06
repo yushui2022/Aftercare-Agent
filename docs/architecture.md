@@ -2,7 +2,7 @@
 
 > 本文是一套参考架构，不是某家公司的生产系统复盘。产品与协议资料核查于 2026 年 9 月 6 日；文中的容量、超时和业务数据均为说明方法的假设，不是压测结果。涉及退款、补发或对外承诺的动作，必须遵守企业实际权限与审批制度。
 
-本版包含 Evidence-Gated-Memory（EGM）的修复前评估与后续源码升级：当前本地 0.5.0 已支持严格回执契约、上下文隔离、原子存储与受限 HTTP 服务，尚未发布，也未完成 Aftercare 运行时。接入边界见 [ADR-0001](decisions/0001-evidence-gated-memory.md)与[服务接入验收](integrations/egm-service.md)，历史反例见[验证记录](research/evidence-gated-memory.md)。
+本版包含 Evidence-Gated-Memory（EGM）的修复前评估与后续源码升级：0.6 已实现嵌入式应用层、共享 PostgreSQL 后端和可选 HTTP；Aftercare 已有可执行的受限证据适配层，但完整业务运行时未完成，也没有生产验收。当前边界见 [ADR-0002](decisions/0002-embedded-egm.md)与[嵌入式接入](integrations/egm-embedded.md)，历史反例见[验证记录](research/evidence-gated-memory.md)。
 
 很多 Agent Demo 的核心只有几十行：读取用户消息，调用模型，执行工具，把结果交给模型，再循环一次。
 
@@ -792,7 +792,7 @@ Evidence-Gated-Memory 不只提供 add / search。它把原始证据、候选结
 
 例如买家陈述、承运商签收记录和订单系统状态可以并存。系统不应把“买家报告未收到”升级成“承运商确认丢失”，也不应因为有一份 API 响应，就认为退款完成。
 
-因此，本项目采用 **受控 Evidence Adapter + EGM HTTP 服务** 验证证据准入与上下文结构。服务按租户/工单隔离，仍不替代业务数据库；Aftercare Adapter 与业务运行时尚待实现。
+因此，本项目默认采用 **受控 Evidence Adapter + Worker 内嵌 EGM 应用层 + 共享 PostgreSQL**。代码包独立不意味着必须另起微服务；HTTP 是同一应用层的可选入口。Aftercare 的退款证据 Adapter 已实现，完整业务运行时仍待实现；EGM 始终不替代业务台账。
 
 ### 15.2 结构门控不是业务真值验证
 
@@ -832,9 +832,9 @@ PostgreSQL 中的 Case / Run / Action 保持权威。EGM TaskGraph 只解释调�
 
 ### 15.4 EGM 的并发与持久化边界
 
-0.5.0 服务按租户/Case 建立独立 SQLite workspace；同宿主多个服务 Worker 经 HTTP 操作，每个请求独立连接，同工单当前读写均事务串行。新原文、索引、审计与幂等回执在 SQLite 内原子提交，refs/JSONL 为可恢复投影。schema 指纹拒绝悄悄更换策略，operation_id 支持原样重放，expected_revision 防止覆盖并发新状态。它尚无 PostgreSQL 后端或多节点高可用。
+0.6 将权限、schema 指纹、operation_id 幂等、expected_revision 和审计放在公共 EvidenceApplication，而不只放在 HTTP 层。SQLite 保留给本地使用；PostgreSQL 用 tenant/case 范围的对象行保存证据、图、原文和操作回执。每个操作在短事务内锁定当前工单，不同工单可以并发；当前同工单读取也会串行。模型、工具调用和等待不在数据库事务内。共享 PostgreSQL 不等于已经配置多节点高可用。
 
-PostgreSQL 与 EGM 不共享事务。应先持久保存来源事件与证据，再通过可重试的 Adapter 导入，维护对象映射和投影版本。只有权威输入、策略与映射都可靠保存并验证可重建，才可以把 EGM workspace 当作可重建投影。
+默认 EGM 调用自行提交，HTTP 也不会自动共享业务事务。若无法共享事务，应先持久保存来源事件与 Outbox，再可重试导入并维护对象映射和投影版本。嵌入式 PostgreSQL 接入可以显式 join 业务正在使用的同一个连接和外层事务，使业务写入与 EGM 投影一起提交；外层提交前不能 ACK 或发布成功。只有权威输入、策略与映射可靠保存并验证可重建，才可以把 EGM 数据当作可重建投影。这仍不使外部付款 API 成为本地事务的一部分。
 
 回放保留原始观察时间，不以重建时间刷新 TTL。投影滞后时高风险决策等待或转人工。业务 Worker 经服务访问，不直接竞争裸数据库；EGM revision 不是 Aftercare fencing，旧 Worker 是否仍有业务执行权必须由网关核验。详细边界见 [ADR-0001](decisions/0001-evidence-gated-memory.md)。
 

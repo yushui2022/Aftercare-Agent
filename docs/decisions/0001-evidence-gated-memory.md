@@ -1,6 +1,6 @@
 # ADR-0001：有条件采用 Evidence-Gated-Memory 作为证据准入组件
 
-状态：有条件采用；EGM 独立源码已完成 0.5.0 回执门控与服务化升级，尚未发布/推送，Aftercare 业务运行代码仍未接入。生产准入未通过。
+状态：有条件采用，生产准入未通过。本文保留修复前评估和 0.5 HTTP-first 决策历史；其部署默认值及“Adapter/PostgreSQL 后端未实现”等状态已由 [ADR-0002](0002-embedded-egm.md) 和 [0.6 嵌入式接入](../integrations/egm-embedded.md) 取代。业务权威、来源认证和高风险动作限制继续有效。
 
 评估日期：2026-09-06。
 

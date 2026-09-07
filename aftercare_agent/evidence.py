@@ -3,14 +3,34 @@
 Only expose propose_completion/context to model tools. Registration and receipt
 ingestion belong to the trusted business orchestrator and provider connector.
 """
-from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
+from typing import TypedDict, cast
+
 from evidence_gated_memory.application import EvidenceApplication, Principal
+from pydantic import BaseModel, ConfigDict, Field
+
+type JsonValue = dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None
+
+
+class EvidenceWriteResponse(TypedDict):
+    """EGM's committed write envelope (tentative inside a joined transaction)."""
+
+    revision: int
+    operation_id: str
+    result: dict[str, JsonValue]
+
+
+class EvidenceContextResponse(TypedDict):
+    """Authorized context, not the complete business checkpoint."""
+
+    revision: int
+    context: str
 
 
 class RefundIntent(BaseModel):
     """Expected action copied from the ledger, not proof of authorization."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
     order_id: str = Field(min_length=1, max_length=160)
     action_id: str = Field(min_length=1, max_length=160)
@@ -19,8 +39,15 @@ class RefundIntent(BaseModel):
 
 
 class AftercareEvidence:
-    def __init__(self, application: EvidenceApplication, case_id: str, *,
-                 orchestrator: Principal, connector: Principal, model_tools: Principal):
+    def __init__(
+        self,
+        application: EvidenceApplication,
+        case_id: str,
+        *,
+        orchestrator: Principal,
+        connector: Principal,
+        model_tools: Principal,
+    ) -> None:
         if len({p.tenant_id for p in (orchestrator, connector, model_tools)}) != 1:
             raise ValueError("all roles must belong to the same authenticated tenant")
         if not model_tools.permissions <= {"context:read", "claim:write"}:
@@ -31,31 +58,73 @@ class AftercareEvidence:
         self.connector = connector
         self.model_tools = model_tools
 
-    def register_refund(self, intent: RefundIntent, *, operation_id: str, expected_revision: int):
-        return self.application.create_node(self.orchestrator, self.case_id, {
-            "operation_id": operation_id, "expected_revision": expected_revision,
-            "node_type": "refund_completion", "title": "Verify expected refund receipt",
-            "anchors": intent.model_dump(),
-        })
+    def register_refund(
+        self, intent: RefundIntent, *, operation_id: str, expected_revision: int
+    ) -> EvidenceWriteResponse:
+        # EGM 0.6 has unannotated returns. Keep its JSON boundary local; regression
+        # tests exercise these envelopes. A cast does not validate or authorize data.
+        return cast(
+            EvidenceWriteResponse,
+            self.application.create_node(
+                self.orchestrator,
+                self.case_id,
+                {
+                    "operation_id": operation_id,
+                    "expected_revision": expected_revision,
+                    "node_type": "refund_completion",
+                    "title": "Verify expected refund receipt",
+                    "anchors": intent.model_dump(),
+                },
+            ),
+        )
 
-    def ingest_receipt(self, node_id: str, raw_normalized_json: str, observed_at: datetime,
-                       *, operation_id: str, expected_revision: int):
-        return self.application.ingest(self.connector, self.case_id, {
-            "operation_id": operation_id, "expected_revision": expected_revision,
-            "node_id": node_id, "evidence_type": "refund_api_response",
-            "source_system": "refund_api", "observed_at": observed_at,
-            "content": raw_normalized_json,
-        })
+    def ingest_receipt(
+        self,
+        node_id: str,
+        raw_normalized_json: str,
+        observed_at: datetime,
+        *,
+        operation_id: str,
+        expected_revision: int,
+    ) -> EvidenceWriteResponse:
+        return cast(
+            EvidenceWriteResponse,
+            self.application.ingest(
+                self.connector,
+                self.case_id,
+                {
+                    "operation_id": operation_id,
+                    "expected_revision": expected_revision,
+                    "node_id": node_id,
+                    "evidence_type": "refund_api_response",
+                    "source_system": "refund_api",
+                    "observed_at": observed_at,
+                    "content": raw_normalized_json,
+                },
+            ),
+        )
 
-    def propose_completion(self, node_id: str, evidence_refs: list[str], *,
-                           operation_id: str, expected_revision: int):
+    def propose_completion(
+        self, node_id: str, evidence_refs: list[str], *, operation_id: str, expected_revision: int
+    ) -> EvidenceWriteResponse:
         # No model-authored order, amount, success status or free-form fact text.
-        return self.application.assert_fact(self.model_tools, self.case_id, {
-            "operation_id": operation_id, "expected_revision": expected_revision,
-            "node_id": node_id, "claim_type": "refund_completed",
-            "text": "The expected refund has a matching successful receipt.",
-            "evidence_refs": evidence_refs,
-        })
+        return cast(
+            EvidenceWriteResponse,
+            self.application.assert_fact(
+                self.model_tools,
+                self.case_id,
+                {
+                    "operation_id": operation_id,
+                    "expected_revision": expected_revision,
+                    "node_id": node_id,
+                    "claim_type": "refund_completed",
+                    "text": "The expected refund has a matching successful receipt.",
+                    "evidence_refs": evidence_refs,
+                },
+            ),
+        )
 
-    def context(self):
-        return self.application.context(self.model_tools, self.case_id)
+    def context(self) -> EvidenceContextResponse:
+        return cast(
+            EvidenceContextResponse, self.application.context(self.model_tools, self.case_id)
+        )

@@ -4,7 +4,7 @@
 
 An after-sales agent architecture blueprint exploring durable workflows, sandboxed execution, and multi-tenant concurrency.
 
-> 当前阶段：参考架构 + 可执行 EGM 证据适配层。完整 Agent 服务、真实售后连接器、生产部署和性能压测仍未完成。
+> 当前能力：参考架构 + 可安装的 EGM 证据适配层。Python 版本、依赖锁和离线测试入口已建立；完整 Agent 服务、真实售后连接器、生产部署和性能压测仍未完成。
 
 ## 要解决什么问题
 
@@ -23,6 +23,14 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 
 | 文档 | 内容 |
 |---|---|
+| [当前工程状态与接手点](docs/project-status.md) | 压缩/换会话后先读：真实基线、任务状态、验证、未提交变化和下一步 |
+| [工程执行计划](docs/engineering-plan.md) | 稳定任务 ID、A0–A3/B/C/D 依赖、目标模块和验收条件 |
+| [技术栈与工程约定](docs/tech-stack.md) | Python/TypeScript/SQL、版本锁定、目录、测试和部署策略 |
+| [本地开发、测试与打包](docs/development.md) | 当前可执行的 uv 安装、质量检查、sdist/wheel 和仓库外安装验收 |
+| [运行时契约 v1](docs/contracts/runtime-v1.md) | 身份、Case/Run、执行权、检查点、工具请求、等待和事件的纯规则；数据库执行仍待实现 |
+| [调查证据契约 v1](docs/contracts/investigation-v1.md) | 订单/物流/买家陈述、可信来源、证据新鲜度、引用和人审边界；尚未接入 EGM 调查投影 |
+| [Agent 执行与恢复规则](AGENTS.md) | 恢复阅读顺序、状态维护和授权/安全边界 |
+| [工程总设计与 Mermaid 架构图](docs/system-design.md) | 下一步怎样建设：部署、Session/Run、并发、持久事件、沙箱、记忆与 API；区分已实现和目标设计 |
 | [完整技术文章](docs/architecture.md) | 从 Demo 到企业级：跨境电商售后 Agent 的并发、沙箱与故障恢复设计 |
 | [实现路线图](ROADMAP.md) | 分阶段目标、交付边界与验收条件 |
 | [EGM 0.6 嵌入式接入](docs/integrations/egm-embedded.md) | 当前默认方案：Worker 内嵌应用层、共享 PostgreSQL、事务和并发验证 |
@@ -56,6 +64,8 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 
 EGM 0.6 源码支持 Worker 内嵌 EvidenceApplication：HTTP 只是可选入口，权限、对象绑定、幂等、revision 与审计不再依赖单独部署服务。多机 Worker 共享 PostgreSQL；同工单短事务串行，不同工单可以并发。Aftercare 已实现 aftercare_agent/evidence.py 的受控退款证据适配层及合成回执测试。它不执行真实退款；业务来源认证、审批、租约与外部动作幂等仍需实现。源码版本尚未发布 PyPI。
 
+aftercare_agent/domain 已提供运行时与调查的 v1 类型、输入校验和确定性规则。它们能验证合法状态、引用和候选决策，但不执行数据库事务、创建 Worker 或调用模型；真正的多进程执行权、恢复与 EGM 调查接入仍按后续阶段实现。
+
 详细取舍、API 协议对比及故障处理见[技术文章](docs/architecture.md)。
 
 ## 边界
@@ -67,14 +77,21 @@ EGM 0.6 源码支持 Worker 内嵌 EvidenceApplication：HTTP 只是可选入口
 - 文档中的数量与超时是说明方法的假设，不是推荐生产参数或实测结果。
 - EGM 测试和本仓库适配层测试不代表完整 Aftercare 服务已实现或通过生产验收。
 
-## 本地阅读
+## 本地阅读与开发
 
 ~~~bash
 git clone git@github.com:yushui2022/Aftercare-Agent.git
 cd Aftercare-Agent
 ~~~
 
-阅读文档不需要安装依赖。运行离线适配层测试也不需要模型 API Key，安装与测试步骤见[嵌入式接入](docs/integrations/egm-embedded.md)。目前没有完整业务服务的启动命令。
+阅读文档不需要安装依赖。准备 Python 3.13.15、uv 和 Git 后，在仓库根目录运行：
+
+~~~bash
+uv sync --locked
+uv run --locked pytest -q
+~~~
+
+依赖从 uv.lock 安装，EGM 固定为审核过的 Git 提交，无需并排克隆。首次安装需要网络；测试本身不需要模型 API Key 或真实业务凭证。Windows 的 G 盘缓存配置、解释器安装、Ruff/mypy 与打包验收见[开发指南](docs/development.md)，适配器用法见[嵌入式接入](docs/integrations/egm-embedded.md)。目前没有完整业务服务的启动命令。
 
 ## 参与与许可
 

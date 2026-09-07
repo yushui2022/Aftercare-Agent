@@ -21,7 +21,9 @@
 
 ## 后续代码
 
-证据适配层使用 Python；完整业务运行时的框架尚未确定。引入实现时，应同时提供最小运行说明、必要配置示例、测试及明确的功能边界；配置示例不得包含有效凭证。现有适配层测试步骤见 docs/integrations/egm-embedded.md。
+目标技术栈已确定为 Python/FastAPI/psycopg/PostgreSQL，工作台使用 TypeScript/React/Vite；这些选择不表示完整服务已经实现。精确版本与边界见[技术栈](docs/tech-stack.md)。引入实现时，应同时提供最小运行说明、必要配置示例、测试及明确的功能边界；配置示例不得包含有效凭证。现有安装、Ruff/mypy、测试和打包步骤见[开发指南](docs/development.md)，适配器用法见[嵌入式接入](docs/integrations/egm-embedded.md)。修改依赖要同步评审 uv.lock，不用相邻 EGM 的 editable 安装冒充固定提交验收。
+
+接手先读 [AGENTS.md](AGENTS.md) 和[状态台账](docs/project-status.md)，按[执行计划](docs/engineering-plan.md)的任务 ID 限定范围。计划记录交付与验收，只有状态台账记录完成情况；未运行验证不得标成通过。架构决策、实现、提交、推送和部署分别说明，不能互相推断。
 
 涉及外部副作用的测试应默认使用模拟服务，并覆盖重复投递、未知结果、旧执行者恢复和等待注册竞态。
 

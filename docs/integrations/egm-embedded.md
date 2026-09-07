@@ -1,6 +1,6 @@
 # EGM 0.6：服务于 Aftercare 的嵌入式证据模块
 
-更新日期：2026-09-06。EGM 0.6 为源码版本，尚未发布 PyPI。本仓库已有可执行证据
+更新日期：2026-09-07。EGM 0.6 为源码版本，尚未发布 PyPI。本仓库已有可执行证据
 适配层，不是完整售后平台；本页说明已实现能力及尚未完成的生产条件。
 
 ## 1. 默认架构
@@ -42,20 +42,24 @@ Principal 的身份来自已认证请求/调度，不来自模型参数。
 
 ## 3. 本地安装与运行
 
-将 Aftercare-Agent 与经过审核的 Evidence-Gated-Memory 源码并排放置，EGM 必须包含
-0.6 的 application 和 PostgreSQL 实现。本次验收基线为 EGM 提交
-`9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd`（本地 Git 提交；发布/推送状态需另行核实）。
-部署时使用这一确切提交或另行审核的版本，不使用浮动 main。
-在 Aftercare-Agent 根目录、所选虚拟环境中执行：
+默认不再要求并排克隆或 editable 安装 EGM。Aftercare 的 pyproject/uv.lock 固定 EGM
+提交 `9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd`，包含 0.6 的 application 和
+PostgreSQL 实现，只启用 postgres extra，不带入 EGM 的 dev/server extras。
+准备 Python 3.13.15、uv 和 Git，在 Aftercare-Agent 根目录执行：
 
 ```sh
-python -m pip install -e '../Evidence-Gated-Memory[dev,postgres]'
-python -m pytest tests -q
+uv sync --locked
+uv run --locked pytest -q
 ```
 
-不需要模型 API Key 或真实退款凭证。tests/test_evidence_adapter.py 使用合成回执与
+首次安装需要网络，不需要模型 API Key 或真实退款凭证。tests/test_evidence_adapter.py 使用合成回执与
 本地 SQLite，验证成功回执准入、失败回执拒绝、固定声明、角色分离与幂等重放。
 PostgreSQL 的完整并发/故障测试位于 EGM 仓库，不把适配层回归说成生产压测。
+
+解释器、G 盘缓存、类型检查和非 editable 打包验收见[开发指南](../development.md)。
+tests/test_package_contract.py 另外核对固定 Git 来源、类型标记、schema 和迁移资源；
+它不会连接数据库。需要联调相邻 EGM 源码时使用单独环境，并记录偏离固定提交的事实；
+默认来源断言不接受该环境作为可复现安装验收。
 
 嵌入接线示例（身份仅示意，实际必须从认证层取得）：
 
@@ -76,7 +80,7 @@ adapter = AftercareEvidence(
 
 多机部署时将 provider 换为 PostgresProvider；显式迁移、连接工厂和宿主事务示例见
 [EGM 嵌入指南](https://github.com/yushui2022/Evidence-Gated-Memory/blob/9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd/docs/embedded.md)
-（需该提交已推送；未推送时直接读取并排源码的 docs/embedded.md）。
+（本轮锁定安装已从远端取得该提交；这不表示重新核验了远端 main 或 CI）。
 迁移凭证与运行凭证分离，配置可靠 search_path、TLS、连接池和超时；这些不是示例自动完成的。
 
 ## 4. 并发和恢复的实际含义
@@ -107,15 +111,20 @@ EGM 原子写入不等于支付 exactly-once。任务执行权、同订单跨工
 
 ## 6. 验证记录与尚未达成的目标
 
+以下 PostgreSQL 与全量 EGM 结果属于 **2026-09-06 的历史组件验收**，本轮打包任务未重跑：
+
 EGM 在隔离 PostgreSQL 17.11 实例上进行了真实多进程竞争、提交前后进程退出、
 重放、锁超时、跨工单独立进展、业务表与 EGM 外层事务一起回滚/提交的验证。
 两个存储后端均拒绝失败状态及租户、工单、订单、action、金额、币种错配的完成声明。
 EGM CI 增加 PostgreSQL 服务测试；本地验收不是远程 CI 通过声明。
 
-本地最终结果：EGM 全量 **303 passed、2 skipped、5 warnings，78.12 秒**；
+该次本地结果：EGM 全量 **303 passed、2 skipped、5 warnings，78.12 秒**；
 Aftercare 适配层 **4 passed，1.12 秒**。EGM 的两项跳过是 SQLite 参数下不适用的
 PG 专项断言，不是未运行 PG 后端；警告来自测试/打包依赖的弃用提示。
 环境为 Windows、Python 3.13.11、隔离 PostgreSQL 17.11，未使用真实业务凭证。
+
+当前 Python 包与安装验收另记于[状态台账](../project-status.md)，不能拿历史 303 项结果
+证明当前运行时或新的依赖组合已经通过 PostgreSQL 全量测试。
 
 未完成：真实供应商签名验证、完整 Case/Run/Action 运行时、审批和租约 fencing、
 生产部署、数据库 HA/恢复演练、RLS、保留/删除策略、业务压测与沙箱接入。

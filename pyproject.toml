@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools==84.0.0", "wheel==0.48.0", "packaging==26.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aftercare-agent"
+version = "0.1.0a0"
+description = "Trusted evidence integration for a planned durable after-sales agent."
+readme = "README.md"
+requires-python = ">=3.13.15,<3.14"
+dependencies = [
+    "evidence-gated-memory[postgres] @ git+https://github.com/yushui2022/Evidence-Gated-Memory.git@9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd",
+    "pydantic>=2,<3",
+]
+
+[project.urls]
+Repository = "https://github.com/yushui2022/Aftercare-Agent"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19,<2",
+    "pytest>=9,<10",
+    "pytest-asyncio>=1,<2",
+    "ruff>=0.14,<1",
+]
+
+[tool.setuptools.packages.find]
+include = ["aftercare_agent*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+aftercare_agent = ["py.typed"]
+
+[tool.uv]
+required-version = ">=0.9.26"
+build-constraint-dependencies = ["setuptools==84.0.0", "wheel==0.48.0", "packaging==26.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--import-mode=importlib", "-ra"]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+include = ["*.py", "*.pyi", "pyproject.toml"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.13"
+files = ["aftercare_agent", "tests"]
+strict = true
+plugins = ["pydantic.mypy"]
+follow_imports = "silent"
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true

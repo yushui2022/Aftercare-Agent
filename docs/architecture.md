@@ -4,6 +4,8 @@
 
 本版包含 Evidence-Gated-Memory（EGM）的修复前评估与后续源码升级：0.6 已实现嵌入式应用层、共享 PostgreSQL 后端和可选 HTTP；Aftercare 已有可执行的受限证据适配层，但完整业务运行时未完成，也没有生产验收。当前边界见 [ADR-0002](decisions/0002-embedded-egm.md)与[嵌入式接入](integrations/egm-embedded.md)，历史反例见[验证记录](research/evidence-gated-memory.md)。
 
+如果要直接看“下一步怎么建”，请先读[工程总设计与 Mermaid 架构图](system-design.md)：它把部署、Session/Run、持久等待、事件、沙箱、EGM 和模型接口落到模块与验收边界。本篇保留背景、原理与研究过程。
+
 很多 Agent Demo 的核心只有几十行：读取用户消息，调用模型，执行工具，把结果交给模型，再循环一次。
 
 这个循环并没有错。问题在于，当它接入真实企业业务之后，一次任务可能持续三天，中间有两次人工审批、一次供应商超时、三封重复投递的邮件，以及一台恰好在操作成功后崩溃的服务器。

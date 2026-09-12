@@ -15,7 +15,8 @@ From the repository root:
 docker compose -f deploy/compose/docker-compose.yml up --build
 ```
 
-The API listens on `http://localhost:8000`. A minimal local request needs the
+The API listens on `http://localhost:8000` (override the host port with
+`AFTERCARE_API_PORT` if it is already occupied). A minimal local request needs the
 `X-Synthetic-Tenant`, `X-Synthetic-Subject`, and `Idempotency-Key` headers. Stop
 and remove the development volume with:
 
@@ -39,6 +40,19 @@ queue to claim one runnable `READY`/due retry run (for the configured tenant,
 or fairly across tenants when it is empty) and exits with
 `{"status":"idle"}` when none exists. This remains a bounded poll; daemon
 mode is the long-running scheduler entry point.
+
+For a local daemon that shares one Worker pool across all tenants, leave
+`AFTERCARE_TENANT_ID` empty and set `AFTERCARE_WORKER_DAEMON=1`:
+
+```powershell
+$env:AFTERCARE_TENANT_ID = ""
+$env:AFTERCARE_WORKER_DAEMON = "1"
+docker compose -f deploy/compose/docker-compose.yml --profile worker up --build worker
+```
+
+The Worker waits for the API readiness probe, which ensures PostgreSQL
+migrations have completed before it starts polling. This remains development
+configuration; production should run migrations as a separately audited job.
 
 The volume contains only local synthetic data. Production deployment still
 needs real authentication, secret injection, backups, TLS, migrations policy,

@@ -25,7 +25,13 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "${AFTERCARE_API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   worker:
     profiles: [worker]
@@ -38,10 +44,12 @@ services:
       AFTERCARE_TENANT_ID: "${AFTERCARE_TENANT_ID:-}"
       AFTERCARE_RUN_ID: "${AFTERCARE_RUN_ID:-}"
       AFTERCARE_WORKER_ID: "${AFTERCARE_WORKER_ID:-worker-compose}"
+      AFTERCARE_WORKER_DAEMON: "${AFTERCARE_WORKER_DAEMON:-0}"
       AFTERCARE_MAX_STEPS: "${AFTERCARE_MAX_STEPS:-8}"
       AFTERCARE_LEASE_SECONDS: "${AFTERCARE_LEASE_SECONDS:-30}"
+      AFTERCARE_IDLE_SLEEP_SECONDS: "${AFTERCARE_IDLE_SLEEP_SECONDS:-1}"
     depends_on:
-      postgres:
+      api:
         condition: service_healthy
 
 volumes:

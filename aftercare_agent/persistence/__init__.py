@@ -1,7 +1,14 @@
 """PostgreSQL persistence primitives for the durable Aftercare runtime."""
 
 from .actions import ActionRepository
-from .admission import AdmissionRepository, AdmissionResult, CaseRepository
+from .admission import (
+    AdmissionRepository,
+    AdmissionResult,
+    CaseRepository,
+    RetryReservation,
+    ScheduledClaim,
+    SlotReservation,
+)
 from .db import Database, migrate
 from .events import EventRepository, OutboxDelivery
 from .projection import ProjectionIngestResult, ProjectionRepository
@@ -20,6 +27,9 @@ __all__ = [
     "ActionRepository",
     "AttemptRepository",
     "CaseRepository",
+    "RetryReservation",
+    "ScheduledClaim",
+    "SlotReservation",
     "CheckpointRepository",
     "Database",
     "EventRepository",

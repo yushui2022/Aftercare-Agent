@@ -11,7 +11,7 @@
 | 本轮请求范围 | 用户授权继续完善项目；完成 A1-02 API/auth、A1-03 Fake Harness，并推进 A1-04/A2 Worker、Wait 与 Outbox；当前已授权推送已验证提交 |
 | 当前任务 | A3-01 Responses 模型适配边界进行中 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | A2-02：完整故障注入；A3-02：模型调用预算与供应商重试策略 |
+| 下一项代码候选 | A2-03：公平队列调度与压测；A3-02：模型调用预算与供应商重试策略 |
 | 活跃实现任务 | Responses 严格解析与工具白名单；后续接入业务 Harness、沙箱和真实 provider |
 | 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
@@ -51,13 +51,14 @@
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
 | A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
 | A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 投影接口尚未实现 |
-| A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试已实现；真实 PostgreSQL 持久化套件 23 项、Worker loop 2 项及双 Worker 竞争 1 项通过；更完整故障注入仍待补齐 |
+| A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
+| A2-03 | IN PROGRESS | 新增 PostgreSQL 全局/租户执行槽、slot 租约心跳、释放与按 Run 幂等重试预算；真实 PostgreSQL 全量回归 268 项通过；持久公平队列表已建，跨租户调度策略和压测仍待补齐 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
-| A3-01 | IN PROGRESS | 新增严格 Responses wire parser 与 `ResponsesAdapter`：校验原生响应、usage、函数参数、工具白名单、托管工具事件和 provider 错误脱敏；229 项离线回归通过；尚未发起真实 provider 请求 |
+| A3-01 | IN PROGRESS | 新增严格 Responses wire parser 与 `ResponsesAdapter`：校验原生响应、usage、函数参数、工具白名单、托管工具事件和 provider 错误脱敏；离线回归通过；尚未发起真实 provider 请求 |
 
 ## 5. 工作区与提交边界
 
-本次待提交范围为 A3-01：Responses 适配器、严格边界测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本次待提交范围为 A2-02/A2-03：Worker 故障注入、PostgreSQL 执行槽/重试预算、测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
@@ -205,7 +206,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 A3-01：完成 Responses 适配边界后，补模型预算/重试策略，并回到 A2-02 完整故障注入与 A2-03 租户并发配额。A1-02 已完成最小 API/auth；真实 OIDC、SSE、完整业务 Harness 和生产连接器仍未实现。
+当前推进 A2-03：完成跨租户公平调度与压测后，补 A3-02 调查 EGM 接入和模型调用预算。A1-02 已完成最小 API/auth；真实 OIDC、SSE、完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 

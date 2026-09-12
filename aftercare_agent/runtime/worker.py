@@ -14,7 +14,13 @@ from threading import Event, Lock, Thread
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.protocol import Checkpoint
 from aftercare_agent.domain.runtime import ExecutionClaim
-from aftercare_agent.persistence import CheckpointRepository, Database, RunRepository
+from aftercare_agent.persistence import (
+    AdmissionRepository,
+    CheckpointRepository,
+    Database,
+    RunRepository,
+    SlotReservation,
+)
 
 from .harness import HarnessResult
 from .harness import run_fake_harness as run_fake_harness
@@ -111,6 +117,7 @@ class LeaseHeartbeat:
             try:
                 with self._database.transaction() as connection:
                     RunRepository().renew(connection, self._claim, self._lease)
+                    AdmissionRepository().renew_slot(connection, self._claim, self._lease)
             except Exception as exc:
                 with self._lock:
                     self._failure = exc
@@ -147,6 +154,7 @@ def _execute_claim(
     max_steps: int,
     lease: timedelta,
     heartbeat_interval: timedelta | None = None,
+    slot: SlotReservation | None = None,
 ) -> WorkerResult:
     _validate_steps(max_steps)
     heartbeat = LeaseHeartbeat(
@@ -177,6 +185,8 @@ def _execute_claim(
         # A bounded slice gives the execution right back so another Worker
         # can resume it without waiting for lease expiry.
         runs.transition(connection, claim, "COMPLETED" if result.completed else "READY")
+        if slot is not None:
+            AdmissionRepository().release_slot(connection, claim)
     return WorkerResult(
         tenant_id=claim.tenant_id,
         case_id=claim.case_id,
@@ -213,6 +223,7 @@ def run_once(
     checkpoints = CheckpointRepository()
     with database.transaction() as connection:
         claim = runs.claim(connection, tenant_id, run_id, owner, lease)
+        slot = AdmissionRepository().acquire_slot(connection, claim, lease)
         previous = checkpoints.get_latest(connection, tenant_id, run_id)
 
     return _execute_claim(
@@ -223,6 +234,7 @@ def run_once(
         max_steps=max_steps,
         lease=lease,
         heartbeat_interval=heartbeat_interval,
+        slot=slot,
     )
 
 
@@ -247,6 +259,7 @@ def run_next(
         claim = runs.claim_next(connection, tenant_id, owner, lease)
         if claim is None:
             return None
+        slot = AdmissionRepository().acquire_slot(connection, claim, lease)
         previous = checkpoints.get_latest(connection, tenant_id, claim.run_id)
     return _execute_claim(
         database,
@@ -256,6 +269,7 @@ def run_next(
         max_steps=max_steps,
         lease=lease,
         heartbeat_interval=heartbeat_interval,
+        slot=slot,
     )
 
 

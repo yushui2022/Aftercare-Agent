@@ -1,8 +1,10 @@
 """PostgreSQL integration tests; skipped unless DATABASE_URL points at a test DB."""
 
+import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from threading import Barrier
 
 import pytest
@@ -70,6 +72,24 @@ def test_claim_is_monotonic_and_old_owner_cannot_renew(db: Database) -> None:
         with pytest.raises(ContractViolation) as error:
             runs.renew(connection, first, timedelta(seconds=30))
         assert error.value.code is ErrorCode.LEASE_LOST
+
+
+def test_migrations_pin_and_reject_historical_sql_drift(db: Database) -> None:
+    with db.transaction() as connection:
+        original = connection.execute(
+            "SELECT checksum FROM aftercare_schema_migrations WHERE version=1"
+        ).fetchone()
+        assert original is not None and original[0] is not None
+        connection.execute(
+            "UPDATE aftercare_schema_migrations SET checksum=%s WHERE version=1", ("f" * 64,)
+        )
+        with pytest.raises(RuntimeError, match="migration checksum changed: 1"):
+            migrate(connection)
+        migration = Path("aftercare_agent/persistence/migrations/001_initial.sql")
+        checksum = hashlib.sha256(migration.read_bytes()).hexdigest()
+        connection.execute(
+            "UPDATE aftercare_schema_migrations SET checksum=%s WHERE version=1", (checksum,)
+        )
 
 
 def test_concurrent_claim_has_one_winner(db: Database) -> None:

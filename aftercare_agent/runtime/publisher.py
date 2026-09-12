@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Protocol
 
 from aftercare_agent.domain.events import DomainEvent
+from aftercare_agent.observability import Tracer
 from aftercare_agent.persistence import Database, EventRepository
 
 
@@ -25,9 +26,16 @@ class PublishResult:
 class OutboxPublisher:
     """Drain a bounded batch without holding a database transaction over I/O."""
 
-    def __init__(self, database: Database, *, events: EventRepository | None = None) -> None:
+    def __init__(
+        self,
+        database: Database,
+        *,
+        events: EventRepository | None = None,
+        tracer: Tracer | None = None,
+    ) -> None:
         self.database = database
         self.events = events or EventRepository()
+        self.tracer = tracer
 
     def publish_once(
         self,
@@ -48,7 +56,17 @@ class OutboxPublisher:
         retried = 0
         for delivery in deliveries:
             try:
-                publisher.publish(delivery.event)
+                if self.tracer is None:
+                    publisher.publish(delivery.event)
+                else:
+                    with self.tracer.span(
+                        "aftercare.outbox.publish",
+                        {
+                            "tenant_id": delivery.tenant_id,
+                            "event_type": delivery.event.event_type,
+                        },
+                    ):
+                        publisher.publish(delivery.event)
             except Exception as exc:
                 with self.database.transaction() as connection:
                     self.events.retry_outbox(

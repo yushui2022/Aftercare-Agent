@@ -38,13 +38,34 @@ ACK 是幂等的。进程在“外部发布成功、ACK 尚未提交”之间崩
 这是有意保留的 **at-least-once** 边界，消费端仍必须使用 Inbox/业务幂等键。
 
 `runtime.publisher.OutboxPublisher` 提供这一循环，`FakePublisher` 用于本地和
-PostgreSQL 集成测试。当前实现仍未包含 Broker 特定的分区/保留策略、乱序 gap
-buffer、SSE 投影和跨实例长驻调度；这些是后续任务。真实 Broker 连接器应只实现
-`EventPublisher.publish(event)`，不得把数据库连接或高权限凭据交给 Agent/沙箱。
+PostgreSQL 集成测试。真实 Broker 连接器应只实现 `EventPublisher.publish(event)`，
+不得把数据库连接或高权限凭据交给 Agent/沙箱。
+
+## Case 事件的 gap buffer 与投影水位
+
+迁移 `005_projection.sql` 增加三个按 `(tenant_id, case_id, consumer_id)` 隔离的表：
+
+- `aftercare_projection_positions` 保存每个消费者已经连续应用的 `last_case_seq`；
+- `aftercare_projection_applied` 保存完整 `DomainEvent`，并同时约束 event_id 和
+  case_seq 唯一，供重放和冲突检测使用；
+- `aftercare_projection_buffer` 暂存前方有缺口的事件，约束同一消费者不能有两个
+  相同 case_seq。
+
+`ProjectionRepository.ingest()` 在调用方短事务内锁定单个 position 行。下一连续序号
+直接写入 applied，并在同一事务中反复清空现在已连续的 buffer；跳过的序号只写入
+buffer，返回 `buffer_gap`，不能在这里确认消息已被业务应用。重复的完整事件返回
+`replay`；同一 event_id 换序号、同一序号换事件，或事件内容任何字段变化都会返回
+`conflict`。因此，先到 seq=42 再到 seq=41 不会倒退水位，也不会丢掉 42。
+
+这是一层持久的顺序账本，不是 SSE 或业务状态投影本身。业务投影更新、消费者应用
+标记和该水位应由调用方放在同一事务；SSE 只读取授权后的投影快照，并在后续阶段绑定
+租户、订阅范围和授权版本。不同 Case、租户或消费者各自锁定自己的 position，不会
+被全局锁串行化。外部 Broker 的分区、保留和重放策略仍由适配器负责。
 
 ## 验证
 
 真实 PostgreSQL 测试覆盖：迁移、Outbox replay、序列/身份冲突、Inbox replay、来源内容
 冲突、不同消费者独立去重，以及发布器的 SKIP LOCKED 竞争、租约接管、attempt fencing、
 退避重试、ACK 幂等、事务回滚和“发布后崩溃”重复交付。没有配置 `DATABASE_URL` 时测试
-安全跳过。
+安全跳过。ProjectionRepository 专测覆盖乱序 seq=2 先到、seq=1 到达后自动 drain、
+完整事件 replay、event_id/sequence 内容冲突、租户/消费者隔离和投影事务回滚。

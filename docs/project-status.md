@@ -9,10 +9,10 @@
 | 字段 | 值 |
 |---|---|
 | 本轮请求范围 | 用户授权继续完善项目；完成 A1-02 API/auth、A1-03 Fake Harness，并推进 A1-04/A2 Worker、Wait 与 Outbox；当前已授权推送已验证提交 |
-| 当前任务 | A2-02 Worker/Outbox 运行时增强进行中 |
-| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 原子基础已落地；A2-02 已加入心跳、常驻轮询和 Outbox 投递租约 |
-| 下一项代码候选 | A2-02：双 Worker 故障接管与租约 fencing 压测 |
-| 活跃实现任务 | A2-02：Worker 心跳/调度、Outbox 发布与 at-least-once 语义 |
+| 当前任务 | A2-02/B-01 运行时与动作账本增强进行中 |
+| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
+| 下一项代码候选 | A2-02：完整故障注入；A3-01：真实模型适配器门禁 |
+| 活跃实现任务 | Action Ledger 与事件投影验收；后续接入业务 Harness、模型和沙箱 |
 | 本轮外部行为 | 已将已验证提交 `5d360bb`、`38c017a`、`bb673d3`、`c8ff993`、`2d73408` 推送到 `origin/main`；无模型调用、真实业务动作或生产部署 |
 
 ## 2. 核验过的源码基线
@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、Action Ledger、真实供应商连接器、调查证据适配器、前端、沙箱接线、gap buffer 和生产调度体系。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；真实认证仍未接入。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、调查证据适配器、前端、沙箱接线、SSE 接口和生产调度体系。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer 和 Action Ledger 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 只负责固定退款完成声明的证据验证。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；调查 EGM 适配、持久执行与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -50,8 +50,9 @@
 | A1-02 | DONE | 新增 FastAPI 受理/读取接口、显式合成身份边界、API 单测；临时 PostgreSQL 端到端 7 项测试通过 |
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
 | A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
-| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup 迁移与 `WaitRepository`；真实 PostgreSQL 下事件 10 项、Wait 3 项通过；gap buffer 和 SSE 投影尚未实现 |
+| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 投影接口尚未实现 |
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试已实现；真实 PostgreSQL 持久化套件 23 项、Worker loop 2 项及双 Worker 竞争 1 项通过；更完整故障注入仍待补齐 |
+| B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
 
 ## 5. 工作区与提交边界
 
@@ -241,6 +242,8 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 - 2026-09-12 / 数据库启动安全增量：`migrate()` 增加事务级 advisory lock 与历史迁移 SHA-256 校验，新增回归拒绝 SQL 漂移。临时 PostgreSQL 17 全量回归 `246 passed`、Ruff、格式、严格 mypy 和 `uv lock --check` 全通过；测试容器已移除。
 
 - 2026-09-12 / A2-02 双 Worker 验收：新增两个独立数据库连接并发执行同一 Run 的集成测试，结果严格为 1 个完成、1 个被拒绝；PostgreSQL Worker 专测 `6 passed`，证明 Run fencing 不仅存在于单独 claim 测试。
+
+- 2026-09-12 / A2-01/B-01 增量复验：新增 `ProjectionRepository` 的乱序 gap buffer/连续 drain 与 Action Ledger 的跨 Case business key 幂等、UNKNOWN 对账和 fencing。临时 PostgreSQL 全量回归 `255 passed`；新增 projection 4 项、Action 4 项均通过。SSE、支付聚合审批和真实供应商仍未接入。
 
 - 2026-09-07 / A0-02 完成：运行时/调查 v1 契约落到纯代码与正反例；206 项本地及独立 wheel 回归、类型/格式和 schema 验证通过。补正文摘要幂等、JSON 非有限值与嵌套测试打包问题。保留 WinError 32 的失败和替代构建记录，未提交/推送/部署；下一项候选 A0-03。
 

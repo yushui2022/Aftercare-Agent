@@ -68,3 +68,14 @@ def test_installed_postgres_provider_and_migration_are_available() -> None:
     assert PostgresProvider.__module__ == "evidence_gated_memory.storage.postgres"
     assert callable(PostgresProvider.open)
     assert callable(PostgresProvider.join)
+
+
+def test_aftercare_postgres_migration_is_packaged() -> None:
+    migrations = files("aftercare_agent.persistence.migrations")
+    migration = migrations.joinpath("001_initial.sql")
+    assert migration.is_file()
+    assert "CREATE TABLE IF NOT EXISTS aftercare_cases" in migration.read_text(encoding="utf-8")
+    events = migrations.joinpath("002_events.sql")
+    waits = migrations.joinpath("003_waits.sql")
+    assert events.is_file() and "aftercare_outbox" in events.read_text(encoding="utf-8")
+    assert waits.is_file() and "aftercare_wait_wakeups" in waits.read_text(encoding="utf-8")

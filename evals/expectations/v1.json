@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "normal": {"outcome": "assessment", "disposition": "recommendation_ready", "decisions": [{"claim": "carrier_reported_in_transit", "accepted": true, "citations": ["carrier"], "rejected": []}]},
+  "missing-material": {"outcome": "assessment", "disposition": "needs_material", "missing": ["carrier_observation", "buyer_statement"], "decisions": [{"claim": "order_recorded", "accepted": true, "citations": ["order"], "rejected": []}]},
+  "conflicting-delivery": {"outcome": "assessment", "disposition": "human_review", "conflicts": ["carrier_buyer_disagreement"], "decisions": [{"claim": "carrier_reported_delivered", "accepted": true, "citations": ["carrier"], "rejected": []}]},
+  "stale-order": {"outcome": "assessment", "disposition": "human_review", "missing": ["order_snapshot"], "unavailable": {"order": "stale"}, "decisions": [{"claim": "order_recorded", "accepted": false, "citations": [], "rejected": [{"evidence_id": "order", "reason": "stale"}]}]},
+  "other-order": {"outcome": "error", "error_code": "forbidden"},
+  "other-tenant": {"outcome": "error", "error_code": "forbidden"},
+  "uncertain-status": {"outcome": "assessment", "disposition": "needs_material", "missing": ["clear_carrier_status", "clear_buyer_statement"], "decisions": [{"claim": "order_recorded", "accepted": true, "citations": ["order"], "rejected": []}]},
+  "duplicate-evidence": {"outcome": "error", "error_code": "conflict"},
+  "duplicate-source-event": {"outcome": "error", "error_code": "conflict"},
+  "future-observation": {"outcome": "assessment", "disposition": "human_review", "missing": ["order_snapshot"], "unavailable": {"order": "future"}, "decisions": [{"claim": "order_recorded", "accepted": false, "citations": [], "rejected": [{"evidence_id": "order", "reason": "future"}]}]},
+  "revoked-observation": {"outcome": "assessment", "disposition": "human_review", "missing": ["order_snapshot"], "unavailable": {"order": "revoked"}, "decisions": [{"claim": "order_recorded", "accepted": false, "citations": [], "rejected": [{"evidence_id": "order", "reason": "revoked"}]}]},
+  "prompt-injection": {"outcome": "error", "error_code": "invalid_input"}
+}

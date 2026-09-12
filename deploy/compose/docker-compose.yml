@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: aftercare
+      POSTGRES_USER: aftercare
+      POSTGRES_PASSWORD: local-only-aftercare
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aftercare -d aftercare"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - aftercare-postgres:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://aftercare:local-only-aftercare@postgres:5432/aftercare
+      # Synthetic identity is intentionally enabled only for local development.
+      AFTERCARE_ALLOW_SYNTHETIC_IDENTITY: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  worker:
+    profiles: [worker]
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    command: ["python", "-m", "aftercare_agent.runtime.worker_cli"]
+    environment:
+      DATABASE_URL: postgresql://aftercare:local-only-aftercare@postgres:5432/aftercare
+      AFTERCARE_TENANT_ID: "${AFTERCARE_TENANT_ID:-}"
+      AFTERCARE_RUN_ID: "${AFTERCARE_RUN_ID:-}"
+      AFTERCARE_WORKER_ID: "${AFTERCARE_WORKER_ID:-worker-compose}"
+      AFTERCARE_MAX_STEPS: "${AFTERCARE_MAX_STEPS:-8}"
+      AFTERCARE_LEASE_SECONDS: "${AFTERCARE_LEASE_SECONDS:-30}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  aftercare-postgres:

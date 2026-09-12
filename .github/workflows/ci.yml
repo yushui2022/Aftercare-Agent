@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: aftercare
+          POSTGRES_USER: aftercare
+          POSTGRES_PASSWORD: ci-only-aftercare
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aftercare -d aftercare"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.26"
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.13.15
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Static checks
+        run: |
+          uv run --locked ruff format --check .
+          uv run --locked ruff check .
+          uv run --locked mypy aftercare_agent tests evals
+      - name: Test with PostgreSQL
+        env:
+          DATABASE_URL: postgresql://aftercare:ci-only-aftercare@127.0.0.1:5432/aftercare
+        run: uv run --locked pytest -q --tb=short

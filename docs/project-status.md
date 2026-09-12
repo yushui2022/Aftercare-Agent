@@ -1,6 +1,6 @@
 # 当前工程状态与接手点
 
-格式版本：1。最后核验日期：2026-09-07（Asia/Shanghai）。记录者：本轮主 Agent。
+格式版本：1。最后核验日期：2026-09-12（Asia/Shanghai）。记录者：本轮主 Agent。
 
 本文件是进度与交接的唯一台账，不是实际代码/测试的替代证据，也不是自动执行授权。先读根 [AGENTS.md](../AGENTS.md)，任务定义见 [工程执行计划](engineering-plan.md)。
 
@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权本地提交已完成的 DOC-001/A0-01/A0-02；不推送、不新增运行时功能 |
-| 当前任务 | 封存工程基线与 v1 契约；实现任务仍停在 A0-02 完成 |
-| 当前阶段 | A0-02 已实现并验收：纯契约、类型校验与正反例；尚无持久运行时 |
-| 下一项代码候选 | A0-03：合成案件与确定性评测基线；A1 持久化另行实施 |
-| 活跃实现任务 | 无新增实现；本次仅做提交前复验、范围核对与本地提交 |
-| 本轮外部行为 | 仅授权 Aftercare 本地 Git 提交；无推送、模型调用、真实业务动作或部署 |
+| 本轮请求范围 | 用户授权继续完善项目；完成 A1-02 API/auth、A1-03 Fake Harness，并推进 A1-04 Worker/Compose，尚未授权推送或部署 |
+| 当前任务 | A2-01 Inbox/Outbox 与 Wait 持久化进行中 |
+| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 已落地 Inbox/Outbox 与 Wait 原子唤醒基础 |
+| 下一项代码候选 | A2-01：Outbox 发布游标、gap buffer 与 SSE 投影 |
+| 活跃实现任务 | A2-01：事件持久化、每消费者去重、Wait 生命周期和旧代次隔离 |
+| 本轮外部行为 | 仅修改 Aftercare 本地代码与文档；无推送、模型调用、真实业务动作或部署 |
 
 ## 2. 核验过的源码基线
 
@@ -28,9 +28,9 @@
 
 ## 3. 已有与没有的东西
 
-已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。
+已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整 API/Worker/Harness、Case/Run/Wait 表、Action Ledger、真实供应商连接器、调查证据适配器、前端、沙箱接线和可运行部署配置。不要输出不存在的完整服务启动命令。
+尚未存在：完整 Worker/业务 Harness、Action Ledger、真实供应商连接器、调查证据适配器、前端、沙箱接线、Outbox 发布器、gap buffer 和自动调度。当前 A1-03 只有数据库无关的 Fake Harness，A1-04 已有一次性 Worker CLI，用来验收恢复和预算边界，不是可部署的常驻 Worker。A2-01 已有 Wait/Inbox/Outbox 的事务基础，但还不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 只负责固定退款完成声明的证据验证。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；调查 EGM 适配、持久执行与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -45,11 +45,16 @@
 | DOC-001 | DONE | 四份核心记录与导航已写；两项只读复核完成；9 文件、62 本地链接、25 任务定义和 7 图语法检查通过，见第 6 节 |
 | A0-01 | DONE | 锁定安装、Ruff/mypy、开发环境 9 项测试、sdist→wheel、仓库外 9 项测试和文档检查通过；见第 6 节 |
 | A0-02 | DONE | 两份契约、7 个 domain 模块、5 个契约测试模块；206 项回归、类型/格式、39 类 JSON Schema、sdist→wheel 与仓库外回归通过，见第 6 节 |
-| A0-03 | READY | 下一项：将契约正反例组织成可复用的合成案件、期望结果与离线评测；尚未实施 |
+| A0-03 | DONE | 12 个合成案件、v1 期望、确定性 runner 与跨进程 digest 回归通过；见第 6 节 |
+| A1-01 | DONE | 新增 PostgreSQL 迁移、受理幂等、Case/Session/Step/Attempt/Run/Checkpoint Repository；隔离 PostgreSQL 17 容器中 5 项集成测试通过 |
+| A1-02 | DONE | 新增 FastAPI 受理/读取接口、显式合成身份边界、API 单测；临时 PostgreSQL 端到端 7 项测试通过 |
+| A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
+| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；真实 PG Worker 回归通过，仍缺长运行调度、远端 CI 和完整启动验收 |
+| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup 迁移与 `WaitRepository`；真实 PostgreSQL 下事件 10 项、Wait 3 项通过；发布器和 gap buffer 尚未实现 |
 
 ## 5. 工作区与提交边界
 
-本次提交范围为累计的 DOC-001/A0-01/A0-02，共 34 个文件，实施前 HEAD 如上。包括 aftercare_agent/domain/ 的 __init__、common、runtime、protocol、waits、events、investigation；tests/contracts/ 五个正反例模块；docs/contracts/ 两份契约；打包配置、依赖锁、MANIFEST.in 和工程交接文档。README、开发指南、技术栈、执行计划、总设计与本台账一起保存。未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动；evidence.py 与 A0-01 wheel 中的内容逐字节一致。实际文件集合以交付提交的 git show --stat 为准。
+本次待提交范围为 A0-03、A1-01、A1-02 与 A1-03 增量：`evals/`、`aftercare_agent/persistence/`、`aftercare_agent/auth/`、`aftercare_agent/api/`、`aftercare_agent/runtime/`，对应测试与文档，依赖和导航更新。此前 DOC-001/A0-01/A0-02 已在 `0c3b832` 固化。未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
@@ -58,6 +63,63 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
+
+### A1-02：最小 API 与认证边界
+
+2026-09-12，临时 PostgreSQL 17 Docker 容器和 FastAPI TestClient；合成身份仅在测试 App 显式开启，容器测试后已移除。
+
+| 验证 | 实际结果 |
+|---|---|
+| 离线边界 | 合成身份默认关闭；OpenCaseInput 拒绝 authority 字段；默认 App 无数据库配置仍可安全导入 |
+| API 端到端 | 受理、同键重放、同键改参 `409`、跨租户读取 `403`、生产模式合成身份 `401`：7 项测试通过 |
+| 静态与全量回归 | Ruff、严格 mypy；A1-02 阶段为 `215 passed, 7 skipped`（无 DATABASE_URL 的集成测试跳过） |
+
+当前 API 只提供合成身份测试入口；未实现 OIDC、CaseGrant 数据库授权、SSE、消息接入和真实业务动作。FastAPI 的 TestClient 对当前 Starlette 版本产生弃用警告，不影响测试结果，后续可在依赖升级时切换 `httpx2`。
+
+### A1-03：Fake Harness 与检查点恢复
+
+2026-09-12，Windows / CPython 3.13.15；新增 `aftercare_agent/runtime/harness.py`。该实现不调用模型、网络、数据库或供应商，仅用于把执行循环的边界先固定下来。
+
+| 验证 | 实际结果 |
+|---|---|
+| 固定计划 | `lookup_order → lookup_tracking → request_material_draft`，工具请求经过 v1 schema 校验；不允许模型填写租户、工单或订单身份 |
+| 预算 | 1 次模型步、3 次工具步、固定截止时间；超过 `max_steps` 返回可恢复的中间检查点 |
+| 恢复 | 从 `Checkpoint` 继续推进至 `complete`；工具结果只保存确定性 artifact 引用，不伪造业务事实 |
+| 隔离 | 租户/工单/Run scope 不匹配返回 `FORBIDDEN`；检查点 JSON round-trip 保持等价 |
+| 回归 | `pytest -q tests/test_fake_harness.py`：3 passed；Ruff 与严格 mypy 全通过 |
+
+Fake Harness 不是完整 Worker，也不持有数据库租约；下一步 A1-04 才会把它接到最小 Worker/Compose 和 CI 的真实 PostgreSQL 服务中。详细边界见 [Harness 运行说明](harness.md)。
+
+### A1-01：PostgreSQL 持久化骨架
+
+2026-09-09，使用临时 PostgreSQL 17 Docker 容器（`127.0.0.1:55433`，测试后已移除）运行真实数据库验收；所有记录为合成测试数据，未连接现有业务数据库。
+
+| 验证 | 实际结果 |
+|---|---|
+| 迁移 | `001_initial.sql` 在空数据库创建 admission、Case、Session、Run、Step、Attempt、Checkpoint 表；修复并验证 Step 复合外键唯一约束 |
+| Run 执行权 | 领取使用 `FOR UPDATE` + `clock_timestamp()`；过期接管 fencing token 单调递增；旧 owner 续租被映射为 `LEASE_LOST` |
+| 并发 | 两个独立 psycopg 连接同时领取同一 Run：1 个成功、1 个 `CONFLICT` |
+| 受理与版本 | 相同幂等键/摘要重放原对象；改参返回 `CONFLICT`；Case version compare-and-swap 拒绝旧版本 |
+| 检查点与子对象 | 当前 claim 才能写 Checkpoint；Session/Step/Attempt 读写和 Attempt 终态保护通过 |
+| 测试 | `pytest -q`（设置 `DATABASE_URL`）：`215 passed`；无数据库时持久化测试安全跳过 |
+| 静态检查 | Ruff check、format --check、严格 mypy、`uv lock --check` 和 whitespace 检查通过 |
+
+这证明的是 A1-01 的数据库骨架和基础竞争不变量，不包含完整事件发布、gap buffer、崩溃恢复、API 认证、真实模型、供应商动作或生产 HA/备份。
+
+### A0-03：合成案件与确定性评测
+
+2026-09-09，Windows / CPython 3.13.15 / uv 0.9.26；新增 `evals/` 离线评测基线，全部输入为合成数据，不调用模型、网络、数据库、供应商或沙箱。
+
+| 验证 | 实际结果 |
+|---|---|
+| 合成案件 | 12 个：正常、缺材料、承运商/买家冲突、陈旧、跨订单、跨租户、不确定状态、重复证据 ID、重复来源事件、未来时间、撤回、提示注入 |
+| 期望与决策核对 | `v1.json` 固定 disposition、缺失材料、冲突、不可用原因、claim 接受/拒绝、引用和拒绝原因；所有 assessment 均断言不授权外部动作且不关单 |
+| 离线 runner | `python -m evals.runner`：12/12 PASS；digest `80ddf7f04955ab45130bf1aa97aa04a7e499480b92a978d72a3e135e82744dd7` |
+| 稳定性 | 同进程和独立子进程 digest 比较通过；digest 纳入评测器版本、案例集合和期望文件哈希 |
+| 回归 | `pytest tests/evals`：4 passed；完整 `pytest -q --tb=short`：210 passed |
+| 静态检查 | Ruff check、format --check、严格 mypy 全通过 |
+
+此验收只证明纯契约和合成输入的确定性行为，不证明 PostgreSQL 事务、Worker 租约/fencing、模型质量、连接器认证、沙箱恢复或生产 SLA。评测说明见 [A0-03 合成案件与确定性评测](evals.md)。
 
 ### 本次提交前复验
 
@@ -140,7 +202,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-下一项 A0-03：读取两份 v1 契约及现有 tests/contracts 正反例，在 evals/cases、evals/expectations 组织完整合成案件与确定性评测入口，覆盖正常、缺材料、矛盾、陈旧、跨订单/租户、重复事件和伪造指令。不能把单条声明通过等同建议文本完成，也不使用真实客户材料。随后进入 A1-01 的 PostgreSQL 迁移/Repository/Run 执行权；本轮未启动这些任务。
+当前推进 A2-01：继续完成 Outbox 发布游标、gap buffer 和 SSE 投影；随后进入 A2-02 的双 Worker 故障接管。A1-02 已完成最小 API/auth；真实 OIDC、SSE、完整 Worker 调度和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 
@@ -149,6 +211,30 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 ## 8. 最近交接记录
 
 - 2026-09-07 / 本地交付提交：用户明确授权固化 DOC-001/A0-01/A0-02；提交前 206 项回归、类型/格式与范围复核通过，34 个项目文件随本页一起保存。实际提交编号和工作区状态以 Git 日志核验；不推送，不包含 EGM 未提交材料，下一项仍为 A0-03。
+
+- 2026-09-09 / A0-03 完成：新增 12 个合成案件、固定期望、离线确定性 runner、跨进程 digest 回归与评测说明；完整回归 210 passed。尚未提交、推送或部署；下一项为 A1-01。
+
+- 2026-09-09 / A1-01 开始：新增显式 PostgreSQL 迁移、Run 租约/fencing 和检查点执行权校验；初次静态检查通过，未配置 `DATABASE_URL` 时集成测试跳过。
+
+- 2026-09-09 / A1-01 扩展：补齐受理幂等重放/改参冲突、Case version compare-and-swap、Session/Step/Attempt Repository 与受保护状态转换；静态检查通过，完整回归 210 passed、4 项 PG 集成测试因未配置 `DATABASE_URL` 跳过。尚未提交、推送或部署。
+
+- 2026-09-09 / A1-01 验收：使用临时 PostgreSQL 17 Docker 容器（端口 55433，测试后已移除）运行完整仓库回归，`215 passed`；其中 5 项真实 PG 测试覆盖迁移、幂等重放/改参冲突、Case version CAS、检查点执行权、过期接管和双连接竞争。容器数据为合成测试数据，未连接现有业务数据库。
+
+- 2026-09-12 / A1-02 完成：新增 FastAPI `POST /v1/cases`、`GET /v1/cases/{case_id}/runs/{run_id}`、显式合成身份和 API 错误映射；临时 PostgreSQL 端到端 7 项测试通过。完整离线回归 `215 passed, 7 skipped`；尚未提交、推送或部署，下一项为 A1-03 Fake Harness。
+
+- 2026-09-12 / A1-03 完成：新增数据库无关 FakePlanner/Harness，固定只读调查链，执行模型/工具预算和检查点恢复；3 项专测、Ruff 与严格 mypy 通过。尚未提交、推送或部署，下一项为 A1-04 Compose/CI。
+
+- 2026-09-12 / A1-03 回归复验：在无 `DATABASE_URL` 的环境执行完整 `pytest -q`，`218 passed, 10 skipped`；`ruff format --check`、`ruff check`、严格 `mypy` 全通过。10 项跳过均为需要显式 PostgreSQL 的集成测试。
+
+- 2026-09-12 / A1-04 开始：新增 `deploy/Dockerfile`、PostgreSQL + API 开发 Compose、Compose 说明和 GitHub Actions 真实 PostgreSQL CI；`docker compose config`、镜像构建和容器内 API smoke（OpenAPI 返回 200）通过。第一次构建的 Debian `502` 已通过 APT 重试配置恢复；宿主默认 `8000` 被占用时改用容器内网络验收，临时容器/卷已清理。
+
+- 2026-09-12 / A1-04 Worker 增量：新增 `runtime.worker.run_once()`、`run_next()` 和 `runtime.worker_cli`，实现 `SKIP LOCKED` 领取 READY Run、claim → checkpoint 恢复 → 事务外 Fake Harness → fencing 校验保存 → `READY/COMPLETED` 转换；真实 PostgreSQL 下 Worker 专测 3 项、既有持久化专测 5 项全部通过。长运行调度、远端 CI、提交或推送仍未完成。
+
+- 2026-09-12 / A1-04 最终复验：Worker profile 镜像重新构建成功（包含 CLI）；全量离线回归 `218 passed, 10 skipped`，`git diff --check` 通过。默认与 `worker` profile 的 Compose 配置均可解析，容器内 API smoke 已验证；长运行调度和远端 CI 仍待完成。
+
+- 2026-09-12 / A2-01 事件增量：新增 `aftercare_outbox`、`aftercare_inbox`、消费者应用记录及 `EventRepository`；真实 PostgreSQL 下事件专测 2 项与持久化既有 8 项共 10 项通过。随后新增 Wait/wakeup 迁移、`WaitRepository` 与 3 项真实 PostgreSQL 生命周期测试；外部 Broker、发布器和 gap buffer 尚未实现。
+
+- 2026-09-12 / A2-01 Wait 复验：临时 PostgreSQL 17（127.0.0.1:55437）执行 `pytest -q tests/persistence/test_waits.py`，`3 passed`；覆盖 PENDING 早到回执在激活时消费、ACTIVE 回复与超时的单一 wakeup、旧代次不推进新等待。测试后容器已移除，未连接业务数据库。离线全量回归 `214 passed, 2 skipped`，Ruff、格式检查和严格 mypy 通过。
 
 - 2026-09-07 / A0-02 完成：运行时/调查 v1 契约落到纯代码与正反例；206 项本地及独立 wheel 回归、类型/格式和 schema 验证通过。补正文摘要幂等、JSON 非有限值与嵌套测试打包问题。保留 WinError 32 的失败和替代构建记录，未提交/推送/部署；下一项候选 A0-03。
 

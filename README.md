@@ -29,6 +29,12 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [本地开发、测试与打包](docs/development.md) | 当前可执行的 uv 安装、质量检查、sdist/wheel 和仓库外安装验收 |
 | [运行时契约 v1](docs/contracts/runtime-v1.md) | 身份、Case/Run、执行权、检查点、工具请求、等待和事件的纯规则；数据库执行仍待实现 |
 | [调查证据契约 v1](docs/contracts/investigation-v1.md) | 订单/物流/买家陈述、可信来源、证据新鲜度、引用和人审边界；尚未接入 EGM 调查投影 |
+| [A0-03 合成案件与确定性评测](docs/evals.md) | 12 个合成售后案件、固定预期和离线评测；不调用模型或真实业务系统 |
+| [PostgreSQL 持久化骨架](docs/persistence.md) | A1-01 当前已实现的迁移、租约/fencing 和检查点边界；完整运行时仍未完成 |
+| [API 与认证边界](docs/api-auth.md) | A1-02 最小 FastAPI 受理/读取接口；当前仅支持显式合成身份测试模式 |
+| [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
+| [Inbox/Outbox 说明](docs/events.md) | A2-01 PostgreSQL 事务内事件、来源幂等与消费者去重；外部 Broker 尚未接入 |
+| [本地 Compose](deploy/compose/README.md) | A1-04 开始接线：PostgreSQL + API 的开发环境；不含 Worker、模型或真实动作 |
 | [Agent 执行与恢复规则](AGENTS.md) | 恢复阅读顺序、状态维护和授权/安全边界 |
 | [工程总设计与 Mermaid 架构图](docs/system-design.md) | 下一步怎样建设：部署、Session/Run、并发、持久事件、沙箱、记忆与 API；区分已实现和目标设计 |
 | [完整技术文章](docs/architecture.md) | 从 Demo 到企业级：跨境电商售后 Agent 的并发、沙箱与故障恢复设计 |

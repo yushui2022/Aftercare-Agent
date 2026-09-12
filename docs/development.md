@@ -121,4 +121,4 @@ EGM 目前以 Git 来源安装，因此来源测试要求 direct_url.json 中存
 
 ## 6. 仍然没有的入口
 
-本页没有完整 API、Worker、Harness、SSE、模型或沙箱启动命令，因为这些模块尚未交付。现有 SQLite 回归不能代替后续 A1/A2 的真实 PostgreSQL 租约、事务和故障恢复测试。打包通过也不是生产部署、安全审计、依赖漏洞扫描或性能验收。
+完整 Worker、SSE、模型和沙箱仍未交付。A1-04 已开始提供仅供本地开发的 [Compose smoke 环境](../deploy/compose/README.md)，它只启动 PostgreSQL 和 API，不能代替 A2 的故障恢复测试或生产部署、安全审计、依赖漏洞扫描和性能验收。现有 SQLite 回归也不能代替真实 PostgreSQL 租约、事务和故障恢复测试。

@@ -113,6 +113,39 @@ class EventRepository:
         check_inbox_replay(stored, signal)
         return False
 
+    def list_case_events(
+        self,
+        connection: psycopg.Connection[Any],
+        *,
+        tenant_id: str,
+        case_id: str,
+        after_case_seq: int = 0,
+        limit: int = 100,
+    ) -> tuple[DomainEvent, ...]:
+        """Read a bounded, case-scoped event page for replay/SSE consumers."""
+        if type(after_case_seq) is not int or after_case_seq < 0:
+            raise ContractViolation(ErrorCode.INVALID_INPUT, "after_case_seq must be non-negative")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ContractViolation(
+                ErrorCode.INVALID_INPUT, "event limit must be between 1 and 500"
+            )
+        rows = connection.execute(
+            "SELECT payload FROM aftercare_outbox WHERE tenant_id=%s AND case_id=%s "
+            "AND case_seq>%s ORDER BY case_seq LIMIT %s",
+            (tenant_id, case_id, after_case_seq, limit),
+        ).fetchall()
+        events: list[DomainEvent] = []
+        for row in rows:
+            try:
+                events.append(
+                    DomainEvent.model_validate_json(json.dumps(row[0], ensure_ascii=False))
+                )
+            except (TypeError, ValueError) as exc:
+                raise ContractViolation(
+                    ErrorCode.RETRYABLE, "stored case event is invalid"
+                ) from exc
+        return tuple(events)
+
     def apply_once(
         self,
         connection: psycopg.Connection[Any],

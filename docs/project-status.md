@@ -30,9 +30,9 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、调查证据适配器、前端、沙箱接线、SSE 接口和生产调度体系。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer 和 Action Ledger 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；真实认证仍未接入。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、前端、沙箱接线、SSE 接口和生产调度体系。调查 EGM 适配器已建立代码边界，但真实调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger 和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
-当前 evidence.py 只负责固定退款完成声明的证据验证。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；调查 EGM 适配、持久执行与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
+当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；真实调查 schema、持久观察查询与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
 技术选择已写入 [tech-stack.md](tech-stack.md)。当前实际环境是 Windows、CPython 3.13.15、uv 0.9.26；EGM 0.6.0 固定完整 Git SHA，运行依赖与测试工具在 uv.lock 中锁定。FastAPI、PostgreSQL 服务、前端 TypeScript/React/Vite、Node/pnpm、模型和沙箱仍需在各自任务引入，不能把选型表当作已安装清单。
 
@@ -50,12 +50,13 @@
 | A1-02 | DONE | 新增 FastAPI 受理/读取接口、显式合成身份边界、API 单测；临时 PostgreSQL 端到端 7 项测试通过 |
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
 | A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
-| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 投影接口尚未实现 |
+| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 投影接口待补 |
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | IN PROGRESS | 新增 PostgreSQL 全局/租户执行槽、slot 租约心跳、释放与按 Run 幂等重试预算；真实 PostgreSQL 全量回归 268 项通过；持久公平队列表已建，跨租户调度策略和压测仍待补齐 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser 与 `ResponsesAdapter`：校验原生响应、usage、函数参数、工具白名单、托管工具事件和 provider 错误脱敏；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter`：可信连接器规范化写入、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；2 项离线适配测试通过；真实调查 EGM schema 尚未固定 |
+| A3-03 | IN PROGRESS | 新增 case-scoped SSE replay 端点、`Last-Event-ID`/after 游标和持久事件分页；真实 live broker tail、React 工作台和生产认证仍待实现 |
 
 ## 5. 工作区与提交边界
 
@@ -207,7 +208,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 A3-02：固定调查 EGM schema 并接入真实观察存储后，补 A3-03 SSE 工作台和模型调用预算。A1-02 已完成最小 API/auth；真实 OIDC、完整业务 Harness 和生产连接器仍未实现。
+当前推进 A3-03：已补 Case-scoped SSE/事件游标，下一步接 live broker tail 与工作台，再固定调查 EGM schema 和模型调用预算。A1-02 已完成最小 API/auth；真实 OIDC、完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 

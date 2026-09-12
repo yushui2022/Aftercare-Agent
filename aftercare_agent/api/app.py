@@ -1,10 +1,13 @@
 """Minimal A1-02 FastAPI adapter; business authority remains in repositories."""
 
+import json
 import os
+from collections.abc import Iterator
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from aftercare_agent.auth import AuthContext, synthetic_context
@@ -16,7 +19,13 @@ from aftercare_agent.domain.runtime import (
     RunRecord,
     SessionRecord,
 )
-from aftercare_agent.persistence import AdmissionRepository, Database, RunRepository, migrate
+from aftercare_agent.persistence import (
+    AdmissionRepository,
+    Database,
+    EventRepository,
+    RunRepository,
+    migrate,
+)
 
 
 class CaseResponse(BaseModel):
@@ -115,6 +124,47 @@ def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
             if run is None or run.case_id != case_id:
                 raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
             return run
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get("/v1/cases/{case_id}/events")
+    def case_events(
+        case_id: str,
+        identity: Auth,
+        after: int = 0,
+        last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+        limit: int = 100,
+    ) -> StreamingResponse:
+        """Return a bounded SSE replay page; live broker tails are a later layer."""
+        try:
+            identity.require("case:read")
+            cursor = after
+            if last_event_id is not None:
+                try:
+                    header_cursor = int(last_event_id)
+                except ValueError as exc:
+                    raise ContractViolation(
+                        ErrorCode.INVALID_INPUT, "Last-Event-ID must be an integer"
+                    ) from exc
+                cursor = max(cursor, header_cursor)
+            with database.transaction() as connection:
+                events = EventRepository().list_case_events(
+                    connection,
+                    tenant_id=identity.tenant_id,
+                    case_id=case_id,
+                    after_case_seq=cursor,
+                    limit=limit,
+                )
+
+            def stream() -> Iterator[str]:
+                for event in events:
+                    yield (
+                        f"id: {event.case_seq}\n"
+                        f"event: {event.event_type}\n"
+                        f"data: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+                    )
+
+            return StreamingResponse(stream(), media_type="text/event-stream")
         except ContractViolation as exc:
             raise _error(exc) from exc
 

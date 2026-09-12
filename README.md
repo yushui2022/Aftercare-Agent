@@ -32,6 +32,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [A0-03 合成案件与确定性评测](docs/evals.md) | 12 个合成售后案件、固定预期和离线评测；不调用模型或真实业务系统 |
 | [PostgreSQL 持久化骨架](docs/persistence.md) | A1-01 当前已实现的迁移、租约/fencing 和检查点边界；完整运行时仍未完成 |
 | [API 与认证边界](docs/api-auth.md) | A1-02 最小 FastAPI 受理/读取接口；当前仅支持显式合成身份测试模式 |
+| [SSE 事件回放](docs/events.md) | A3-03 case-scoped SSE replay、`Last-Event-ID` 续传与持久事件游标 |
 | [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
 | [Responses 模型适配边界](docs/model-adapters.md) | A3-01 严格解析、工具白名单、托管工具事件与 provider 错误脱敏 |
 | [Inbox/Outbox 说明](docs/events.md) | A2-01 PostgreSQL 事务内事件、来源幂等与消费者去重；外部 Broker 尚未接入 |

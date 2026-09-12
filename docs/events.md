@@ -69,3 +69,11 @@ buffer，返回 `buffer_gap`，不能在这里确认消息已被业务应用。�
 退避重试、ACK 幂等、事务回滚和“发布后崩溃”重复交付。没有配置 `DATABASE_URL` 时测试
 安全跳过。ProjectionRepository 专测覆盖乱序 seq=2 先到、seq=1 到达后自动 drain、
 完整事件 replay、event_id/sequence 内容冲突、租户/消费者隔离和投影事务回滚。
+
+## SSE 回放边界（A3-03）
+
+`GET /v1/cases/{case_id}/events` 提供有界、按 `case_seq` 排序的 SSE 回放页。客户端可用
+查询参数 `after` 或 `Last-Event-ID` 续传；服务端取两者较大的游标，因此重连不会倒退。
+这是持久回放而非无限 live tail：接入 Broker 后应先回放该游标，再订阅新事件，避免断线
+期间丢消息。当前身份入口仍是显式合成身份，仅用于开发测试；真实 OIDC、订阅授权和
+React 工作台尚未实现。

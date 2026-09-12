@@ -9,11 +9,14 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, Self
+from typing import TYPE_CHECKING, Protocol, Self
 
 from pydantic import Field, ValidationError, model_validator
 
 from aftercare_agent.domain.common import ContractModel, ContractViolation, ErrorCode, Identifier
+
+if TYPE_CHECKING:
+    from .budget import ModelPricing, ModelUsageBudget
 
 
 class ModelClient(Protocol):
@@ -262,3 +265,21 @@ class ResponsesAdapter:
                 ErrorCode.INVALID_INPUT, "Responses client returned a non-object"
             )
         return normalize_response(payload, allowed_tools=self._allowed_tools)
+
+    def complete_with_budget(
+        self,
+        request: ResponsesRequest,
+        budget: "ModelUsageBudget",
+        pricing: "ModelPricing",
+    ) -> tuple[NormalizedResponse, "ModelUsageBudget"]:
+        """Complete a call and return the next chargeable budget snapshot.
+
+        The caller persists the returned snapshot with its checkpoint. A
+        response without usage is rejected instead of being treated as free.
+        """
+        response = self.complete(request)
+        if response.usage is None:
+            raise ContractViolation(
+                ErrorCode.INVALID_INPUT, "Responses usage is required for budgeted calls"
+            )
+        return response, budget.charge(response.usage, pricing)

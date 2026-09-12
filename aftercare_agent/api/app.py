@@ -26,6 +26,7 @@ from aftercare_agent.persistence import (
     RunRepository,
     migrate,
 )
+from aftercare_agent.runtime import PostgresEventTail
 
 
 class CaseResponse(BaseModel):
@@ -135,7 +136,7 @@ def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
     @app.get("/v1/cases/{case_id}/runs/{run_id}", response_model=RunRecord)
     def get_run(case_id: str, run_id: str, identity: Auth) -> RunRecord:
         try:
-            identity.require("case:read")
+            identity.require_case(case_id, "case:read")
             with database.transaction() as connection:
                 run = RunRepository().get(connection, identity.tenant_id, run_id)
             if run is None or run.case_id != case_id:
@@ -151,10 +152,12 @@ def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
         after: int = 0,
         last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
         limit: int = 100,
+        follow: bool = False,
+        wait_seconds: float = 15.0,
     ) -> StreamingResponse:
-        """Return a bounded SSE replay page; live broker tails are a later layer."""
+        """Return replay, or a bounded PostgreSQL polling tail after replay."""
         try:
-            identity.require("case:read")
+            identity.require_case(case_id, "case:read")
             cursor = after
             if last_event_id is not None:
                 try:
@@ -164,17 +167,34 @@ def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
                         ErrorCode.INVALID_INPUT, "Last-Event-ID must be an integer"
                     ) from exc
                 cursor = max(cursor, header_cursor)
-            with database.transaction() as connection:
-                events = EventRepository().list_case_events(
-                    connection,
+            if follow:
+                PostgresEventTail.validate(
+                    after_case_seq=cursor,
+                    limit=limit,
+                    wait_seconds=wait_seconds,
+                    poll_seconds=0.5,
+                )
+                events_iter = PostgresEventTail(database).stream(
                     tenant_id=identity.tenant_id,
                     case_id=case_id,
                     after_case_seq=cursor,
                     limit=limit,
+                    wait_seconds=wait_seconds,
                 )
+            else:
+                with database.transaction() as connection:
+                    events_iter = iter(
+                        EventRepository().list_case_events(
+                            connection,
+                            tenant_id=identity.tenant_id,
+                            case_id=case_id,
+                            after_case_seq=cursor,
+                            limit=limit,
+                        )
+                    )
 
             def stream() -> Iterator[str]:
-                for event in events:
+                for event in events_iter:
                     yield (
                         f"id: {event.case_seq}\n"
                         f"event: {event.event_type}\n"

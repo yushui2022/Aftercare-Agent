@@ -9,7 +9,7 @@
 | 字段 | 值 |
 |---|---|
 | 本轮请求范围 | 用户授权继续完善项目；完成 A1-02 API/auth、A1-03 Fake Harness，并推进 A1-04/A2 Worker、Wait 与 Outbox；当前已授权推送已验证提交 |
-| 当前任务 | A3-01 Responses 模型适配边界进行中 |
+| 当前任务 | C-01/D-01 运行控制面与生产边界进行中 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
 | 下一项代码候选 | A2-03：公平队列调度与压测；A3-02：模型调用预算与供应商重试策略 |
 | 活跃实现任务 | Responses 严格解析与工具白名单；后续接入业务 Harness、沙箱和真实 provider |
@@ -59,6 +59,7 @@
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay 端点、`Last-Event-ID`/after 游标和持久事件分页；真实 live broker tail、React 工作台和生产认证仍待实现 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；3 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
 | D-01 | IN PROGRESS | 新增 provider-neutral OIDC claims→`AuthContext` 边界：issuer/audience/时间/tenant/Case scope 校验；9 项离线认证测试通过；JWT/JWKS 验签与实际 IdP 尚未接入 |
+| C-03 | IN PROGRESS | 新增 provider-neutral Tracer、InMemoryTracer、可选 OTel bridge，并为 Outbox publish 埋点；离线回归通过；Exporter、采样/留存和生产监控尚未配置 |
 
 ## 5. 工作区与提交边界
 

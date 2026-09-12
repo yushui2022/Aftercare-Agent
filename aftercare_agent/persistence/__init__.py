@@ -11,6 +11,7 @@ from .admission import (
 )
 from .db import Database, migrate
 from .events import EventRepository, OutboxDelivery
+from .investigations import InvestigationObservationRepository
 from .projection import ProjectionIngestResult, ProjectionRepository
 from .repositories import (
     AttemptRepository,
@@ -34,6 +35,7 @@ __all__ = [
     "Database",
     "EventRepository",
     "OutboxDelivery",
+    "InvestigationObservationRepository",
     "ProjectionIngestResult",
     "ProjectionRepository",
     "WaitRepository",

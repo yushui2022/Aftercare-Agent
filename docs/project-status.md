@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器已建立代码边界，但真实调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger 和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；OIDC claims 转换边界已实现，真实认证仍未接入。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger 和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；OIDC claims 转换边界已实现，真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；真实调查 schema、持久观察查询与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -55,7 +55,7 @@
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
-| A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter`：可信连接器规范化写入、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；2 项离线适配测试通过；真实调查 EGM schema 尚未固定 |
+| A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页和有界 PostgreSQL polling tail；高吞吐 live broker tail、React 工作台和生产认证仍待实现 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；3 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
 | D-01 | IN PROGRESS | 新增 provider-neutral OIDC claims→`AuthContext` 边界：issuer/audience/时间/tenant/Case scope 校验；9 项离线认证测试通过；JWT/JWKS 验签与实际 IdP 尚未接入 |
@@ -77,6 +77,8 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 - 2026-09-12 / A2-03 durable scheduler：新增 008 Run 状态同步触发器和队列回填；`run_next(tenant_id=None)` 使用持久 tenant cursor 轮转，跳过租户准入已满的队列，并按 Run 过期 lease 回收 IN_FLIGHT。临时 PostgreSQL 17 全量回归 `285 passed`；新增跨租户轮转、租户限额跳过和失联回收测试；Ruff、格式、严格 mypy、wheel 构建和 `git diff --check` 通过。测试容器已移除，未连接生产数据库。
 
 - 2026-09-12 / A3-03 tail 增量：新增 broker-neutral `PostgresEventTail` 和 `follow=true` SSE 参数；每轮查询使用短事务，最长等待 60 秒，保留 `Last-Event-ID`/after 游标；真实 PostgreSQL SSE/tail 测试 `4 passed`，完整 PG 回归 `288 passed`。Kafka/NATS/Redis live adapter、React 工作台、真实 OIDC 与生产压测仍未实现。
+
+- 2026-09-12 / A3-02 观察账本增量：新增迁移 009 与 `InvestigationObservationRepository`，实现工单范围、来源事件/evidence ID 双重幂等、完整 JSON 保存、撤回持久化和重启后完整快照评估；真实 PostgreSQL 全量回归 `290 passed`，静态检查通过。真实来源认证和 EGM 调查 schema 仍未完成。
 
 ### A1-02：最小 API 与认证边界
 
@@ -165,7 +167,7 @@ Fake Harness 不是完整 Worker，也不持有数据库租约；下一步 A1-04
 
 文档最终复跑通过：13 份文档、105 个本地链接、25 个任务定义、4 行状态与 7 张 Mermaid 语法；已跟踪修改和 26 个未跟踪文件的 whitespace 检查通过。检查器仍在 G:\DevCache\Temp\aftercare-design-qa\check.mjs，不是项目运行依赖。
 
-未验证/未实现：真实 OIDC/JWKS 接入、live broker tail、配置版本仓库、模型效果、真实调查 EGM schema/观察查询、E2B/Kubernetes 后端、Linux/容器试点、远端 CI 结果、真实供应商和生产压测。A1/A2/A3 必须继续补足，不能用本轮测试替代。
+未验证/未实现：真实 OIDC/JWKS 接入、选定 broker 的 live tail、配置版本仓库、模型效果、真实调查 EGM schema/来源认证、E2B/Kubernetes 后端、Linux/容器试点、远端 CI 结果、真实供应商和生产压测。A1/A2/A3 必须继续补足，不能用本轮测试替代。
 
 ### A0-01：Python 工程基线
 

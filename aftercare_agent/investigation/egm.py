@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
+import psycopg
 from evidence_gated_memory.application import EvidenceApplication, Principal
 
 from aftercare_agent.domain.investigation import (
@@ -26,6 +27,7 @@ from aftercare_agent.domain.investigation import (
     ingest_observation,
     source_kind,
 )
+from aftercare_agent.persistence.investigations import InvestigationObservationRepository
 
 
 class _Application(Protocol):
@@ -74,6 +76,40 @@ class InvestigationEvidenceAdapter:
         self.connector = connector
         self.model_tools = model_tools
         self.registered_sources = dict(registered_sources)
+
+    def persist_observation(
+        self,
+        connection: psycopg.Connection[object],
+        evidence: InvestigationEvidence,
+        grant: SourceGrant,
+        *,
+        now: datetime,
+    ) -> InvestigationEvidence:
+        """Validate and persist one trusted connector observation."""
+        accepted = ingest_observation(
+            self.scope,
+            grant,
+            self.registered_sources,
+            evidence,
+            now=now,
+        )
+        return InvestigationObservationRepository().put(connection, accepted, scope=self.scope)
+
+    def persisted_observations(
+        self, connection: psycopg.Connection[object]
+    ) -> tuple[InvestigationEvidence, ...]:
+        """Reload the complete authorized ledger for deterministic assessment."""
+        return InvestigationObservationRepository().list_case(connection, scope=self.scope)
+
+    def assess_persisted(
+        self,
+        connection: psycopg.Connection[object],
+        proposal: InvestigationProposal,
+        policy: FreshnessPolicy,
+        *,
+        now: datetime,
+    ) -> InvestigationAssessment:
+        return self.assess(proposal, self.persisted_observations(connection), policy, now=now)
 
     def ingest(
         self,

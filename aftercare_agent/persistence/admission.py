@@ -354,24 +354,6 @@ class AdmissionRepository:
     ) -> RetryReservation:
         if not retry_key or type(units) is not int or units < 1:
             raise ContractViolation(ErrorCode.INVALID_INPUT, "invalid retry reservation")
-        row = connection.execute(
-            "SELECT units FROM aftercare_retry_reservations WHERE tenant_id=%s AND run_id=%s "
-            "AND retry_key=%s",
-            (tenant_id, run_id, retry_key),
-        ).fetchone()
-        if row is not None:
-            if int(row[0]) != units:
-                raise ContractViolation(ErrorCode.CONFLICT, "retry key reused with different units")
-            budget = connection.execute(
-                "SELECT max_retries,retries_used FROM aftercare_retry_budgets "
-                "WHERE tenant_id=%s AND run_id=%s",
-                (tenant_id, run_id),
-            ).fetchone()
-            if budget is None:
-                raise ContractViolation(ErrorCode.RETRYABLE, "retry budget is not configured")
-            return RetryReservation(
-                tenant_id, run_id, retry_key, units, int(budget[0]) - int(budget[1]), True
-            )
         budget = connection.execute(
             "SELECT max_retries,retries_used FROM aftercare_retry_budgets "
             "WHERE tenant_id=%s AND run_id=%s FOR UPDATE",
@@ -379,6 +361,17 @@ class AdmissionRepository:
         ).fetchone()
         if budget is None:
             raise ContractViolation(ErrorCode.RETRYABLE, "retry budget is not configured")
+        row = connection.execute(
+            "SELECT units FROM aftercare_retry_reservations WHERE tenant_id=%s AND run_id=%s "
+            "AND retry_key=%s FOR UPDATE",
+            (tenant_id, run_id, retry_key),
+        ).fetchone()
+        if row is not None:
+            if int(row[0]) != units:
+                raise ContractViolation(ErrorCode.CONFLICT, "retry key reused with different units")
+            return RetryReservation(
+                tenant_id, run_id, retry_key, units, int(budget[0]) - int(budget[1]), True
+            )
         remaining = int(budget[0]) - int(budget[1])
         if remaining < units:
             raise ContractViolation(ErrorCode.BUDGET_EXHAUSTED, "retry budget exhausted")

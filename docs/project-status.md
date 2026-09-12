@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、前端、沙箱接线、SSE 接口和生产调度体系。调查 EGM 适配器已建立代码边界，但真实调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger 和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；真实认证仍未接入。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器已建立代码边界，但真实调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger 和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；OIDC claims 转换边界已实现，真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；真实调查 schema、持久观察查询与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -83,7 +83,7 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 | API 端到端 | 受理、同键重放、同键改参 `409`、跨租户读取 `403`、生产模式合成身份 `401`：7 项测试通过 |
 | 静态与全量回归 | Ruff、严格 mypy；A1-02 阶段为 `215 passed, 7 skipped`（无 DATABASE_URL 的集成测试跳过） |
 
-当前 API 只提供合成身份测试入口；未实现 OIDC、CaseGrant 数据库授权、SSE、消息接入和真实业务动作。FastAPI 的 TestClient 对当前 Starlette 版本产生弃用警告，不影响测试结果，后续可在依赖升级时切换 `httpx2`。
+当前 API 仍只通过显式合成身份入口做请求认证；OIDC claims 转换边界已实现但尚未接入真实 JWKS/IdP；CaseGrant 数据库授权、live 消息接入和真实业务动作仍未实现。SSE 目前仅提供有界持久回放。FastAPI 的 TestClient 对当前 Starlette 版本产生弃用警告，不影响测试结果，后续可在依赖升级时切换 `httpx2`。
 
 ### A1-03：Fake Harness 与检查点恢复
 
@@ -160,7 +160,7 @@ Fake Harness 不是完整 Worker，也不持有数据库租约；下一步 A1-04
 
 文档最终复跑通过：13 份文档、105 个本地链接、25 个任务定义、4 行状态与 7 张 Mermaid 语法；已跟踪修改和 26 个未跟踪文件的 whitespace 检查通过。检查器仍在 G:\DevCache\Temp\aftercare-design-qa\check.mjs，不是项目运行依赖。
 
-未验证/未实现：真实 PostgreSQL 原子领取、锁顺序/事务/故障恢复、真实认证、事件持久分发、配置版本仓库、模型效果、EGM 调查投影、Linux/容器、CI、真实供应商和生产压测。A1/A2/A3 必须继续补足，不能用本轮 206 项纯测试替代。
+未验证/未实现：真实 OIDC/JWKS 接入、live broker tail、配置版本仓库、模型效果、真实调查 EGM schema/观察查询、E2B/Kubernetes 后端、Linux/容器试点、远端 CI 结果、真实供应商和生产压测。A1/A2/A3 必须继续补足，不能用本轮测试替代。
 
 ### A0-01：Python 工程基线
 
@@ -211,7 +211,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 A3-03：已补 Case-scoped SSE/事件游标，下一步接 live broker tail 与工作台，再固定调查 EGM schema 和模型调用预算。A1-02 已完成最小 API/auth；真实 OIDC、完整业务 Harness 和生产连接器仍未实现。
+当前推进 C/D 运行控制面：先将 SSE 回放接 live broker tail 与工作台，再固定调查 EGM schema/模型预算，并选择真实沙箱后端；OIDC claims 边界已实现但真实 JWKS/IdP、完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 

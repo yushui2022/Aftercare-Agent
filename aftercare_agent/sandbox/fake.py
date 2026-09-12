@@ -131,6 +131,10 @@ class FakeSandboxProvider:
             item = self._allocations.get(allocation_id)
             if item is None:
                 raise ContractViolation(ErrorCode.INVALID_INPUT, "unknown sandbox allocation")
+            if item.state == "DESTROYED":
+                return self._public(item)
+            if item.state != "DESTROY_REQUESTED":
+                raise ContractViolation(ErrorCode.CONFLICT, "sandbox destroy was not requested")
             item.state = "DESTROYED"
             return self._public(item)
 

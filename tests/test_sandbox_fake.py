@@ -43,6 +43,16 @@ def test_expiry_requires_destroy_confirmation_before_capacity_reuse() -> None:
     assert replacement.allocation_id != allocation.allocation_id
 
 
+def test_destroy_confirmation_requires_a_prior_request() -> None:
+    provider = FakeSandboxProvider(capacity=1)
+    allocation = provider.create(
+        request_key="case-1", owner="worker-a", spec=SPEC, lease=timedelta(minutes=1)
+    )
+    with pytest.raises(ContractViolation) as error:
+        provider.confirm_destroy(allocation.allocation_id)
+    assert error.value.code is ErrorCode.CONFLICT
+
+
 def test_fencing_and_artifact_budget_are_enforced() -> None:
     provider = FakeSandboxProvider(capacity=1)
     limited_spec = SPEC.model_copy(update={"max_artifact_bytes": 2})

@@ -57,7 +57,7 @@
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页和有界 PostgreSQL polling tail；高吞吐 live broker tail、React 工作台和生产认证仍待实现 |
-| C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；3 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
+| C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
 | D-01 | IN PROGRESS | 新增 provider-neutral OIDC claims→`AuthContext` 边界：issuer/audience/时间/tenant/Case scope 校验；9 项离线认证测试通过；JWT/JWKS 验签与实际 IdP 尚未接入 |
 | C-03 | IN PROGRESS | 新增 provider-neutral Tracer、InMemoryTracer、可选 OTel bridge，并为 Outbox publish 埋点；离线回归通过；Exporter、采样/留存和生产监控尚未配置 |
 
@@ -79,6 +79,8 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 - 2026-09-12 / A3-03 tail 增量：新增 broker-neutral `PostgresEventTail` 和 `follow=true` SSE 参数；每轮查询使用短事务，最长等待 60 秒，保留 `Last-Event-ID`/after 游标；真实 PostgreSQL SSE/tail 测试 `4 passed`，完整 PG 回归 `288 passed`。Kafka/NATS/Redis live adapter、React 工作台、真实 OIDC 与生产压测仍未实现。
 
 - 2026-09-12 / A3-02 观察账本增量：新增迁移 009 与 `InvestigationObservationRepository`，实现工单范围、来源事件/evidence ID 双重幂等、完整 JSON 保存、撤回持久化和重启后完整快照评估；真实 PostgreSQL 全量回归 `290 passed`，静态检查通过。真实来源认证和 EGM 调查 schema 仍未完成。
+
+- 2026-09-12 / C-01 沙箱边界修复：`confirm_destroy()` 现在必须先经过 `DESTROY_REQUESTED`，重复确认保持幂等；4 项沙箱离线测试和静态检查通过。Fake 仍不是安全隔离，也未接入 E2B/Kubernetes。
 
 - 2026-09-12 / A1-04 Compose 启动边界：API 增加 `/readyz` healthcheck，Worker profile 等待 API readiness（从而等待迁移完成），补充 daemon/跨租户队列环境参数；`docker compose config` 已静态核对，未做生产部署。
 

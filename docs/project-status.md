@@ -55,6 +55,7 @@
 | A2-03 | IN PROGRESS | 新增 PostgreSQL 全局/租户执行槽、slot 租约心跳、释放与按 Run 幂等重试预算；真实 PostgreSQL 全量回归 268 项通过；持久公平队列表已建，跨租户调度策略和压测仍待补齐 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser 与 `ResponsesAdapter`：校验原生响应、usage、函数参数、工具白名单、托管工具事件和 provider 错误脱敏；离线回归通过；尚未发起真实 provider 请求 |
+| A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter`：可信连接器规范化写入、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；2 项离线适配测试通过；真实调查 EGM schema 尚未固定 |
 
 ## 5. 工作区与提交边界
 
@@ -206,7 +207,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 A2-03：完成跨租户公平调度与压测后，补 A3-02 调查 EGM 接入和模型调用预算。A1-02 已完成最小 API/auth；真实 OIDC、SSE、完整业务 Harness 和生产连接器仍未实现。
+当前推进 A3-02：固定调查 EGM schema 并接入真实观察存储后，补 A3-03 SSE 工作台和模型调用预算。A1-02 已完成最小 API/auth；真实 OIDC、完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 

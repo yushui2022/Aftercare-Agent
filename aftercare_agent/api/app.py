@@ -52,6 +52,23 @@ def _error(exc: ContractViolation) -> HTTPException:
 def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
     app = FastAPI(title="Aftercare Agent", version="v1")
 
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        """Liveness only: no dependency check and safe for process probes."""
+        return {"status": "ok"}
+
+    @app.get("/readyz")
+    def readyz() -> dict[str, str]:
+        """Readiness: verify the configured database connection is usable."""
+        try:
+            with database.connection() as connection:
+                connection.execute("SELECT 1")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="not_ready"
+            ) from exc
+        return {"status": "ready"}
+
     def auth(request: Request) -> AuthContext:
         tenant = request.headers.get("X-Synthetic-Tenant")
         subject = request.headers.get("X-Synthetic-Subject")
@@ -174,7 +191,13 @@ def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
 def create_default_app() -> FastAPI:
     dsn = os.environ.get("DATABASE_URL", "")
     if not dsn:
-        return FastAPI(title="Aftercare Agent", version="v1")
+        app = FastAPI(title="Aftercare Agent", version="v1")
+
+        @app.get("/healthz")
+        def healthz() -> dict[str, str]:
+            return {"status": "ok"}
+
+        return app
     return create_app(
         Database(dsn), allow_synthetic=os.environ.get("AFTERCARE_ALLOW_SYNTHETIC_IDENTITY") == "1"
     )

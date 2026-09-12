@@ -1,4 +1,5 @@
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from aftercare_agent.api.app import create_default_app
@@ -33,3 +34,12 @@ def test_default_app_can_be_imported_without_database_configuration(
     monkeypatch.delenv("DATABASE_URL", raising=False)
     app = create_default_app()
     assert app.title == "Aftercare Agent"
+
+
+def test_default_app_exposes_liveness_probe_without_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    response = TestClient(create_default_app()).get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}

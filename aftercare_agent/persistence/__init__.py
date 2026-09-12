@@ -9,6 +9,7 @@ from .admission import (
     ScheduledClaim,
     SlotReservation,
 )
+from .approvals import ApprovalRepository
 from .db import Database, migrate
 from .events import EventRepository, OutboxDelivery
 from .investigations import InvestigationObservationRepository
@@ -26,6 +27,7 @@ __all__ = [
     "AdmissionRepository",
     "AdmissionResult",
     "ActionRepository",
+    "ApprovalRepository",
     "AttemptRepository",
     "CaseRepository",
     "RetryReservation",

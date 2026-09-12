@@ -36,6 +36,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
 | [Responses 模型适配边界](docs/model-adapters.md) | A3-01 严格解析、工具白名单、托管工具事件、provider 错误脱敏与 token/cost budget |
 | [Inbox/Outbox 说明](docs/events.md) | A2-01 PostgreSQL 事务内事件、来源幂等与消费者去重；外部 Broker 尚未接入 |
+| [Action Ledger 与审批门禁](docs/actions.md) | B-01 台账与 B-02 审批参数/身份/策略/有效期绑定；真实供应商尚未接入 |
 | [跨实例执行准入](docs/admission.md) | A2-03 全局/租户执行槽、数据库租约心跳和按 Run 重试预算 |
 | [本地 Compose](deploy/compose/README.md) | A1-04 开发环境：PostgreSQL + API，Worker 可选 profile；不含模型或真实动作 |
 | [Agent 执行与恢复规则](AGENTS.md) | 恢复阅读顺序、状态维护和授权/安全边界 |
@@ -74,7 +75,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 
 初始方案以 PostgreSQL 为持久化起点。E2B 与 Kubernetes Agent Sandbox 是按部署边界评估的候选方案；Kafka、NATS JetStream、Redis Streams、ACP 和完整记忆平台不是必须同时部署的依赖。
 
-EGM 0.6 源码支持 Worker 内嵌 EvidenceApplication：HTTP 只是可选入口，权限、对象绑定、幂等、revision 与审计不再依赖单独部署服务。多机 Worker 共享 PostgreSQL；同工单短事务串行，不同工单可以并发。Aftercare 已实现 aftercare_agent/evidence.py 的受控退款证据适配层及合成回执测试。它不执行真实退款；业务来源认证、审批、租约与外部动作幂等仍需实现。源码版本尚未发布 PyPI。
+EGM 0.6 源码支持 Worker 内嵌 EvidenceApplication：HTTP 只是可选入口，权限、对象绑定、幂等、revision 与审计不再依赖单独部署服务。多机 Worker 共享 PostgreSQL；同工单短事务串行，不同工单可以并发。Aftercare 已实现 aftercare_agent/evidence.py 的受控退款证据适配层及合成回执测试，并补有 Action 审批参数门禁。它不执行真实退款；业务来源认证、审批等待唤醒、租约与外部动作幂等仍需实现。源码版本尚未发布 PyPI。
 
 aftercare_agent/domain 已提供运行时与调查的 v1 类型、输入校验和确定性规则。它们能验证合法状态、引用和候选决策，但不执行数据库事务、创建 Worker 或调用模型；真正的多进程执行权、恢复与 EGM 调查接入仍按后续阶段实现。
 

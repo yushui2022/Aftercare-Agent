@@ -79,11 +79,13 @@ def test_aftercare_postgres_migration_is_packaged() -> None:
     waits = migrations.joinpath("003_waits.sql")
     delivery = migrations.joinpath("004_outbox_delivery.sql")
     actions = migrations.joinpath("006_actions.sql")
+    approvals = migrations.joinpath("010_approvals.sql")
     projection = migrations.joinpath("005_projection.sql")
     assert events.is_file() and "aftercare_outbox" in events.read_text(encoding="utf-8")
     assert waits.is_file() and "aftercare_wait_wakeups" in waits.read_text(encoding="utf-8")
     assert delivery.is_file() and "delivery_attempts" in delivery.read_text(encoding="utf-8")
     assert actions.is_file() and "aftercare_actions" in actions.read_text(encoding="utf-8")
+    assert approvals.is_file() and "aftercare_approvals" in approvals.read_text(encoding="utf-8")
     assert projection.is_file() and "aftercare_projection_positions" in projection.read_text(
         encoding="utf-8"
     )

@@ -45,6 +45,9 @@ class ActionIntent(CaseScope):
     amount_minor: AmountMinor = Field(pattern=r"^[1-9][0-9]*$", max_length=38)
     currency: Currency = Field(pattern=r"^[A-Z]{3}$")
     provider_idempotency_key: Identifier | None = None
+    # Safe by default: a dispatcher must present a matching APPROVED record.
+    # Low-risk internal actions can opt out explicitly after policy review.
+    approval_required: bool = True
 
 
 class ActionRecord(ActionIntent):

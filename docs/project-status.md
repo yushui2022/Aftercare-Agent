@@ -8,11 +8,11 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权继续完善项目；本轮把 A2-03 durable queue 接入 Worker，并完成跨租户公平、槽压力与失联回收验收；当前已授权推送已验证提交 |
+| 本轮请求范围 | 用户授权继续完善项目；本轮在已推送运行骨架上补 B-02-01 持久化审批门禁，并完成参数/策略/有效期/幂等与 fail-closed 验收 |
 | 当前任务 | A3/C/D 运行控制面与生产边界进行中 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | A3-03：broker-neutral live tail/工作台；A3-02：调查 EGM schema 与真实模型接线；C-02：选定真实沙箱后端 |
-| 活跃实现任务 | broker-neutral live tail/工作台、调查 EGM schema/真实模型接线和真实沙箱后端选型；后续接入业务 Harness 与真实 provider |
+| 下一项代码候选 | B-02-02：审批与 WAITING_APPROVAL/Inbox 原子唤醒；A3-03：broker-neutral live tail/工作台；A3-02：调查 EGM schema 与真实模型接线 |
+| 活跃实现任务 | B-02-01 审批门禁实现与回归；后续接入审批等待唤醒、业务 Harness、真实 provider 和真实沙箱后端 |
 | 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
 ## 2. 核验过的源码基线
@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger 和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；OIDC claims 转换边界已实现，真实认证仍未接入。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合、审批等待唤醒、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；OIDC claims 转换边界已实现，真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；PostgreSQL 观察账本与重载已实现，但真实调查 EGM schema 与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -53,7 +53,8 @@
 | A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 已有有界持久回放，live tail/工作台待补 |
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
-| B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
+| B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；审批门禁已补入但支付聚合、额度预留和真实供应商对账仍待实现 |
+| B-02 | IN PROGRESS | B-02-01 已实现 `ApprovalRepository`、010 迁移、参数/策略/身份/有效期绑定、重复决定幂等和 `RESERVED` 派发 fail-closed；审批尚未绑定 WAITING_APPROVAL/Inbox 唤醒、真实权限 API 或供应商回执核对 |
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页和有界 PostgreSQL polling tail；高吞吐 live broker tail、React 工作台和生产认证仍待实现 |
@@ -63,11 +64,11 @@
 
 ## 5. 工作区与提交边界
 
-本次待提交范围为 A2-03：PostgreSQL durable execution queue、跨租户 cursor 调度、过期 IN_FLIGHT 回收、Worker/CLI 接线、测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本次待提交范围为 B-02-01：Action 审批领域契约、010 PostgreSQL 迁移、审批台账、派发 fail-closed 门禁、测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：本轮用户明确要求提交并推送；本轮 A2-03 增量在本地 PostgreSQL 验收后提交并核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：本轮用户明确要求提交并推送；本轮 B-02-01 增量将在本地 PostgreSQL 验收后提交并核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
@@ -81,6 +82,10 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 - 2026-09-12 / A3-02 观察账本增量：新增迁移 009 与 `InvestigationObservationRepository`，实现工单范围、来源事件/evidence ID 双重幂等、完整 JSON 保存、撤回持久化和重启后完整快照评估；真实 PostgreSQL 全量回归 `290 passed`，静态检查通过。真实来源认证和 EGM 调查 schema 仍未完成。
 
 - 2026-09-12 / C-01 沙箱边界修复：`confirm_destroy()` 现在必须先经过 `DESTROY_REQUESTED`，重复确认保持幂等；4 项沙箱离线测试和静态检查通过。Fake 仍不是安全隔离，也未接入 E2B/Kubernetes。
+
+- 2026-09-12 / B-02-01 审批门禁增量：新增 `010_approvals.sql`、`ApprovalRequest/ApprovalRecord` 和 `ApprovalRepository`；Action 默认 `approval_required=true`，派发按 Case → Run → Action → Approval 锁序重查 APPROVED、摘要、当前策略和数据库有效期，缺失审批 fail closed。临时 PostgreSQL 审批/Action 回归 `8 passed`，离线全量 `243 passed`；审批等待唤醒、真实认证和供应商仍未接入。
+
+- 2026-09-12 / B-02-01 完整回归：审批门禁加入显式低风险豁免路径、过期结算和打包迁移资源；临时 PostgreSQL 全量回归 `296 passed`，Ruff、格式、严格 mypy、`git diff --check` 和 wheel/sdist 构建通过。临时 PostgreSQL 容器已移除；远端 CI、真实认证和供应商仍未验证。
 
 - 2026-09-12 / A1-04 Compose 启动边界：API 增加 `/readyz` healthcheck，Worker profile 等待 API readiness（从而等待迁移完成），补充 daemon/跨租户队列环境参数；`docker compose config` 已静态核对，未做生产部署。
 

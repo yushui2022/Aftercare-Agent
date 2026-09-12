@@ -16,7 +16,7 @@ EvidenceApplication 在进程内调用它，多机共享 PostgreSQL。HTTP 是�
 - EGM application：统一权限、输入验证、工单范围、schema 指纹、幂等、版本和审计。
 - EGM storage：SQLite 本地开发；PostgreSQL 为多机 Worker 提供共享事务存储。
 - AftercareEvidence：台账绑定的退款意图、可信连接器回执和固定措辞的完成声明。
-- Aftercare 业务层：审批、Case/Action 台账、租约 fencing、外部幂等和结果核对，仍待实现。
+- Aftercare 业务层：Case/Action 台账、租约 fencing、外部幂等和结果核对仍在实现；Action 的参数绑定审批门禁已落地，审批等待唤醒和真实审批身份仍待实现。
 - 沙箱：只运行隔离工具，不获得 PostgreSQL 连接、EGM 存储对象或高权限身份。
 
 ## 并发取舍

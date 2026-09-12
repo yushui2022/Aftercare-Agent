@@ -19,6 +19,8 @@ from aftercare_agent.actions.ledger import (
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.runtime import ExecutionClaim
 
+from .approvals import ApprovalRepository
+
 _ACTION_FIELDS = (
     "tenant_id",
     "case_id",
@@ -31,6 +33,7 @@ _ACTION_FIELDS = (
     "amount_minor",
     "currency",
     "provider_idempotency_key",
+    "approval_required",
     "state",
     "provider_reference",
     "result_sha256",
@@ -130,7 +133,8 @@ class ActionRepository:
         inserted = conn.execute(
             "INSERT INTO aftercare_actions(tenant_id,case_id,order_id,action_id,action_type,"
             "business_key,idempotency_key,parameters_sha256,amount_minor,currency,"
-            "provider_idempotency_key,state) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'RESERVED') "
+            "provider_idempotency_key,approval_required,state) VALUES "
+            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'RESERVED') "
             "ON CONFLICT DO NOTHING RETURNING " + ",".join(_ACTION_FIELDS),
             (
                 intent.tenant_id,
@@ -144,6 +148,7 @@ class ActionRepository:
                 intent.amount_minor,
                 intent.currency,
                 intent.provider_idempotency_key,
+                intent.approval_required,
             ),
         ).fetchone()
         if inserted is not None:
@@ -193,6 +198,7 @@ class ActionRepository:
             and current.amount_minor == intent.amount_minor
             and current.currency == intent.currency
             and current.provider_idempotency_key == intent.provider_idempotency_key
+            and current.approval_required == intent.approval_required
         )
 
     def _locked(
@@ -213,6 +219,9 @@ class ActionRepository:
         conn: psycopg.Connection[Any],
         action_id: str,
         claim: ExecutionClaim,
+        *,
+        approval_id: str | None = None,
+        policy_version: str | None = None,
     ) -> ActionRecord:
         """Mark RESERVED as REQUESTED under the current Run fence."""
         self._claim_valid(conn, claim)
@@ -220,6 +229,24 @@ class ActionRepository:
         if current.case_id != claim.case_id:
             raise ContractViolation(ErrorCode.FORBIDDEN, "action scope does not match claim")
         if current.state == "RESERVED":
+            if current.approval_required:
+                if approval_id is None:
+                    raise ContractViolation(ErrorCode.FORBIDDEN, "action approval is required")
+                if policy_version is None:
+                    raise ContractViolation(ErrorCode.INVALID_INPUT, "approval policy is required")
+                ApprovalRepository().lock_for_dispatch(
+                    conn,
+                    tenant_id=current.tenant_id,
+                    case_id=current.case_id,
+                    action_id=current.action_id,
+                    approval_id=approval_id,
+                    action_parameters_sha256=current.parameters_sha256,
+                    policy_version=policy_version,
+                )
+            elif approval_id is not None:
+                raise ContractViolation(
+                    ErrorCode.INVALID_INPUT, "approval supplied for exempt action"
+                )
             return self._update_state(conn, current, "REQUESTED", claim=claim)
         if current.state in ("REQUESTED", "UNKNOWN", "CONFIRMED", "FAILED"):
             return current

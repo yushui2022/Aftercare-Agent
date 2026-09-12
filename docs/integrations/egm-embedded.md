@@ -9,7 +9,7 @@
 认证 / 调度（宿主负责可信身份和工单范围）
                     │
           Aftercare Worker + Harness
-             ├─ 业务台账 / 审批 / 租约（待实现）
+             ├─ 业务台账 / Action 审批门禁 / 租约
              ├─ AftercareEvidence 受限适配层
              │       └─ EGM EvidenceApplication（进程内）
              │               └─ PostgreSQL（跨 Worker 共享）

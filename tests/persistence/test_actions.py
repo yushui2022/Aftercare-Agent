@@ -1,14 +1,21 @@
 """PostgreSQL Action Ledger tests with a deterministic provider double."""
 
 import os
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from aftercare_agent.actions import ActionIntent
+from aftercare_agent.domain.approvals import ApprovalRequest
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
-from aftercare_agent.persistence import ActionRepository, Database, RunRepository, migrate
+from aftercare_agent.persistence import (
+    ActionRepository,
+    ApprovalRepository,
+    Database,
+    RunRepository,
+    migrate,
+)
 
 
 @pytest.fixture()
@@ -30,6 +37,7 @@ def _intent(
     amount: str = "2500",
     business: str = "payment:p1:refund:r1",
     idem: str = "request-1",
+    approval_required: bool = True,
 ) -> ActionIntent:
     return ActionIntent(
         tenant_id=tenant,
@@ -43,6 +51,7 @@ def _intent(
         amount_minor=amount,
         currency="USD",
         provider_idempotency_key="refund:r1",
+        approval_required=approval_required,
     )
 
 
@@ -66,6 +75,68 @@ def _seed(db: Database, tenant: str, case_id: str, run_id: str) -> None:
                 input_version=1,
             ),
         )
+
+
+def _approve(db: Database, tenant: str, action_id: str, *, policy: str = "refund-v1") -> str:
+    with db.transaction() as conn:
+        action = ActionRepository().get(conn, tenant, action_id)
+        assert action is not None
+        request = ApprovalRequest(
+            tenant_id=tenant,
+            case_id=action.case_id,
+            approval_id=f"approval-{action_id}",
+            action_id=action.action_id,
+            action_parameters_sha256=action.parameters_sha256,
+            policy_version=policy,
+            requested_by="agent-service",
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+        ApprovalRepository().request(conn, request)
+        ApprovalRepository().decide(
+            conn,
+            tenant,
+            request.approval_id,
+            approver="ops-reviewer",
+            decision="APPROVED",
+            decision_idempotency_key=f"decision-{action_id}",
+        )
+    return request.approval_id
+
+
+def test_reserved_action_fails_closed_until_approved(db: Database) -> None:
+    tenant, case_id, run_id = "action-gate", "case-1", "run-1"
+    _seed(db, tenant, case_id, run_id)
+    ledger = ActionRepository()
+    runs = RunRepository()
+    with db.transaction() as conn:
+        action = ledger.reserve(conn, _intent(tenant)).action
+        claim = runs.claim(conn, tenant, run_id, "worker-a", timedelta(seconds=30))
+        with pytest.raises(ContractViolation) as error:
+            ledger.mark_requested(conn, action.action_id, claim, policy_version="refund-v1")
+        assert error.value.code is ErrorCode.FORBIDDEN
+    approval_id = _approve(db, tenant, "action-1")
+    with db.transaction() as conn:
+        requested = ledger.mark_requested(
+            conn,
+            "action-1",
+            claim,
+            approval_id=approval_id,
+            policy_version="refund-v1",
+        )
+        assert requested.state == "REQUESTED"
+
+
+def test_explicitly_exempt_internal_action_can_dispatch_without_approval(db: Database) -> None:
+    tenant, case_id, run_id = "action-exempt", "case-1", "run-1"
+    _seed(db, tenant, case_id, run_id)
+    ledger = ActionRepository()
+    runs = RunRepository()
+    intent = _intent(tenant, approval_required=False)
+    with db.transaction() as conn:
+        action = ledger.reserve(conn, intent).action
+        claim = runs.claim(conn, tenant, run_id, "worker-a", timedelta(seconds=30))
+        requested = ledger.mark_requested(conn, action.action_id, claim)
+        assert requested.state == "REQUESTED"
 
 
 class SyntheticProvider:
@@ -120,8 +191,16 @@ def test_result_requires_current_claim_and_unknown_is_not_retried(db: Database) 
     runs = RunRepository()
     with db.transaction() as conn:
         action = ledger.reserve(conn, _intent(tenant)).action
+    approval_id = _approve(db, tenant, action.action_id)
+    with db.transaction() as conn:
         claim = runs.claim(conn, tenant, run_id, "worker-a", timedelta(seconds=30))
-        ledger.mark_requested(conn, action.action_id, claim)
+        ledger.mark_requested(
+            conn,
+            action.action_id,
+            claim,
+            approval_id=approval_id,
+            policy_version="refund-v1",
+        )
         provider = SyntheticProvider()
         receipt, digest = provider.request(action)
         unknown = ledger.mark_result(conn, action.action_id, claim, state="UNKNOWN")
@@ -155,10 +234,19 @@ def test_stale_claim_cannot_record_provider_result(db: Database) -> None:
     tenant, case_id, run_id = "action-stale", "case-1", "run-1"
     _seed(db, tenant, case_id, run_id)
     ledger = ActionRepository()
+    approval_id: str
     with db.transaction() as conn:
         action = ledger.reserve(conn, _intent(tenant)).action
+    approval_id = _approve(db, tenant, action.action_id)
+    with db.transaction() as conn:
         first = RunRepository().claim(conn, tenant, run_id, "worker-a", timedelta(seconds=30))
-        ledger.mark_requested(conn, action.action_id, first)
+        ledger.mark_requested(
+            conn,
+            action.action_id,
+            first,
+            approval_id=approval_id,
+            policy_version="refund-v1",
+        )
         conn.execute(
             "UPDATE aftercare_runs SET lease_until=clock_timestamp() - interval '1 second' "
             "WHERE tenant_id=%s AND run_id=%s",

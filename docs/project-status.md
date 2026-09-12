@@ -8,11 +8,11 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权继续完善项目；完成 A1-02 API/auth、A1-03 Fake Harness，并推进 A1-04/A2 Worker、Wait 与 Outbox；当前已授权推送已验证提交 |
-| 当前任务 | C-01/D-01 运行控制面与生产边界进行中 |
+| 本轮请求范围 | 用户授权继续完善项目；本轮把 A2-03 durable queue 接入 Worker，并完成跨租户公平、槽压力与失联回收验收；当前已授权推送已验证提交 |
+| 当前任务 | A3/C/D 运行控制面与生产边界进行中 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | A2-03：公平队列调度与压测；A3-02：模型调用预算与供应商重试策略 |
-| 活跃实现任务 | Responses 严格解析与工具白名单；后续接入业务 Harness、沙箱和真实 provider |
+| 下一项代码候选 | A3-03：broker-neutral live tail/工作台；A3-02：调查 EGM schema 与真实模型接线；C-02：选定真实沙箱后端 |
+| 活跃实现任务 | broker-neutral live tail/工作台、调查 EGM schema/真实模型接线和真实沙箱后端选型；后续接入业务 Harness 与真实 provider |
 | 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
 ## 2. 核验过的源码基线
@@ -50,9 +50,9 @@
 | A1-02 | DONE | 新增 FastAPI 受理/读取接口、显式合成身份边界、API 单测；临时 PostgreSQL 端到端 7 项测试通过 |
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
 | A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
-| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 投影接口待补 |
+| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 已有有界持久回放，live tail/工作台待补 |
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
-| A2-03 | IN PROGRESS | 新增 PostgreSQL 全局/租户执行槽、slot 租约心跳、释放与按 Run 幂等重试预算；真实 PostgreSQL 全量回归 268 项通过；持久公平队列表已建，跨租户调度策略和压测仍待补齐 |
+| A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter`：可信连接器规范化写入、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；2 项离线适配测试通过；真实调查 EGM schema 尚未固定 |
@@ -63,15 +63,18 @@
 
 ## 5. 工作区与提交边界
 
-本次待提交范围为 A2-02/A2-03：Worker 故障注入、PostgreSQL 执行槽/重试预算、测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本次待提交范围为 A2-03：PostgreSQL durable execution queue、跨租户 cursor 调度、过期 IN_FLIGHT 回收、Worker/CLI 接线、测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：本轮用户明确要求提交并推送；基础与 A2-02 增量已推送，A3-01 本轮提交后再核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：本轮用户明确要求提交并推送；本轮 A2-03 增量在本地 PostgreSQL 验收后提交并核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
+
+
+- 2026-09-12 / A2-03 durable scheduler：新增 008 Run 状态同步触发器和队列回填；`run_next(tenant_id=None)` 使用持久 tenant cursor 轮转，跳过租户准入已满的队列，并按 Run 过期 lease 回收 IN_FLIGHT。临时 PostgreSQL 17 全量回归 `285 passed`；新增跨租户轮转、租户限额跳过和失联回收测试；Ruff、格式、严格 mypy、wheel 构建和 `git diff --check` 通过。测试容器已移除，未连接生产数据库。
 
 ### A1-02：最小 API 与认证边界
 
@@ -211,7 +214,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 C/D 运行控制面：先将 SSE 回放接 live broker tail 与工作台，再固定调查 EGM schema/模型预算，并选择真实沙箱后端；OIDC claims 边界已实现但真实 JWKS/IdP、完整业务 Harness 和生产连接器仍未实现。
+当前推进 A3/C/D 运行控制面：先将 SSE 回放接 broker-neutral live tail 与工作台，再固定调查 EGM schema/真实模型接线，并选择真实沙箱后端；OIDC claims 边界已实现但真实 JWKS/IdP、完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 

@@ -77,9 +77,9 @@ flowchart TB
 | 已实现 | EGM 公共应用层的权限、工单范围、输入验证、schema 指纹、幂等、revision 与审计 |
 | 已实现 | SQLite/真实 PostgreSQL 两个后端，以及显式 join 宿主事务 |
 | 已实现 | 固定退款完成声明，失败回执与绑定错配的门控；不是自由事实文本 |
-| 待实现 | 完整 API 服务、Session/Case/Run/Step/Attempt、Harness、调度、等待与检查点 |
-| 待实现 | Action Ledger、审批、跨工单订单约束、租约/fencing、真实业务连接器 |
-| 待实现 | 模型适配器、沙箱、SSE、OTel 接线、容器部署与生产压测 |
+| 已实现（骨架） | API、Session/Case/Run/Step/Attempt、Fake Harness、Worker、等待、检查点与 PostgreSQL 调度队列 |
+| 已实现（骨架） | Action Ledger、跨工单 business key 幂等、租约/fencing、执行槽与重试预算；审批/真实业务连接器仍待实现 |
+| 已实现（边界） | Responses 解析/预算、SSE 持久回放、OIDC claims 转换、OTel tracer 边界、Fake 沙箱；真实模型、live tail、JWKS、E2B/Kubernetes 和生产压测仍待实现 |
 | 未承诺 | 数据库 HA、RLS、保留删除、备份恢复体系、真实退款 exactly-once |
 
 当前 [evidence.py](../aftercare_agent/evidence.py) 的 propose_completion 通过时，只说明固定的完成声明获得证据支持。它没有实现 Case 关闭，也没有封装节点 transition。EGM 的 transition 是另一项受权限约束的接口，后续由可信业务编排调用。
@@ -94,7 +94,7 @@ flowchart TB
 
 ### 开发、试点和规模化的部署顺序
 
-开发阶段用 Docker Compose 表达 API、Worker、PostgreSQL、对象存储兼容服务和必要观测组件。API 与 Worker 可以来自同一个 Aftercare 镜像，用不同入口命令；EGM 固定提交构建成依赖包，装入 Worker 镜像，不部署必选 EGM 服务。当前仓库尚无这份 Compose 文件或完整入口命令。
+开发阶段用 Docker Compose 表达 API、Worker、PostgreSQL、对象存储兼容服务和必要观测组件。API 与 Worker 可以来自同一个 Aftercare 镜像，用不同入口命令；EGM 固定提交构建成依赖包，装入 Worker 镜像，不部署必选 EGM 服务。当前仓库已有开发 Compose 与 API/Worker 镜像，但仍需在 Linux/目标环境做完整启动验收。
 
 首个生产试点，我倾向于“应用容器 + 受管 PostgreSQL + 受管对象存储”。应用可以先在少量 Linux VM 或容器平台运行，数据库不依附应用容器的临时磁盘。若只有一台应用服务器，要明确它仍有单机故障域，不能把自动重启称作高可用。
 

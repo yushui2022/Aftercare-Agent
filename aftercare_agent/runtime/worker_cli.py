@@ -42,8 +42,10 @@ def main() -> int:
     tenant_id = os.environ.get("AFTERCARE_TENANT_ID", "")
     run_id = os.environ.get("AFTERCARE_RUN_ID", "")
     owner = os.environ.get("AFTERCARE_WORKER_ID", "worker-local")
-    if not dsn or not tenant_id:
-        raise SystemExit("DATABASE_URL and AFTERCARE_TENANT_ID are required")
+    if not dsn or (run_id and not tenant_id):
+        raise SystemExit(
+            "DATABASE_URL is required; AFTERCARE_TENANT_ID is required when running a specific Run"
+        )
     max_steps = _positive_int("AFTERCARE_MAX_STEPS", "8")
     lease = _seconds("AFTERCARE_LEASE_SECONDS", "30")
     heartbeat_text = os.environ.get("AFTERCARE_HEARTBEAT_SECONDS", "")
@@ -67,7 +69,7 @@ def main() -> int:
         try:
             daemon_result: WorkerLoopResult = run_daemon(
                 database,
-                tenant_id=tenant_id,
+                tenant_id=tenant_id or None,
                 owner=owner,
                 stop_event=stop,
                 idle_sleep=_seconds("AFTERCARE_IDLE_SLEEP_SECONDS", "1"),

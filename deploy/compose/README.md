@@ -3,7 +3,8 @@
 This is a development-only environment for the A1 API, PostgreSQL migration and
 an explicit one-shot Fake Worker slice. The default profile does not start a
 Worker; the `worker` profile can target a specific Run ID or claim the next
-READY Run for the configured tenant. It still has
+runnable Run for the configured tenant. If `AFTERCARE_TENANT_ID` is empty, the
+Worker uses the durable PostgreSQL queue's cross-tenant fairness cursor. It still has
 no model adapter, connector, sandbox, or real business action. Synthetic identity
 is enabled solely so the local API can be exercised; do not expose this compose
 file to a network or reuse its password.
@@ -33,10 +34,11 @@ docker compose -f deploy/compose/docker-compose.yml --profile worker run --rm wo
 
 The command exits after one lease-held slice and prints a JSON checkpoint
 summary. Repeat it to resume a `READY` run. If `AFTERCARE_RUN_ID` is omitted,
-the worker uses PostgreSQL `SKIP LOCKED` to claim one runnable `READY` run for
-the tenant and exits with `{"status":"idle"}` when none exists. This is a
-bounded poll, not yet a long-running scheduler; A2 adds durable wakeups and
-fair polling.
+the worker uses PostgreSQL `FOR UPDATE SKIP LOCKED` and the durable execution
+queue to claim one runnable `READY`/due retry run (for the configured tenant,
+or fairly across tenants when it is empty) and exits with
+`{"status":"idle"}` when none exists. This remains a bounded poll; daemon
+mode is the long-running scheduler entry point.
 
 The volume contains only local synthetic data. Production deployment still
 needs real authentication, secret injection, backups, TLS, migrations policy,

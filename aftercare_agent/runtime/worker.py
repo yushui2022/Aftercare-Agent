@@ -241,14 +241,18 @@ def run_once(
 def run_next(
     database: Database,
     *,
-    tenant_id: str,
+    tenant_id: str | None,
     owner: str,
     now: datetime | None = None,
     lease: timedelta = timedelta(seconds=30),
     max_steps: int = 8,
     heartbeat_interval: timedelta | None = None,
 ) -> WorkerResult | None:
-    """Claim and execute one runnable Run, or return ``None`` when idle."""
+    """Claim and execute one runnable Run, or return ``None`` when idle.
+
+    Passing a tenant dispatches only that tenant.  Passing ``None`` enables
+    the PostgreSQL-backed fair queue to share one Worker pool across tenants.
+    """
     _validate_duration("lease", lease)
     _validate_heartbeat_interval(lease, heartbeat_interval)
     _validate_steps(max_steps)
@@ -260,7 +264,7 @@ def run_next(
         if claim is None:
             return None
         slot = AdmissionRepository().acquire_slot(connection, claim, lease)
-        previous = checkpoints.get_latest(connection, tenant_id, claim.run_id)
+        previous = checkpoints.get_latest(connection, claim.tenant_id, claim.run_id)
     return _execute_claim(
         database,
         claim=claim,
@@ -276,7 +280,7 @@ def run_next(
 def run_daemon(
     database: Database,
     *,
-    tenant_id: str,
+    tenant_id: str | None,
     owner: str,
     stop_event: Event | None = None,
     idle_sleep: timedelta = timedelta(seconds=1),
@@ -286,13 +290,15 @@ def run_daemon(
     max_iterations: int | None = None,
     on_error: Callable[[Exception], None] | None = None,
 ) -> WorkerLoopResult:
-    """Poll READY Runs until stopped, with bounded idle backoff.
+    """Poll runnable Runs until stopped, with bounded idle backoff.
 
     ``max_iterations`` exists for deterministic tests and one-shot batch
     jobs.  Production callers normally provide a process-owned ``Event`` and
     stop it on SIGTERM; no in-memory counter is used for scheduling authority.
     Errors are counted and the loop continues after the same idle backoff so a
     transient database failure does not crash every worker process.
+    ``tenant_id=None`` uses the durable cross-tenant fairness cursor; a value
+    keeps the daemon pinned to one tenant for isolation or dedicated pools.
     """
     _validate_duration("lease", lease)
     _validate_duration("idle sleep", idle_sleep)

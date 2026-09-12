@@ -114,29 +114,73 @@ class RunRepository:
     def claim_next(
         self,
         connection: psycopg.Connection[Any],
-        tenant: str,
+        tenant: str | None,
         owner: str,
         lease: timedelta,
     ) -> ExecutionClaim | None:
-        """Claim the oldest runnable READY Run without blocking other Workers."""
+        """Claim one runnable Run through the durable fair queue.
+
+        ``tenant=None`` enables a shared Worker to dispatch across tenants in
+        round-robin order.  A tenant value preserves the original tenant-
+        pinned mode.  Queue rows are only ordering/wakeup records; an expired
+        RUNNING lease is eligible again and the Run fencing token is bumped in
+        the same transaction.
+        """
         row = connection.execute(
-            "SELECT tenant_id,case_id,run_id,fencing_token FROM aftercare_runs "
-            "WHERE tenant_id=%s AND state='READY' AND (available_at IS NULL "
-            "OR available_at <= clock_timestamp()) "
-            "ORDER BY available_at NULLS FIRST, run_id FOR UPDATE SKIP LOCKED LIMIT 1",
-            (tenant,),
+            "SELECT q.tenant_id,q.case_id,q.run_id,r.fencing_token,r.state "
+            "FROM aftercare_execution_queue q "
+            "JOIN aftercare_runs r ON r.tenant_id=q.tenant_id AND r.case_id=q.case_id "
+            "AND r.run_id=q.run_id "
+            "LEFT JOIN aftercare_tenant_fairness f ON f.tenant_id=q.tenant_id "
+            "WHERE ((q.state='READY' AND q.available_at <= clock_timestamp()) OR "
+            "(q.state='IN_FLIGHT' AND r.state='RUNNING' "
+            "AND r.lease_until <= clock_timestamp())) "
+            "AND (r.state='READY' OR (r.state='RETRY_AT' AND "
+            "r.available_at <= clock_timestamp()) OR "
+            "(r.state='RUNNING' AND r.lease_until <= clock_timestamp())) "
+            # Skip a saturated tenant so its backlog cannot block another
+            # tenant.  acquire_slot still performs the authoritative locked
+            # check in the same transaction; this count is only a prefilter.
+            "AND NOT EXISTS (SELECT 1 FROM aftercare_admission_limits l WHERE "
+            "((l.scope_kind='global' AND l.scope_id='global') OR "
+            "(l.scope_kind='tenant' AND l.scope_id=q.tenant_id)) AND "
+            "(SELECT count(*) FROM aftercare_execution_slots s WHERE "
+            "s.lease_until > clock_timestamp() AND "
+            "(l.scope_kind='global' OR s.tenant_id=q.tenant_id)) >= l.max_active_slots) "
+            + ("AND q.tenant_id=%s " if tenant is not None else "")
+            + "ORDER BY COALESCE(f.last_dispatch_seq,0), q.priority DESC, "
+            "q.available_at, q.queue_seq, q.tenant_id "
+            # Lock Run before the trigger touches its queue row, matching
+            # explicit claim/transition paths and avoiding queue->Run inversion.
+            "FOR UPDATE OF r SKIP LOCKED LIMIT 1",
+            (tenant,) if tenant is not None else (),
         ).fetchone()
         if row is None:
             return None
         token = int(row[3]) + 1
+        if row[4] == "RETRY_AT":
+            connection.execute(
+                "UPDATE aftercare_runs SET state='READY',available_at=NULL "
+                "WHERE tenant_id=%s AND case_id=%s AND run_id=%s",
+                (row[0], row[1], row[2]),
+            )
         updated = connection.execute(
             "UPDATE aftercare_runs SET state='RUNNING', lease_owner=%s, "
             "lease_until=clock_timestamp() + (%s * interval '1 second'), fencing_token=%s "
-            "WHERE tenant_id=%s AND case_id=%s AND run_id=%s AND state='READY' "
+            "WHERE tenant_id=%s AND case_id=%s AND run_id=%s AND "
+            "(state='READY' OR (state='RUNNING' AND lease_until <= clock_timestamp())) "
             "RETURNING tenant_id,case_id,run_id,fencing_token",
             (owner, lease.total_seconds(), token, row[0], row[1], row[2]),
         ).fetchone()
         assert updated is not None
+        connection.execute(
+            "INSERT INTO aftercare_tenant_fairness(tenant_id,last_dispatch_seq,dispatch_count) "
+            "VALUES (%s,nextval('aftercare_admission_dispatch_seq'),1) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET "
+            "last_dispatch_seq=nextval('aftercare_admission_dispatch_seq'), "
+            "dispatch_count=aftercare_tenant_fairness.dispatch_count+1",
+            (updated[0],),
+        )
         return ExecutionClaim(
             tenant_id=updated[0],
             case_id=updated[1],

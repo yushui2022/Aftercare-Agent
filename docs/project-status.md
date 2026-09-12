@@ -203,7 +203,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 A2-01：继续完成 Outbox 发布游标、gap buffer 和 SSE 投影；随后进入 A2-02 的双 Worker 故障接管。A1-02 已完成最小 API/auth；真实 OIDC、SSE、完整 Worker 调度和生产连接器仍未实现。
+当前推进 A2-02：完成双 Worker 故障注入与 fencing 压测；随后进入 A2-03 的租户并发配额。A1-02 已完成最小 API/auth；真实 OIDC、SSE、完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 
@@ -236,7 +236,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 - 2026-09-12 / A2-01 事件增量：新增 `aftercare_outbox`、`aftercare_inbox`、消费者应用记录及 `EventRepository`；真实 PostgreSQL 下事件专测 2 项与持久化既有 8 项共 10 项通过。随后新增 Wait/wakeup 迁移、`WaitRepository` 与 3 项真实 PostgreSQL 生命周期测试；外部 Broker、发布器和 gap buffer 尚未实现。
 
 - 2026-09-12 / A2-01 Wait 复验：临时 PostgreSQL 17（127.0.0.1:55437）执行 `pytest -q tests/persistence/test_waits.py`，`3 passed`；覆盖 PENDING 早到回执在激活时消费、ACTIVE 回复与超时的单一 wakeup、旧代次不推进新等待。测试后容器已移除，未连接业务数据库。离线全量回归 `214 passed, 2 skipped`，Ruff、格式检查和严格 mypy 通过。
-- 2026-09-12 / A2-02 Worker/Outbox 增量：新增独立连接租约心跳、可停止常驻轮询、CLI daemon 配置，以及 Outbox `PENDING→CLAIMED→ACKED` 投递租约、attempt fencing、退避重试和 FakePublisher。隔离 PostgreSQL 下持久化测试 `23 passed`、Worker loop `2 passed`；离线全量 `245 passed`，Ruff/格式/严格 mypy 全通过。待补双 Worker 故障注入、gap buffer 和远端 CI。
+- 2026-09-12 / A2-02 Worker/Outbox 增量：新增独立连接租约心跳、可停止常驻轮询、CLI daemon 配置，以及 Outbox `PENDING→CLAIMED→ACKED` 投递租约、attempt fencing、退避重试和 FakePublisher。临时 PostgreSQL 全量回归 `246 passed`，Ruff/格式/严格 mypy/`uv lock --check` 全通过。待补双 Worker 故障注入、gap buffer 和远端 CI。
 
 - 2026-09-12 / 数据库启动安全增量：`migrate()` 增加事务级 advisory lock 与历史迁移 SHA-256 校验，新增回归拒绝 SQL 漂移。临时 PostgreSQL 17 全量回归 `246 passed`、Ruff、格式、严格 mypy 和 `uv lock --check` 全通过；测试容器已移除。
 

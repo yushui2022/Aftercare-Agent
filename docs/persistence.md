@@ -11,7 +11,7 @@ Database.transaction()
     └─ CheckpointRepository.save() # 当前 owner/token/租约校验
 ```
 
-迁移使用 `aftercare_schema_migrations` 记录版本，业务表使用 `(tenant_id, case_id, ...)` 范围键。Run 领取必须在一个短事务中完成；模型、连接器和人工等待不能放在数据库事务内。租约时间来自 PostgreSQL `clock_timestamp()`，不是 Worker 本地时钟。旧 owner 的 token 或已过期租约不能续租或写检查点。
+迁移使用 `aftercare_schema_migrations` 记录版本和 SHA-256，并在启动时使用事务级 advisory lock 串行迁移。业务表使用 `(tenant_id, case_id, ...)` 范围键。Run 领取必须在一个短事务中完成；模型、连接器和人工等待不能放在数据库事务内。租约时间来自 PostgreSQL `clock_timestamp()`，不是 Worker 本地时钟。旧 owner 的 token 或已过期租约不能续租或写检查点。
 
 ## 本地测试
 
@@ -26,4 +26,4 @@ $env:DATABASE_URL = "postgresql://..."
 
 ## 当前未完成
 
-这不是完整运行时：状态转换事件、Wait/Inbox/Outbox、两个独立进程的故障恢复和真实 PostgreSQL 并发验收仍待 A1/A2 实施。当前 SQL 也不包含生产 RLS、备份恢复、HA 或保留删除策略。
+这不是完整运行时：真实业务 Harness、Action Ledger、生产认证、供应商连接器、沙箱和 SSE 投影仍待实施。Wait/Inbox/Outbox、发布租约、常驻 Worker 与基础 fencing 已有真实 PostgreSQL 验收；当前 SQL 仍不包含生产 RLS、备份恢复、HA 或保留删除策略。

@@ -44,6 +44,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [实现路线图](ROADMAP.md) | 分阶段目标、交付边界与验收条件 |
 | [EGM 0.6 嵌入式接入](docs/integrations/egm-embedded.md) | 当前默认方案：Worker 内嵌应用层、共享 PostgreSQL、事务和并发验证 |
 | [调查 EGM 适配](docs/integrations/egm-investigation.md) | A3-02 可信观察写入、完整观察集确定性评估与模型字段边界 |
+| [沙箱控制面契约](docs/sandbox.md) | C-01 Fake Provider、分配幂等、fencing、产物预算和销毁确认 |
 | [嵌入式架构决策](docs/decisions/0002-embedded-egm.md) | 代码独立不等于服务独立；模块、存储、业务权威各自的边界 |
 | [EGM 接入决策](docs/decisions/0001-evidence-gated-memory.md) | 有条件采用 Evidence-Gated-Memory，明确证据门控与业务权威的边界 |
 | [EGM 代码评估与验证](docs/research/evidence-gated-memory.md) | 固定提交的源码核查、65 项测试与三个合成边界探针 |

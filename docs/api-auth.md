@@ -28,3 +28,8 @@ API 端到端测试覆盖同键重放、同键改参冲突、跨租户读取拒�
 
 容器探针使用 `/healthz`（仅表示进程存活）和 `/readyz`（执行一次数据库连通性检查）。
 就绪检查失败时返回 `503`；它不替代迁移策略、连接池健康度或真实 OIDC 授权。
+
+`auth.oidc.auth_context_from_claims()` 提供真实身份的下一层边界：上游 JWT/JWKS 验签器
+传入已验证 claims，Aftercare 再校验 issuer、audience、过期/生效时间、tenant 和 Case
+范围，生成不可由请求体覆盖的 `AuthContext`。本项目不在该模块内实现 JWT 验签，也不把
+示例 IdP 当作生产配置；部署时必须绑定实际 JWKS、密钥轮换和权限映射。

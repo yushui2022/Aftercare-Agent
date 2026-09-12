@@ -17,10 +17,16 @@ class AuthContext:
     tenant_id: Identifier
     permissions: frozenset[str]
     synthetic: bool = False
+    case_ids: frozenset[Identifier] | None = None
 
     def require(self, permission: str) -> None:
         if permission not in self.permissions:
             raise ContractViolation(ErrorCode.FORBIDDEN, "permission denied")
+
+    def require_case(self, case_id: str, permission: str) -> None:
+        if self.case_ids is not None and case_id not in self.case_ids:
+            raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
+        self.require(permission)
 
 
 def synthetic_context(*, enabled: bool, tenant_id: str, subject_id: str) -> AuthContext:

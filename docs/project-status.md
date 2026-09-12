@@ -54,7 +54,7 @@
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | IN PROGRESS | 新增 PostgreSQL 全局/租户执行槽、slot 租约心跳、释放与按 Run 幂等重试预算；真实 PostgreSQL 全量回归 268 项通过；持久公平队列表已建，跨租户调度策略和压测仍待补齐 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
-| A3-01 | IN PROGRESS | 新增严格 Responses wire parser 与 `ResponsesAdapter`：校验原生响应、usage、函数参数、工具白名单、托管工具事件和 provider 错误脱敏；离线回归通过；尚未发起真实 provider 请求 |
+| A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter`：可信连接器规范化写入、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；2 项离线适配测试通过；真实调查 EGM schema 尚未固定 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay 端点、`Last-Event-ID`/after 游标和持久事件分页；真实 live broker tail、React 工作台和生产认证仍待实现 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；3 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |

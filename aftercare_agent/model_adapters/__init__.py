@@ -1,5 +1,6 @@
 """Strict model-provider boundaries; no provider credentials are stored here."""
 
+from .budget import ModelPricing, ModelUsageBudget
 from .responses import (
     HostedToolEvent,
     ModelClient,
@@ -26,4 +27,6 @@ __all__ = [
     "HostedToolEvent",
     "normalize_error",
     "normalize_response",
+    "ModelPricing",
+    "ModelUsageBudget",
 ]

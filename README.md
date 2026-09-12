@@ -34,7 +34,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [API 与认证边界](docs/api-auth.md) | A1-02 最小 FastAPI 受理/读取接口；当前仅支持显式合成身份测试模式 |
 | [SSE 事件回放](docs/events.md) | A3-03 case-scoped SSE replay、`Last-Event-ID` 续传与持久事件游标 |
 | [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
-| [Responses 模型适配边界](docs/model-adapters.md) | A3-01 严格解析、工具白名单、托管工具事件与 provider 错误脱敏 |
+| [Responses 模型适配边界](docs/model-adapters.md) | A3-01 严格解析、工具白名单、托管工具事件、provider 错误脱敏与 token/cost budget |
 | [Inbox/Outbox 说明](docs/events.md) | A2-01 PostgreSQL 事务内事件、来源幂等与消费者去重；外部 Broker 尚未接入 |
 | [跨实例执行准入](docs/admission.md) | A2-03 全局/租户执行槽、数据库租约心跳和按 Run 重试预算 |
 | [本地 Compose](deploy/compose/README.md) | A1-04 开始接线：PostgreSQL + API 的开发环境；不含 Worker、模型或真实动作 |

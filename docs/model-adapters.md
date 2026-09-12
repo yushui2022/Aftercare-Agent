@@ -21,3 +21,9 @@ Case scope、工具 schema、预算和 Action Ledger 再次门控；模型不能
 异常或凭证。
 
 当前适配器仍是 A3-01 的边界实现，不代表已经接入真实模型、SSE、沙箱或业务动作。
+
+`model_adapters.budget.ModelUsageBudget` 可在 Worker 检查点之外做一次明确的 usage
+结算：输入 token、输出 token 和 micro-USD 均用整数，`ModelPricing` 只允许非负单价。
+provider 响应通过 schema 校验后才能扣减；任一维度超额返回 `BUDGET_EXHAUSTED`，不会
+静默截断或把浮点价格写入账本。真实生产仍需把预算扣减与 Run checkpoint/租约放进同一
+持久事务，并按供应商账单校准价格。

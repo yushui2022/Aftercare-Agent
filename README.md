@@ -32,7 +32,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [A0-03 合成案件与确定性评测](docs/evals.md) | 12 个合成售后案件、固定预期和离线评测；不调用模型或真实业务系统 |
 | [PostgreSQL 持久化骨架](docs/persistence.md) | A1-01 当前已实现的迁移、租约/fencing 和检查点边界；完整运行时仍未完成 |
 | [API 与认证边界](docs/api-auth.md) | A1-02 最小 FastAPI 受理/读取接口；当前仅支持显式合成身份测试模式 |
-| [SSE 事件回放](docs/events.md) | A3-03 case-scoped SSE replay、`Last-Event-ID` 续传与持久事件游标 |
+| [SSE 事件回放](docs/events.md) | A3-03 case-scoped SSE replay、`Last-Event-ID` 续传、持久事件游标与有界 PostgreSQL tail |
 | [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
 | [Responses 模型适配边界](docs/model-adapters.md) | A3-01 严格解析、工具白名单、托管工具事件、provider 错误脱敏与 token/cost budget |
 | [Inbox/Outbox 说明](docs/events.md) | A2-01 PostgreSQL 事务内事件、来源幂等与消费者去重；外部 Broker 尚未接入 |
@@ -43,7 +43,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [完整技术文章](docs/architecture.md) | 从 Demo 到企业级：跨境电商售后 Agent 的并发、沙箱与故障恢复设计 |
 | [实现路线图](ROADMAP.md) | 分阶段目标、交付边界与验收条件 |
 | [EGM 0.6 嵌入式接入](docs/integrations/egm-embedded.md) | 当前默认方案：Worker 内嵌应用层、共享 PostgreSQL、事务和并发验证 |
-| [调查 EGM 适配](docs/integrations/egm-investigation.md) | A3-02 可信观察写入、完整观察集确定性评估与模型字段边界 |
+| [调查 EGM 适配](docs/integrations/egm-investigation.md) | A3-02 可信观察写入、PostgreSQL 观察账本、完整观察集确定性评估与模型字段边界 |
 | [沙箱控制面契约](docs/sandbox.md) | C-01 Fake Provider、分配幂等、fencing、产物预算和销毁确认 |
 | [可观测性边界](docs/observability.md) | C-03 OTel-friendly tracing、Outbox 发布 span、脱敏与审计边界 |
 | [嵌入式架构决策](docs/decisions/0002-embedded-egm.md) | 代码独立不等于服务独立；模块、存储、业务权威各自的边界 |

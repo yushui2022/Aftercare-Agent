@@ -32,7 +32,7 @@
 
 尚未存在：完整业务 Harness、支付聚合/审批、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger 和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；OIDC claims 转换边界已实现，真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
-当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；真实调查 schema、持久观察查询与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
+当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；PostgreSQL 观察账本与重载已实现，但真实调查 EGM schema 与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
 技术选择已写入 [tech-stack.md](tech-stack.md)。当前实际环境是 Windows、CPython 3.13.15、uv 0.9.26；EGM 0.6.0 固定完整 Git SHA，运行依赖与测试工具在 uv.lock 中锁定。FastAPI、PostgreSQL 服务、前端 TypeScript/React/Vite、Node/pnpm、模型和沙箱仍需在各自任务引入，不能把选型表当作已安装清单。
 

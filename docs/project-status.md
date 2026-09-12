@@ -51,7 +51,7 @@
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
 | A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
 | A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup 迁移与 `WaitRepository`；真实 PostgreSQL 下事件 10 项、Wait 3 项通过；gap buffer 和 SSE 投影尚未实现 |
-| A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试已实现；真实 PostgreSQL 持久化套件 23 项与 Worker loop 2 项通过；双 Worker 故障注入仍待补齐 |
+| A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试已实现；真实 PostgreSQL 持久化套件 23 项、Worker loop 2 项及双 Worker 竞争 1 项通过；更完整故障注入仍待补齐 |
 
 ## 5. 工作区与提交边界
 
@@ -239,6 +239,8 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 - 2026-09-12 / A2-02 Worker/Outbox 增量：新增独立连接租约心跳、可停止常驻轮询、CLI daemon 配置，以及 Outbox `PENDING→CLAIMED→ACKED` 投递租约、attempt fencing、退避重试和 FakePublisher。临时 PostgreSQL 全量回归 `246 passed`，Ruff/格式/严格 mypy/`uv lock --check` 全通过。待补双 Worker 故障注入、gap buffer 和远端 CI。
 
 - 2026-09-12 / 数据库启动安全增量：`migrate()` 增加事务级 advisory lock 与历史迁移 SHA-256 校验，新增回归拒绝 SQL 漂移。临时 PostgreSQL 17 全量回归 `246 passed`、Ruff、格式、严格 mypy 和 `uv lock --check` 全通过；测试容器已移除。
+
+- 2026-09-12 / A2-02 双 Worker 验收：新增两个独立数据库连接并发执行同一 Run 的集成测试，结果严格为 1 个完成、1 个被拒绝；PostgreSQL Worker 专测 `6 passed`，证明 Run fencing 不仅存在于单独 claim 测试。
 
 - 2026-09-07 / A0-02 完成：运行时/调查 v1 契约落到纯代码与正反例；206 项本地及独立 wheel 回归、类型/格式和 schema 验证通过。补正文摘要幂等、JSON 非有限值与嵌套测试打包问题。保留 WinError 32 的失败和替代构建记录，未提交/推送/部署；下一项候选 A0-03。
 

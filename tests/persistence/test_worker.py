@@ -2,6 +2,7 @@
 
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -79,6 +80,30 @@ def test_worker_persists_bounded_slice_and_resumes_to_completion(db: Database) -
         stored = RunRepository().get(connection, tenant, run_id)
         assert stored is not None
         assert stored.state == "COMPLETED"
+
+
+def test_two_independent_workers_only_one_can_advance_a_run(db: Database) -> None:
+    tenant, case_id, run_id = "worker-dual", "worker-case", "worker-run"
+    _seed(db, tenant, case_id, run_id)
+
+    def execute(owner: str) -> str:
+        try:
+            result = run_once(
+                db,
+                tenant_id=tenant,
+                run_id=run_id,
+                owner=owner,
+                now=NOW,
+                max_steps=8,
+            )
+            return f"completed:{result.owner}"
+        except ContractViolation as error:
+            return f"rejected:{error.code.value}"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(execute, ("worker-a", "worker-b")))
+    assert sum(item.startswith("completed:") for item in outcomes) == 1
+    assert sum(item.startswith("rejected:") for item in outcomes) == 1
 
 
 def test_expired_worker_cannot_save_after_takeover(db: Database) -> None:

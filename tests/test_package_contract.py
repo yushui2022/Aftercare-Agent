@@ -77,5 +77,7 @@ def test_aftercare_postgres_migration_is_packaged() -> None:
     assert "CREATE TABLE IF NOT EXISTS aftercare_cases" in migration.read_text(encoding="utf-8")
     events = migrations.joinpath("002_events.sql")
     waits = migrations.joinpath("003_waits.sql")
+    delivery = migrations.joinpath("004_outbox_delivery.sql")
     assert events.is_file() and "aftercare_outbox" in events.read_text(encoding="utf-8")
     assert waits.is_file() and "aftercare_wait_wakeups" in waits.read_text(encoding="utf-8")
+    assert delivery.is_file() and "delivery_attempts" in delivery.read_text(encoding="utf-8")

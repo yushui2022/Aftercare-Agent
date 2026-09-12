@@ -2,7 +2,7 @@
 
 from .admission import AdmissionRepository, AdmissionResult, CaseRepository
 from .db import Database, migrate
-from .events import EventRepository
+from .events import EventRepository, OutboxDelivery
 from .repositories import (
     AttemptRepository,
     CheckpointRepository,
@@ -20,6 +20,7 @@ __all__ = [
     "CheckpointRepository",
     "Database",
     "EventRepository",
+    "OutboxDelivery",
     "WaitRepository",
     "RunRepository",
     "SessionRepository",

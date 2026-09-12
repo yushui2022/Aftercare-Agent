@@ -31,7 +31,29 @@
 - 不写 PostgreSQL，不模拟外部动作成功；
 - 不替代 Wait/Inbox/Outbox、调度器和 Action Ledger。
 
-因此 Fake Harness 的价值是把“模型循环能够安全暂停并恢复”的纯规则固定下来。A1-04 已提供一次性 Worker CLI、`run_next()` 的 `SKIP LOCKED` 领取原语和 `worker` Compose profile；A2 再加入长运行调度、等待、消息去重和跨实例唤醒。
+因此 Fake Harness 的价值是把“模型循环能够安全暂停并恢复”的纯规则固定下来。A1-04 已提供一次性 Worker CLI、`run_next()` 的 `SKIP LOCKED` 领取原语和 `worker` Compose profile；A2-02 现在补上了可停止的 `run_daemon()` 轮询和独立连接租约心跳。
+
+## 常驻 Worker 与心跳
+
+`run_daemon()` 每次只领取一个 READY Run；没有任务时按 `idle_sleep` 退避，收到进程的停止事件或达到测试用 `max_iterations` 后返回计数结果。数据库仍是调度权威，进程内循环和计数器不会替代租约。
+
+Harness 在事务外执行时，`LeaseHeartbeat` 用独立数据库连接按租约约三分之一的间隔调用 `RunRepository.renew()`。心跳只延长当前 `owner/fencing_token` 的租约，不授予新权限；心跳报错后，切片拒绝保存，最终 checkpoint 事务仍会再次执行 fencing 校验。旧 Worker 的外部调用无法被 PostgreSQL 中断，所以连接器仍必须使用幂等键并在结果未知时走核对流程。
+
+本地常驻入口使用：
+
+```powershell
+$env:DATABASE_URL = 'postgresql://...'
+$env:AFTERCARE_TENANT_ID = 'tenant-a'
+$env:AFTERCARE_WORKER_DAEMON = '1'
+$env:AFTERCARE_WORKER_ID = 'worker-a'
+$env:AFTERCARE_LEASE_SECONDS = '30'
+$env:AFTERCARE_HEARTBEAT_SECONDS = '10'
+# 可选：测试/批处理运行到固定轮数后退出；生产常驻不设置
+# $env:AFTERCARE_MAX_ITERATIONS = '100'
+python -m aftercare_agent.runtime.worker_cli
+```
+
+按 `SIGINT`/`SIGTERM` 停止会先结束轮询；正在执行的切片仍以租约和 fencing 保护提交。该入口目前使用 Fake Harness，尚不等于生产模型、连接器、消息 Broker 或沙箱服务。
 
 ## 验证命令
 

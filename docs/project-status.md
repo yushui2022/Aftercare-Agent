@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权继续完善项目；完成 A1-02 API/auth、A1-03 Fake Harness，并推进 A1-04 Worker/Compose，尚未授权推送或部署 |
-| 当前任务 | A2-01 Inbox/Outbox 与 Wait 持久化进行中 |
-| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 已落地 Inbox/Outbox 与 Wait 原子唤醒基础 |
-| 下一项代码候选 | A2-01：Outbox 发布游标、gap buffer 与 SSE 投影 |
-| 活跃实现任务 | A2-01：事件持久化、每消费者去重、Wait 生命周期和旧代次隔离 |
-| 本轮外部行为 | 仅修改 Aftercare 本地代码与文档；无推送、模型调用、真实业务动作或部署 |
+| 本轮请求范围 | 用户授权继续完善项目；完成 A1-02 API/auth、A1-03 Fake Harness，并推进 A1-04/A2 Worker、Wait 与 Outbox；当前已授权推送已验证提交 |
+| 当前任务 | A2-02 Worker/Outbox 运行时增强进行中 |
+| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 原子基础已落地；A2-02 已加入心跳、常驻轮询和 Outbox 投递租约 |
+| 下一项代码候选 | A2-02：双 Worker 故障接管与租约 fencing 压测 |
+| 活跃实现任务 | A2-02：Worker 心跳/调度、Outbox 发布与 at-least-once 语义 |
+| 本轮外部行为 | 已将已验证基础提交 `5d360bb` 推送到 `origin/main`；当前 A2-02 增量尚未推送；无模型调用、真实业务动作或生产部署 |
 
 ## 2. 核验过的源码基线
 
@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整 Worker/业务 Harness、Action Ledger、真实供应商连接器、调查证据适配器、前端、沙箱接线、Outbox 发布器、gap buffer 和自动调度。当前 A1-03 只有数据库无关的 Fake Harness，A1-04 已有一次性 Worker CLI，用来验收恢复和预算边界，不是可部署的常驻 Worker。A2-01 已有 Wait/Inbox/Outbox 的事务基础，但还不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；真实认证仍未接入。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、Action Ledger、真实供应商连接器、调查证据适配器、前端、沙箱接线、gap buffer 和生产调度体系。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 只负责固定退款完成声明的证据验证。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；调查 EGM 适配、持久执行与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -49,16 +49,17 @@
 | A1-01 | DONE | 新增 PostgreSQL 迁移、受理幂等、Case/Session/Step/Attempt/Run/Checkpoint Repository；隔离 PostgreSQL 17 容器中 5 项集成测试通过 |
 | A1-02 | DONE | 新增 FastAPI 受理/读取接口、显式合成身份边界、API 单测；临时 PostgreSQL 端到端 7 项测试通过 |
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
-| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；真实 PG Worker 回归通过，仍缺长运行调度、远端 CI 和完整启动验收 |
-| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup 迁移与 `WaitRepository`；真实 PostgreSQL 下事件 10 项、Wait 3 项通过；发布器和 gap buffer 尚未实现 |
+| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
+| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup 迁移与 `WaitRepository`；真实 PostgreSQL 下事件 10 项、Wait 3 项通过；gap buffer 和 SSE 投影尚未实现 |
+| A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试已实现；真实 PostgreSQL 持久化套件 23 项与 Worker loop 2 项通过；双 Worker 故障注入仍待补齐 |
 
 ## 5. 工作区与提交边界
 
-本次待提交范围为 A0-03、A1-01、A1-02 与 A1-03 增量：`evals/`、`aftercare_agent/persistence/`、`aftercare_agent/auth/`、`aftercare_agent/api/`、`aftercare_agent/runtime/`，对应测试与文档，依赖和导航更新。此前 DOC-001/A0-01/A0-02 已在 `0c3b832` 固化。未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本次待提交范围为 A2-02 增量：Outbox 投递迁移/仓储、publisher、Worker 心跳/daemon、测试和文档；基础 A0-A1 增量已在 `5d360bb` 固化并推送。未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：本轮用户明确要求本地提交，本文随该交付提交保存；以 git log 和 git status 核验实际提交结果，不为了在文档里写入自身哈希反复修改提交。推送：本轮没有。部署：本轮没有。生产数据/真实业务操作：本轮没有。没有更新两个工作仓库的远端跟踪分支；此前 uv 取得过 EGM 固定提交，不等于远端 main 与 CI 状态核验。没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：本轮用户明确要求提交并推送；基础提交 `5d360bb` 已推送，A2-02 增量待本轮复验后提交/推送。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
@@ -235,6 +236,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 - 2026-09-12 / A2-01 事件增量：新增 `aftercare_outbox`、`aftercare_inbox`、消费者应用记录及 `EventRepository`；真实 PostgreSQL 下事件专测 2 项与持久化既有 8 项共 10 项通过。随后新增 Wait/wakeup 迁移、`WaitRepository` 与 3 项真实 PostgreSQL 生命周期测试；外部 Broker、发布器和 gap buffer 尚未实现。
 
 - 2026-09-12 / A2-01 Wait 复验：临时 PostgreSQL 17（127.0.0.1:55437）执行 `pytest -q tests/persistence/test_waits.py`，`3 passed`；覆盖 PENDING 早到回执在激活时消费、ACTIVE 回复与超时的单一 wakeup、旧代次不推进新等待。测试后容器已移除，未连接业务数据库。离线全量回归 `214 passed, 2 skipped`，Ruff、格式检查和严格 mypy 通过。
+- 2026-09-12 / A2-02 Worker/Outbox 增量：新增独立连接租约心跳、可停止常驻轮询、CLI daemon 配置，以及 Outbox `PENDING→CLAIMED→ACKED` 投递租约、attempt fencing、退避重试和 FakePublisher。隔离 PostgreSQL 下持久化测试 `23 passed`、Worker loop `2 passed`；离线全量 `245 passed`，Ruff/格式/严格 mypy 全通过。待补双 Worker 故障注入、gap buffer 和远端 CI。
 
 - 2026-09-07 / A0-02 完成：运行时/调查 v1 契约落到纯代码与正反例；206 项本地及独立 wheel 回归、类型/格式和 schema 验证通过。补正文摘要幂等、JSON 非有限值与嵌套测试打包问题。保留 WinError 32 的失败和替代构建记录，未提交/推送/部署；下一项候选 A0-03。
 

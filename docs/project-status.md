@@ -9,11 +9,11 @@
 | 字段 | 值 |
 |---|---|
 | 本轮请求范围 | 用户授权继续完善项目；完成 A1-02 API/auth、A1-03 Fake Harness，并推进 A1-04/A2 Worker、Wait 与 Outbox；当前已授权推送已验证提交 |
-| 当前任务 | A2-02/B-01 运行时与动作账本增强进行中 |
+| 当前任务 | A3-01 Responses 模型适配边界进行中 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | A2-02：完整故障注入；A3-01：真实模型适配器门禁 |
-| 活跃实现任务 | Action Ledger 与事件投影验收；后续接入业务 Harness、模型和沙箱 |
-| 本轮外部行为 | 已将已验证提交 `5d360bb`、`38c017a`、`bb673d3`、`c8ff993`、`2d73408` 推送到 `origin/main`；无模型调用、真实业务动作或生产部署 |
+| 下一项代码候选 | A2-02：完整故障注入；A3-02：模型调用预算与供应商重试策略 |
+| 活跃实现任务 | Responses 严格解析与工具白名单；后续接入业务 Harness、沙箱和真实 provider |
+| 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
 ## 2. 核验过的源码基线
 
@@ -53,14 +53,15 @@
 | A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 投影接口尚未实现 |
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试已实现；真实 PostgreSQL 持久化套件 23 项、Worker loop 2 项及双 Worker 竞争 1 项通过；更完整故障注入仍待补齐 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；真实 PostgreSQL Action 测试通过；支付聚合、审批和真实供应商对账仍待实现 |
+| A3-01 | IN PROGRESS | 新增严格 Responses wire parser 与 `ResponsesAdapter`：校验原生响应、usage、函数参数、工具白名单、托管工具事件和 provider 错误脱敏；229 项离线回归通过；尚未发起真实 provider 请求 |
 
 ## 5. 工作区与提交边界
 
-本次已提交范围为 A2-02 增量：Outbox 投递迁移/仓储、publisher、Worker 心跳/daemon、双 Worker 测试和文档；基础 A0-A1 增量已在 `5d360bb` 固化并推送。未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本次待提交范围为 A3-01：Responses 适配器、严格边界测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：本轮用户明确要求提交并推送；基础与 A2-02 增量均已推送，最新提交为 `2d73408`。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：本轮用户明确要求提交并推送；基础与 A2-02 增量已推送，A3-01 本轮提交后再核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
@@ -204,7 +205,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 A2-02：完成双 Worker 故障注入与 fencing 压测；随后进入 A2-03 的租户并发配额。A1-02 已完成最小 API/auth；真实 OIDC、SSE、完整业务 Harness 和生产连接器仍未实现。
+当前推进 A3-01：完成 Responses 适配边界后，补模型预算/重试策略，并回到 A2-02 完整故障注入与 A2-03 租户并发配额。A1-02 已完成最小 API/auth；真实 OIDC、SSE、完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 

@@ -33,6 +33,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [PostgreSQL 持久化骨架](docs/persistence.md) | A1-01 当前已实现的迁移、租约/fencing 和检查点边界；完整运行时仍未完成 |
 | [API 与认证边界](docs/api-auth.md) | A1-02 最小 FastAPI 受理/读取接口；当前仅支持显式合成身份测试模式 |
 | [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
+| [Responses 模型适配边界](docs/model-adapters.md) | A3-01 严格解析、工具白名单、托管工具事件与 provider 错误脱敏 |
 | [Inbox/Outbox 说明](docs/events.md) | A2-01 PostgreSQL 事务内事件、来源幂等与消费者去重；外部 Broker 尚未接入 |
 | [本地 Compose](deploy/compose/README.md) | A1-04 开始接线：PostgreSQL + API 的开发环境；不含 Worker、模型或真实动作 |
 | [Agent 执行与恢复规则](AGENTS.md) | 恢复阅读顺序、状态维护和授权/安全边界 |

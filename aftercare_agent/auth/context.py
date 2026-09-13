@@ -40,6 +40,19 @@ def synthetic_context(*, enabled: bool, tenant_id: str, subject_id: str) -> Auth
     return AuthContext(
         subject_id=subject,
         tenant_id=tenant,
-        permissions=frozenset({"case:create", "case:read"}),
+        # The synthetic identity is an explicitly opt-in local/test principal.
+        # Grant the operator scopes so the control-plane routes can be exercised
+        # without introducing request-controlled permission headers.  Production
+        # identities receive their permissions from the verified OIDC claims.
+        permissions=frozenset(
+            {
+                "case:create",
+                "case:read",
+                "review:read",
+                "review:decide",
+                "approval:read",
+                "approval:decide",
+            }
+        ),
         synthetic=True,
     )

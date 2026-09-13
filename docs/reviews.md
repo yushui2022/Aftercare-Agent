@@ -16,4 +16,4 @@ REVIEW + pending request
 
 Review 的 `CONTINUE` 只恢复执行权，不授予退款或其他外部动作权限。Action 仍须独立经过参数摘要、审批策略和 provider 幂等键检查；`CANCEL` 不会把旧 Action 变成可派发状态。
 
-当前实现是可信 PostgreSQL 运行时边界，尚未接人工工作台、真实身份/JWKS、通知事件或供应商连接器。
+当前实现是可信 PostgreSQL 运行时边界，并提供显式合成身份下的 operator 读取/决定 API；尚未接人工工作台、真实身份/JWKS、供应商连接器或生产通知通道。

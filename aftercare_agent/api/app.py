@@ -3,15 +3,18 @@
 import json
 import os
 from collections.abc import Iterator
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from aftercare_agent.auth import AuthContext, synthetic_context
-from aftercare_agent.domain.common import ContractViolation, ErrorCode
+from aftercare_agent.domain.approvals import ApprovalRecord
+from aftercare_agent.domain.common import ContractViolation, ErrorCode, Identifier
+from aftercare_agent.domain.reviews import ReviewRecord
 from aftercare_agent.domain.runtime import (
     AdmissionKey,
     CaseRecord,
@@ -21,8 +24,10 @@ from aftercare_agent.domain.runtime import (
 )
 from aftercare_agent.persistence import (
     AdmissionRepository,
+    ApprovalRepository,
     Database,
     EventRepository,
+    ReviewRepository,
     RunRepository,
     migrate,
 )
@@ -36,6 +41,103 @@ class CaseResponse(BaseModel):
     session_id: str
     run_id: str
     replayed: bool
+
+
+class ReviewDecisionInput(BaseModel):
+    """Operator decision; identity and scope always come from the request context."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    decision: Literal["CONTINUE", "CANCEL"]
+    decision_reason: str | None = Field(default=None, max_length=2000)
+
+
+class ApprovalDecisionInput(BaseModel):
+    """Approval decision; approver, tenant and case are never body fields."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    decision: Literal["APPROVED", "REJECTED"]
+    decision_reason: str | None = Field(default=None, max_length=2000)
+
+
+class ReviewOperatorResponse(BaseModel):
+    """Public Review projection; internal evidence and authorization fields stay private."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_id: str
+    case_id: str
+    run_id: str
+    reason_code: str
+    decision: Literal["CONTINUE", "CANCEL"] | None
+    actor: str | None
+    decision_reason: str | None
+    created_at: datetime
+    decided_at: datetime | None
+    updated_at: datetime
+
+
+class ApprovalOperatorResponse(BaseModel):
+    """Public Approval projection; hashes, policy and wait bindings stay private."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approval_id: str
+    case_id: str
+    run_id: str | None
+    action_id: str
+    decision: Literal["PENDING", "APPROVED", "REJECTED", "EXPIRED", "CANCELLED"]
+    actor: str | None
+    decision_reason: str | None
+    expires_at: datetime
+    created_at: datetime
+    decided_at: datetime | None
+    updated_at: datetime
+
+
+def _identifier(value: str, field: str) -> str:
+    try:
+        return TypeAdapter(Identifier).validate_python(value)
+    except ValidationError as exc:
+        raise ContractViolation(ErrorCode.INVALID_INPUT, f"invalid {field}") from exc
+
+
+def _required_idempotency_key(value: str | None) -> str:
+    if value is None:
+        raise ContractViolation(ErrorCode.INVALID_INPUT, "Idempotency-Key is required")
+    return _identifier(value, "Idempotency-Key")
+
+
+def _review_projection(record: ReviewRecord) -> ReviewOperatorResponse:
+    return ReviewOperatorResponse(
+        review_id=record.review_id,
+        case_id=record.case_id,
+        run_id=record.run_id,
+        reason_code=record.reason_code,
+        decision=record.decision,
+        actor=record.reviewer,
+        decision_reason=record.decision_reason,
+        created_at=record.created_at,
+        decided_at=record.decided_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _approval_projection(record: ApprovalRecord) -> ApprovalOperatorResponse:
+    return ApprovalOperatorResponse(
+        approval_id=record.approval_id,
+        case_id=record.case_id,
+        run_id=record.run_id,
+        action_id=record.action_id,
+        decision=record.decision,
+        actor=record.approver,
+        decision_reason=record.decision_reason,
+        expires_at=record.expires_at,
+        created_at=record.created_at,
+        decided_at=record.decided_at,
+        updated_at=record.updated_at,
+    )
 
 
 def _error(exc: ContractViolation) -> HTTPException:
@@ -142,6 +244,115 @@ def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
             if run is None or run.case_id != case_id:
                 raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
             return run
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get(
+        "/v1/cases/{case_id}/reviews/{review_id}",
+        response_model=ReviewOperatorResponse,
+    )
+    def get_review(case_id: str, review_id: str, identity: Auth) -> ReviewOperatorResponse:
+        """Read one review only inside the caller's Case authorization scope."""
+        try:
+            scoped_case_id = _identifier(case_id, "case_id")
+            scoped_review_id = _identifier(review_id, "review_id")
+            identity.require_case(scoped_case_id, "review:read")
+            with database.transaction() as connection:
+                review = ReviewRepository().get(connection, identity.tenant_id, scoped_review_id)
+            if review is None or review.case_id != scoped_case_id:
+                # Keep tenant/case/review existence indistinguishable to callers.
+                raise ContractViolation(ErrorCode.FORBIDDEN, "review access denied")
+            return _review_projection(review)
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.post(
+        "/v1/cases/{case_id}/reviews/{review_id}/decision",
+        response_model=ReviewOperatorResponse,
+    )
+    def decide_review(
+        case_id: str,
+        review_id: str,
+        body: ReviewDecisionInput,
+        identity: Auth,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> ReviewOperatorResponse:
+        """Apply a human Review decision using the authenticated subject as reviewer."""
+        try:
+            scoped_case_id = _identifier(case_id, "case_id")
+            scoped_review_id = _identifier(review_id, "review_id")
+            identity.require_case(scoped_case_id, "review:decide")
+            decision_key = _required_idempotency_key(idempotency_key)
+            with database.transaction() as connection:
+                repository = ReviewRepository()
+                review = repository.get(connection, identity.tenant_id, scoped_review_id)
+                if review is None or review.case_id != scoped_case_id:
+                    raise ContractViolation(ErrorCode.FORBIDDEN, "review access denied")
+                result = repository.decide(
+                    connection,
+                    identity.tenant_id,
+                    scoped_review_id,
+                    reviewer=identity.subject_id,
+                    decision=body.decision,
+                    decision_idempotency_key=decision_key,
+                    decision_reason=body.decision_reason,
+                )
+                return _review_projection(result)
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get(
+        "/v1/cases/{case_id}/approvals/{approval_id}",
+        response_model=ApprovalOperatorResponse,
+    )
+    def get_approval(case_id: str, approval_id: str, identity: Auth) -> ApprovalOperatorResponse:
+        """Read one approval only inside the caller's Case authorization scope."""
+        try:
+            scoped_case_id = _identifier(case_id, "case_id")
+            scoped_approval_id = _identifier(approval_id, "approval_id")
+            identity.require_case(scoped_case_id, "approval:read")
+            with database.transaction() as connection:
+                approval = ApprovalRepository().get(
+                    connection, identity.tenant_id, scoped_approval_id
+                )
+            if approval is None or approval.case_id != scoped_case_id:
+                raise ContractViolation(ErrorCode.FORBIDDEN, "approval access denied")
+            return _approval_projection(approval)
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.post(
+        "/v1/cases/{case_id}/approvals/{approval_id}/decision",
+        response_model=ApprovalOperatorResponse,
+    )
+    def decide_approval(
+        case_id: str,
+        approval_id: str,
+        body: ApprovalDecisionInput,
+        identity: Auth,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> ApprovalOperatorResponse:
+        """Apply an approval decision using the authenticated subject as approver."""
+        try:
+            scoped_case_id = _identifier(case_id, "case_id")
+            scoped_approval_id = _identifier(approval_id, "approval_id")
+            identity.require_case(scoped_case_id, "approval:decide")
+            decision_key = _required_idempotency_key(idempotency_key)
+            with database.transaction() as connection:
+                repository = ApprovalRepository()
+                approval = repository.get(connection, identity.tenant_id, scoped_approval_id)
+                if approval is None or approval.case_id != scoped_case_id:
+                    raise ContractViolation(ErrorCode.FORBIDDEN, "approval access denied")
+                result = repository.decide(
+                    connection,
+                    identity.tenant_id,
+                    scoped_approval_id,
+                    approver=identity.subject_id,
+                    decision=body.decision,
+                    decision_idempotency_key=decision_key,
+                    decision_reason=body.decision_reason,
+                )
+                return _approval_projection(result)
         except ContractViolation as exc:
             raise _error(exc) from exc
 

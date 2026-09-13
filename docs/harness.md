@@ -40,9 +40,9 @@
 1. `admit()` 在一个短事务内创建 Case、Session 和 READY Run；
 2. `pause_for_customer()` 先领取 Run，再在事务外运行两步 Fake Harness，随后用另一短事务保存 checkpoint、注册并激活 `WAITING_INPUT`；
 3. `reply()` 以受信任的渠道适配器身份写入 Inbox，按 `wait_id/generation/correlation_key/condition_version` 原子结算 Wait 并唤醒 Run；
-4. `resume()` 由另一 Worker 重新 claim，明确从等待前的 `tool` 阶段继续，最终保存 fenced checkpoint 并完成 Run。
+4. `resume()` 由另一 Worker 重新 claim；新写入的等待 checkpoint 会持久化 `resume_next_step=tool`，因此通用 Daemon 不需要为所有等待类型配置一个全局恢复阶段，最终保存 fenced checkpoint 并完成 Run；`assess()` 再从完整的可信观察账本计算 `RECOMMENDATION_READY`，每个结论都带有来源引用。
 
-这条切片证明的是“停机期间输入不丢、恢复不重复、模型预算不被等待重复消耗”。它仍然是合成 Harness：没有真实模型、EGM 调查建议、审批 API 或供应商副作用；完整 A3-04 评测仍需把有来源的调查结论和 `REVIEW` 分支接入。恢复步骤由调用方显式传入，Worker 不根据 checkpoint 猜测业务语义。
+这条切片证明的是“停机期间输入不丢、恢复不重复、模型预算不被等待重复消耗”，并把订单、物流、买家三类受信观察接入确定性评估。把承运商改为 `DELIVERED` 或提交不匹配引用即可得到 `HUMAN_REVIEW`，但当前仍未接真实模型、EGM 调查 schema、审批 API 或供应商副作用；完整 A3-04 评测还要报告真实模型效果/成本。旧的 schema-v1 等待 checkpoint 可能没有恢复阶段，Worker 会 fail-closed，只有可信调用方显式传入 `resume_next_step` 才能兼容恢复；新 checkpoint 不再依赖这个部署级参数。
 
 ## 常驻 Worker 与心跳
 

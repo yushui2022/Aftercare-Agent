@@ -5,6 +5,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from aftercare_agent.domain.investigation import (
+    ClaimProposal,
+    InvestigationClaim,
+    InvestigationProposal,
+)
 from aftercare_agent.persistence import Database, RunRepository, migrate
 from aftercare_agent.runtime import SyntheticAftercareFlow, SyntheticCase
 
@@ -43,8 +48,11 @@ def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> No
     flow = SyntheticAftercareFlow(db, case)
     flow.admit()
     now = datetime.now(UTC) - timedelta(seconds=2)
+    flow.seed_investigation_observations(now=now)
     parked = flow.pause_for_customer(now=now)
     assert parked.wait.state == "ACTIVE"
+    assert parked.checkpoint.next_step == "wait"
+    assert parked.checkpoint.resume_next_step == "tool"
     with db.transaction() as conn:
         run = RunRepository().get(conn, case.tenant_id, case.run_id)
         assert run is not None and run.state == "WAITING_INPUT"
@@ -58,6 +66,22 @@ def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> No
 
     result = flow.resume(now=datetime.now(UTC))
     assert result.completed
+    assessment = flow.assess(now=datetime.now(UTC))
+    assert assessment.disposition == "recommendation_ready"
+    assert len(assessment.decisions) == 3
+    assert all(decision.accepted for decision in assessment.decisions)
+    review = flow.assess(
+        now=datetime.now(UTC),
+        proposal=InvestigationProposal(
+            claims=(
+                ClaimProposal(
+                    claim=InvestigationClaim.BUYER_REPORTED_NOT_RECEIVED,
+                    evidence_refs=("model-invented-reference",),
+                ),
+            )
+        ),
+    )
+    assert review.disposition == "human_review"
     with db.transaction() as conn:
         run = RunRepository().get(conn, case.tenant_id, case.run_id)
         assert run is not None and run.state == "COMPLETED"

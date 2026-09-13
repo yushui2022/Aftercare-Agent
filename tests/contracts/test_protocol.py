@@ -114,6 +114,7 @@ def test_checkpoint_missing_wire_version_is_not_defaulted() -> None:
         {"next_step": "wait"},
         {"next_step": "retry"},
         {"wait_id": "wait-1", "wait_generation": 1},
+        {"resume_next_step": "tool"},
         {"step_id": None},
         {"saved_fencing_token": True},
         {"input_version": "1"},
@@ -136,6 +137,16 @@ def test_checkpoint_rejects_cross_case_artifact_and_duplicate_call_result() -> N
     )
     with pytest.raises(ValidationError):
         checkpoint(tool_results=(result, result))
+
+
+def test_wait_checkpoint_can_persist_and_round_trip_its_resume_phase() -> None:
+    parked = checkpoint(
+        next_step="wait",
+        resume_next_step="evaluate",
+        wait_id="wait-1",
+        wait_generation=1,
+    )
+    assert decode_checkpoint(parked.model_dump_json()) == parked
 
 
 @pytest.mark.parametrize(

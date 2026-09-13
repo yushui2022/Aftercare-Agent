@@ -174,7 +174,18 @@ def _execute_claim(
         # This makes WAITING_INPUT/WAITING_APPROVAL a durable boundary rather
         # than an in-memory branch in the worker loop.
         if previous is not None and previous.next_step == "wait":
-            if resume_next_step is None:
+            persisted_resume_step = previous.resume_next_step
+            if (
+                persisted_resume_step is not None
+                and resume_next_step is not None
+                and persisted_resume_step != resume_next_step
+            ):
+                raise ContractViolation(
+                    ErrorCode.CONFLICT,
+                    "resume phase disagrees with the wait checkpoint",
+                )
+            selected_resume_step = resume_next_step or persisted_resume_step
+            if selected_resume_step is None:
                 raise ContractViolation(
                     ErrorCode.CONFLICT, "wait checkpoint needs an explicit resume step"
                 )
@@ -184,7 +195,8 @@ def _execute_claim(
                     # The wait is registered after a bounded step.  Resume
                     # the exact pending phase; do not spend a second model
                     # budget just because the Run was parked.
-                    "next_step": resume_next_step,
+                    "next_step": selected_resume_step,
+                    "resume_next_step": None,
                     "wait_id": None,
                     "wait_generation": None,
                 }

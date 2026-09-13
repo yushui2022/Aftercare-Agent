@@ -71,7 +71,7 @@ operator scope；这不是生产授权方案，也不能由请求 Header 自行�
 $env:AFTERCARE_OIDC_ISSUER = "https://idp.example/"
 $env:AFTERCARE_OIDC_AUDIENCE = "aftercare-api"
 $env:AFTERCARE_OIDC_JWKS_URL = "https://idp.example/.well-known/jwks.json"
-$env:AFTERCARE_OIDC_REQUIRE_CASE_IDS = "1"  # 默认值；只有明确的租户级角色才设为 0
+$env:AFTERCARE_OIDC_REQUIRE_CASE_IDS = "0"  # token 上界可选；CaseGrant 仍始终必需
 ```
 
 JWKS URL 必须是静态 HTTPS 配置，不能由 Token 的 `iss` 或 Header 控制。允许算法默认只
@@ -85,8 +85,13 @@ JWKS URL 必须是静态 HTTPS 配置，不能由 Token 的 `iss` 或 Header 控
 的 `AuthContext`。`auth.oidc.auth_context_from_claims()` 仍是纯 claims 校验边界，不能
 被误当作 JWT 验签器。
 
-这只是认证切片，不是完整企业授权：Token 中的租户与 Case 声明必须由可信 IdP/授权服务
-签发。当前尚未有数据库 `CaseGrant`/RLS，也没有 Token 撤销或 introspection；长寿命 Token、
-显式关闭 `AFTERCARE_OIDC_REQUIRE_CASE_IDS` 或把全租户权限映射给普通用户都不应直接用于生产。
-需要人工控制面时，仍须在权限映射中显式授予 `review:*`/`approval:*` scope。运行依赖为
-`PyJWT[crypto]` 与 `httpx`，密钥轮换、JWKS 可用性、授权映射和审计留痕需在 D-01 后续验收。
+这仍不是完整企业授权：`015_case_grants.sql` 和 `CaseGrantRepository` 已提供最小的
+数据库授权切片，按 `(tenant_id, subject_id, case_id)` 保存权限、revision、有效期和撤销
+审计。每个 Case 路由在自己的短事务中锁定活动行；没有行、已撤销或已过期均返回 `403`。
+Token 的 `case_ids` 只能进一步收窄数据库结果，Token scope 与数据库权限取交集，不能凭
+声明新增权限。新建 Case 时创建者的 `case:read` grant 与受理事务一起写入；幂等重放不会
+为另一主体自动补授权。当前仍没有权限管理 UI、RLS、Token 撤销/introspection、实时授权
+事件或真实 IdP 演练；长寿命 Token、把全租户权限映射给普通用户都不应直接用于生产。
+需要人工控制面时，仍须在权限映射和 CaseGrant 中显式授予 `review:*`/`approval:*` scope。
+运行依赖为 `PyJWT[crypto]` 与 `httpx`，密钥轮换、JWKS 可用性、授权映射和生产审计留痕
+仍需 D-01 后续验收。

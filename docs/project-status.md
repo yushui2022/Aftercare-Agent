@@ -8,18 +8,18 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权继续完善项目；在控制面 API 后补真实 JWT/JWKS Bearer 认证、Case scope 默认收紧和 admission lease safety，仍按完整批次提交 |
+| 本轮请求范围 | 用户授权继续完善项目；在控制面 API 后补真实 JWT/JWKS Bearer 认证、PostgreSQL CaseGrant 资源授权、Case scope 默认收紧和 admission lease safety，仍按完整批次提交 |
 | 当前任务 | A2 纵向恢复切片已接入；A3/C/D 运行控制面与生产边界继续进行 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | D-01-03：CaseGrant/撤销与真实 IdP 演练；A3-03：Review 工作台；B-02-03：供应商回执核对；C-01：真实沙箱后端 |
-| 活跃实现任务 | 合成 Aftercare 纵向切片、控制面 Review/Approval API、JWT/JWKS Bearer 验证和 admission lease safety 已补齐；后续接入 CaseGrant、真实 provider、工作台和沙箱 |
+| 下一项代码候选 | D-01：真实 IdP/撤销演练；A3-03：Review 工作台；B-02-03：供应商回执核对；C-01：真实沙箱后端 |
+| 活跃实现任务 | 合成 Aftercare 纵向切片、控制面 Review/Approval API、JWT/JWKS Bearer、PostgreSQL CaseGrant 和 admission lease safety 已补齐；后续接入真实 provider、工作台和沙箱 |
 | 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
 ## 2. 核验过的源码基线
 
 | 仓库 | 已核验源码 HEAD | 用途 |
 |---|---|---|
-| Aftercare-Agent | d4a20c905343c4a84cd92b9687f9f5bb1c298d71 | DOC-001/A0 实施前的历史基线；工程增量由包含本页的交付提交固化，实际编号以 Git 日志为准 |
+| Aftercare-Agent | 109a7d6451b22eea1bdbf8e1b99241192258d084 | 本轮 CaseGrant 批次的提交前基线；工程增量由包含本页的交付提交固化，实际编号以 Git 日志为准 |
 | Evidence-Gated-Memory | 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd | 源码 0.6.0、嵌入式应用层与 PostgreSQL；已固定在 Aftercare 依赖中 |
 
 这些是核验时的源码基线，不要求文档为了指向包含自身的提交而无限修改。本轮没有检查远端分支或远端 CI；不要把旧交接中“远端与本地一致”当作当前核验。
@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、合成 Aftercare 纵向切片（含订单/物流/买家观察与来源引用评估）、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒、跨实例 admission 最小闭环、显式合成身份下的 Review/Approval 控制面 API，以及可选静态 JWKS 的 Bearer 验签切片；仍不是完整执行服务。真实 CaseGrant 授权、撤销/introspection、IdP 权限映射和生产认证验收仍未完成。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、合成 Aftercare 纵向切片（含订单/物流/买家观察与来源引用评估）、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒、跨实例 admission 最小闭环、显式合成身份下的 Review/Approval 控制面 API、可选静态 JWKS 的 Bearer 验签切片，以及按 tenant/subject/case 持久化并短事务解析的 CaseGrant；仍不是完整执行服务。真实撤销/introspection、IdP 权限映射、RLS 和生产认证验收仍未完成。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；PostgreSQL 观察账本与重载已实现，但真实调查 EGM schema 与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -47,7 +47,7 @@
 | A0-02 | DONE | 两份契约、7 个 domain 模块、5 个契约测试模块；206 项回归、类型/格式、39 类 JSON Schema、sdist→wheel 与仓库外回归通过，见第 6 节 |
 | A0-03 | DONE | 12 个合成案件、v1 期望、确定性 runner 与跨进程 digest 回归通过；见第 6 节 |
 | A1-01 | DONE | 新增 PostgreSQL 迁移、受理幂等、Case/Session/Step/Attempt/Run/Checkpoint Repository；隔离 PostgreSQL 17 容器中 5 项集成测试通过 |
-| A1-02 | DONE | 新增 FastAPI 受理/读取与 Review/Approval operator 控制面、显式合成身份边界和公开响应投影；JWT/JWKS Bearer 入口已接入，真实 IdP/CaseGrant 仍待演练 |
+| A1-02 | DONE | 新增 FastAPI 受理/读取与 Review/Approval operator 控制面、显式合成身份边界和公开响应投影；JWT/JWKS Bearer 与 CaseGrant 入口已接入，真实 IdP 演练仍待完成 |
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
 | A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和合成 Aftercare CLI 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
 | A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 已有有界持久回放，live tail/工作台待补 |
@@ -59,16 +59,17 @@
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页和有界 PostgreSQL polling tail；高吞吐 live broker tail、React 工作台和生产认证仍待实现 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
-| D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier` 与 FastAPI Bearer 入口：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；默认要求显式 Case grant；JWT/JWKS 离线回归通过；CaseGrant 数据授权、撤销/introspection、真实 IdP 和生产演练仍待实现 |
+| D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口与 `015_case_grants.sql`/`CaseGrantRepository`：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销/introspection、真实 IdP 和生产演练仍待实现 |
+| D-01-03 | DONE | PostgreSQL CaseGrant 按 `(tenant_id,subject_id,case_id)` 持久化 scope/revision/有效期/撤销审计；AuthContext 非 synthetic 未绑定时 fail-closed，API 在业务短事务锁定 grant；创建者授权与受理原子提交，撤销/过期/跨主体及 token 收窄回归通过；真实 IdP、introspection、RLS 和管理面仍待完成 |
 | C-03 | IN PROGRESS | 新增 provider-neutral Tracer、InMemoryTracer、可选 OTel bridge，并为 Outbox publish 埋点；离线回归通过；Exporter、采样/留存和生产监控尚未配置 |
 
 ## 5. 工作区与提交边界
 
-本轮提交范围为真实身份与执行准入安全：JWT/JWKS Bearer 验证、Case grant 默认收紧、admission slot lease safety、API/PG/离线测试和配套文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本轮提交范围为真实身份与执行准入安全：JWT/JWKS Bearer 验证、PostgreSQL CaseGrant 资源授权、Case grant 默认收紧、admission slot lease safety、API/PG/离线测试和配套文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：本轮用户明确要求提交并推送；前序批次 `ca5588d` 已推送到 `origin/main`，本轮控制面增量将在全新 PostgreSQL 17 验收后统一提交并核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：本轮用户明确要求提交并推送；前序批次 `109a7d6` 已推送到 `origin/main`，本轮 CaseGrant 控制面增量将在全新 PostgreSQL 17 验收后统一提交并核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
@@ -101,7 +102,7 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 - 2026-09-13 / Review 与门控事件验收：临时 PostgreSQL 17 全量 `308 passed`、16 warnings；Ruff、format、严格 mypy 和 `git diff --check` 通过。事件决策与 Review 回归证明首次写入产生明确类型、Case 序号连续、快照可重放，重复请求/决定不重复产生事件；临时容器已移除。远端 CI、真实身份、供应商和生产压测仍未验证。
 - 2026-09-13 / 可复制演示入口：新增 `aftercare-demo`/`python -m aftercare_agent.demo`，串联 admit、等待/Inbox 唤醒、检查点恢复、可信观察评估、审批和 fake provider；Compose 为 PostgreSQL 增加可覆盖宿主端口并使用 `up --wait`。临时 PostgreSQL 17 + Compose CLI smoke 成功，输出 `recommendation_ready`、`APPROVED`、`CONFIRMED` 及事件 seq=1/2；PostgreSQL 17 全量回归 `313 passed, 16 warnings`，无数据库的离线全量回归 `249 passed, 64 skipped`，远端 CI、真实模型/连接器/沙箱仍未验证。
 - 2026-09-13 / Operator 控制面：新增 Review/Approval 读取与决定 API，决定身份仅来自认证 `subject_id`，输入模型拒绝 authority 字段，响应过滤租户/证据哈希/策略/等待绑定等内部字段；新增显式权限 scope 和 synthetic 仅测试授权。全新 PostgreSQL 17 全量回归 `319 passed, 22 warnings`，API 集成覆盖首次决定、同键重放、跨工单、伪造 actor 和 synthetic 关闭；真实 OIDC/JWKS、支付聚合和供应商仍未接入。
-- 2026-09-13 / D-01-01/02 认证切片：新增 `JwtJwksVerifier` 和 FastAPI `Authorization: Bearer` 入口，固定 HTTPS JWKS、RS/ES 算法与 typ 白名单、短期缓存、未知 `kid` 单次冷却刷新、过期缓存失败关闭、exp/iat/nbf/最大寿命校验及 scope/tenant/Case 映射；默认要求显式 Case grant；新增 RSA + `httpx.MockTransport` JWT 专测 `19 passed`，API/auth seam 测试一并通过。真实 IdP、CaseGrant 数据授权、撤销/introspection、轮换演练和生产密钥配置仍未完成。
+- 2026-09-13 / D-01-01/02 认证切片：新增 `JwtJwksVerifier` 和 FastAPI `Authorization: Bearer` 入口，固定 HTTPS JWKS、RS/ES 算法与 typ 白名单、短期缓存、未知 `kid` 单次冷却刷新、过期缓存失败关闭、exp/iat/nbf/最大寿命校验及 scope/tenant/Case 映射；默认由数据库 CaseGrant 做资源授权，token case_ids 仅作收窄；新增 RSA + `httpx.MockTransport` JWT 专测 `19 passed`，API/auth seam 测试一并通过。真实 IdP、撤销/introspection、轮换演练和生产密钥配置仍未完成。
 - 2026-09-13 / Admission lease safety：slot renewal 现在要求已持有的 reservation 实际续租成功；缺失、过期或被新 fencing token 接管的 slot 会让 Heartbeat fail-closed，不再只延长 Run lease。slot replay 返回数据库写入后的新 expiry，并补充离线 Heartbeat 与 PostgreSQL 缺失/过期/接管回归；专测 `1 passed, 3 skipped`（无 DATABASE_URL），临时 PostgreSQL admission/worker 回归 `12 passed`。真实配额 API、生产压测与动态配置仍未完成。
 
 - 2026-09-12 / A1-04 Compose 启动边界：API 增加 `/readyz` healthcheck，Worker profile 等待 API readiness（从而等待迁移完成），补充 daemon/跨租户队列环境参数；`docker compose config` 已静态核对，未做生产部署。
@@ -116,7 +117,7 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 | API 端到端 | 受理、同键重放、同键改参 `409`、跨租户读取 `403`、生产模式合成身份 `401`：7 项测试通过 |
 | 静态与全量回归 | Ruff、严格 mypy；A1-02 阶段为 `215 passed, 7 skipped`（无 DATABASE_URL 的集成测试跳过） |
 
-当前 API 已支持配置静态 JWKS 的 Bearer 验证，同时保留仅显式开启的合成身份测试入口；真实 IdP、CaseGrant 数据库授权、live 消息接入和真实业务动作仍未实现。SSE 目前仅提供有界持久回放。FastAPI 的 TestClient 对当前 Starlette 版本产生弃用警告，不影响测试结果，后续可在依赖升级时切换 `httpx2`。
+当前 API 已支持配置静态 JWKS 的 Bearer 验证，同时保留仅显式开启的合成身份测试入口；PostgreSQL CaseGrant 已提供最小数据库资源授权，真实 IdP 权限映射、撤销/introspection、live 消息接入和真实业务动作仍未实现。SSE 目前仅提供有界持久回放。FastAPI 的 TestClient 对当前 Starlette 版本产生弃用警告，不影响测试结果，后续可在依赖升级时切换 `httpx2`。
 
 ### A1-03：Fake Harness 与检查点恢复
 

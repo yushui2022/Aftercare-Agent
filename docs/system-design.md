@@ -78,11 +78,11 @@ flowchart TB
 | 已实现 | SQLite/真实 PostgreSQL 两个后端，以及显式 join 宿主事务 |
 | 已实现 | 固定退款完成声明，失败回执与绑定错配的门控；不是自由事实文本 |
 | 已实现（骨架） | API、Session/Case/Run/Step/Attempt、Fake Harness、Worker、等待、检查点与 PostgreSQL 调度队列 |
-| 已实现（骨架） | Action Ledger、跨工单 business key 幂等、租约/fencing、执行槽与重试预算、审批参数绑定、派发 fail-closed 门禁、绑定 Wait 的原子唤醒和 operator 审批 API；CaseGrant/真实业务连接器仍待实现 |
+| 已实现（骨架） | Action Ledger、跨工单 business key 幂等、租约/fencing、执行槽与重试预算、审批参数绑定、派发 fail-closed 门禁、绑定 Wait 的原子唤醒、operator 审批 API 和 PostgreSQL CaseGrant 资源授权；真实 IdP/业务连接器仍待实现 |
 | 已实现（边界） | Responses 解析/预算、SSE 持久回放、OIDC claims 转换、静态 JWKS Bearer 验证、OTel tracer 边界、Fake 沙箱；真实模型、live tail、E2B/Kubernetes 和生产压测仍待实现 |
 | 未承诺 | 数据库 HA、RLS、保留删除、备份恢复体系、真实退款 exactly-once |
 
-当前 [evidence.py](../aftercare_agent/evidence.py) 的 propose_completion 通过时，只说明固定的完成声明获得证据支持。它没有实现 Case 关闭，也没有封装节点 transition。EGM 的 transition 是另一项受权限约束的接口，后续由可信业务编排调用。
+当前 [evidence.py](../aftercare_agent/evidence.py) 的 propose_completion 通过时，只说明固定的完成声明获得证据支持。它没有实现 Case 关闭，也没有封装节点 transition。EGM 的 transition 是另一项受权限约束的接口，后续由可信业务编排调用。身份与 Case 授权的分离见 [ADR-0003](decisions/0003-case-grant-authorization.md)。
 
 此前文档记录的 EGM 303 passed / 2 skipped 和 Aftercare 4 passed 是已有版本的验收记录，不是本文新增设计全部通过测试的证明。
 

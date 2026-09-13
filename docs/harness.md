@@ -32,7 +32,7 @@
 - 不写 PostgreSQL，不模拟外部动作成功；
 - 不替代 Wait/Inbox/Outbox、调度器和 Action Ledger。
 
-因此 Fake Harness 的价值是把“模型循环能够安全暂停并恢复”的纯规则固定下来。A1-04 已提供一次性 Worker CLI、`run_next()` 的 `SKIP LOCKED` 领取原语和 `worker` Compose profile；A2-02 现在补上了可停止的 `run_daemon()` 轮询和独立连接租约心跳。
+因此 Fake Harness 的价值是把“模型循环能够安全暂停并恢复”的纯规则固定下来。A1-04 已提供一次性 Worker CLI、`run_next()` 的 `SKIP LOCKED` 领取原语和 `worker` Compose profile；A2-02 现在补上了可停止的 `run_daemon()` 轮询和独立连接租约心跳。生产 Case 访问还需在 API/Worker 短事务中绑定 PostgreSQL CaseGrant；Harness 本身不持有或推断权限。
 
 ## 合成售后纵向切片
 
@@ -43,7 +43,7 @@
 3. `reply()` 以受信任的渠道适配器身份写入 Inbox，按 `wait_id/generation/correlation_key/condition_version` 原子结算 Wait 并唤醒 Run；
 4. `resume()` 由另一 Worker 重新 claim；新写入的等待 checkpoint 会持久化 `resume_next_step=tool`，因此通用 Daemon 不需要为所有等待类型配置一个全局恢复阶段，最终保存 fenced checkpoint 并完成 Run；`assess()` 再从完整的可信观察账本计算 `RECOMMENDATION_READY`，每个结论都带有来源引用，并以不可变 assessment snapshot 写入 PostgreSQL。
 
-这条切片证明的是“停机期间输入不丢、恢复不重复、模型预算不被等待重复消耗”，并把订单、物流、买家三类受信观察接入确定性评估。把承运商改为 `DELIVERED` 或提交不匹配引用即可得到 `HUMAN_REVIEW`，结果仍会保留完整引用和策略版本。当前仍未接真实模型、EGM 调查 schema、人工工作台或供应商副作用；审批 API 仅在显式合成身份下提供 operator 控制面，完整 A3-04 评测还要报告真实模型效果/成本。旧的 schema-v1 等待 checkpoint 可能没有恢复阶段，Worker 会 fail-closed，只有可信调用方显式传入 `resume_next_step` 才能兼容恢复；新 checkpoint 不再依赖这个部署级参数。
+这条切片证明的是“停机期间输入不丢、恢复不重复、模型预算不被等待重复消耗”，并把订单、物流、买家三类受信观察接入确定性评估。把承运商改为 `DELIVERED` 或提交不匹配引用即可得到 `HUMAN_REVIEW`，结果仍会保留完整引用和策略版本。当前仍未接真实模型、EGM 调查 schema、人工工作台或供应商副作用；审批 API 已支持显式合成身份或静态 JWKS Bearer 的 operator 控制面，完整 A3-04 评测还要报告真实模型效果/成本。旧的 schema-v1 等待 checkpoint 可能没有恢复阶段，Worker 会 fail-closed，只有可信调用方显式传入 `resume_next_step` 才能兼容恢复；新 checkpoint 不再依赖这个部署级参数。
 
 在 `RECOMMENDATION_READY` 后，`request_refund_approval()` 展示受控动作边界：可信宿主从订单台账固定金额、币种、业务键和 provider 幂等键，创建一个以前序调查 Run 为 `predecessor_run_id` 的派生审批 Run，并按 Action → approval Wait → `ApprovalRequest` 的顺序在一个短事务中登记。调查 Run 已完成后不能倒退回等待状态，派生 Run 是审计链上的明确阶段。`approve_and_confirm_refund()` 先通过 `ApprovalRepository.decide()` 原子唤醒等待，再由新的 provider Worker 通过 `mark_requested()` 重查批准、策略和参数摘要，最后在事务外调用 fake provider，并用同一 Run fence 写入 `CONFIRMED`。真实 provider 仍需把未知回执保留为 `UNKNOWN`，不能自动重发。
 

@@ -128,4 +128,4 @@ buffer，返回 `buffer_gap`，不能在这里确认消息已被业务应用。�
 60 秒以内。该实现是 broker-neutral 的小规模参考，仍应先回放游标，再由 Kafka/NATS/
 Redis 等适配器接管高吞吐 live tail；它不是数据库 LISTEN/NOTIFY 或生产消息总线的替代品。
 当前 API 支持显式合成身份（仅开发测试）或配置静态 JWKS 的 Bearer 验证；CaseGrant
-订阅授权、真实 IdP 演练和 React 工作台尚未实现。
+资源授权已按短事务接入，订阅级授权、真实 IdP 演练和 React 工作台尚未实现。

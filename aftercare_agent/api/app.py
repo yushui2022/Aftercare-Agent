@@ -4,9 +4,10 @@ import json
 import os
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
+import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
@@ -25,6 +26,7 @@ from aftercare_agent.domain.runtime import (
 from aftercare_agent.persistence import (
     AdmissionRepository,
     ApprovalRepository,
+    CaseGrantRepository,
     Database,
     EventRepository,
     ReviewRepository,
@@ -140,6 +142,35 @@ def _approval_projection(record: ApprovalRecord) -> ApprovalOperatorResponse:
     )
 
 
+def _authorized_case(
+    connection: psycopg.Connection[Any],
+    identity: AuthContext,
+    case_id: str,
+    permission: str,
+) -> tuple[str, AuthContext]:
+    """Resolve a DB CaseGrant and bind it before a case-scoped operation.
+
+    The caller owns the transaction.  Keeping resolution here (rather than in
+    a FastAPI dependency) makes the grant row lock cover the subsequent read or
+    write and avoids a revoke/authorize time-of-check gap.
+    """
+    scoped_case_id = _identifier(case_id, "case_id")
+    if identity.synthetic:
+        identity.require_case(scoped_case_id, permission)
+        return scoped_case_id, identity
+    grant = CaseGrantRepository().resolve(
+        connection,
+        identity.tenant_id,
+        identity.subject_id,
+        scoped_case_id,
+    )
+    if grant is None:
+        raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
+    scoped_identity = identity.bind_case_grant(grant)
+    scoped_identity.require_case(scoped_case_id, permission)
+    return scoped_case_id, scoped_identity
+
+
 def _error(exc: ContractViolation) -> HTTPException:
     mapping = {
         ErrorCode.UNAUTHENTICATED: status.HTTP_401_UNAUTHORIZED,
@@ -248,6 +279,31 @@ def create_app(
                     session=session,
                     run=run,
                 )
+                grants = CaseGrantRepository()
+                if result.replayed:
+                    # A tenant-scoped idempotency replay must not disclose a
+                    # previously-created Case to a new subject.
+                    if (
+                        grants.resolve(
+                            connection,
+                            identity.tenant_id,
+                            identity.subject_id,
+                            result.case.case_id,
+                        )
+                        is None
+                    ):
+                        raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
+                else:
+                    # The creator receives only a Case read grant.  Operator
+                    # and action scopes are separate explicit grants.
+                    grants.grant(
+                        connection,
+                        tenant_id=identity.tenant_id,
+                        subject_id=identity.subject_id,
+                        case_id=result.case.case_id,
+                        permissions=("case:read",),
+                        granted_by=identity.subject_id,
+                    )
             return CaseResponse(
                 case_id=result.case.case_id,
                 session_id=result.session.session_id,
@@ -260,11 +316,11 @@ def create_app(
     @app.get("/v1/cases/{case_id}/runs/{run_id}", response_model=RunRecord)
     def get_run(case_id: str, run_id: str, identity: Auth) -> RunRecord:
         try:
-            identity.require_case(case_id, "case:read")
             with database.transaction() as connection:
+                scoped_case_id, _ = _authorized_case(connection, identity, case_id, "case:read")
                 run = RunRepository().get(connection, identity.tenant_id, run_id)
-            if run is None or run.case_id != case_id:
-                raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
+                if run is None or run.case_id != scoped_case_id:
+                    raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
             return run
         except ContractViolation as exc:
             raise _error(exc) from exc
@@ -276,10 +332,9 @@ def create_app(
     def get_review(case_id: str, review_id: str, identity: Auth) -> ReviewOperatorResponse:
         """Read one review only inside the caller's Case authorization scope."""
         try:
-            scoped_case_id = _identifier(case_id, "case_id")
             scoped_review_id = _identifier(review_id, "review_id")
-            identity.require_case(scoped_case_id, "review:read")
             with database.transaction() as connection:
+                scoped_case_id, _ = _authorized_case(connection, identity, case_id, "review:read")
                 review = ReviewRepository().get(connection, identity.tenant_id, scoped_review_id)
             if review is None or review.case_id != scoped_case_id:
                 # Keep tenant/case/review existence indistinguishable to callers.
@@ -301,11 +356,10 @@ def create_app(
     ) -> ReviewOperatorResponse:
         """Apply a human Review decision using the authenticated subject as reviewer."""
         try:
-            scoped_case_id = _identifier(case_id, "case_id")
             scoped_review_id = _identifier(review_id, "review_id")
-            identity.require_case(scoped_case_id, "review:decide")
             decision_key = _required_idempotency_key(idempotency_key)
             with database.transaction() as connection:
+                scoped_case_id, _ = _authorized_case(connection, identity, case_id, "review:decide")
                 repository = ReviewRepository()
                 review = repository.get(connection, identity.tenant_id, scoped_review_id)
                 if review is None or review.case_id != scoped_case_id:
@@ -330,10 +384,9 @@ def create_app(
     def get_approval(case_id: str, approval_id: str, identity: Auth) -> ApprovalOperatorResponse:
         """Read one approval only inside the caller's Case authorization scope."""
         try:
-            scoped_case_id = _identifier(case_id, "case_id")
             scoped_approval_id = _identifier(approval_id, "approval_id")
-            identity.require_case(scoped_case_id, "approval:read")
             with database.transaction() as connection:
+                scoped_case_id, _ = _authorized_case(connection, identity, case_id, "approval:read")
                 approval = ApprovalRepository().get(
                     connection, identity.tenant_id, scoped_approval_id
                 )
@@ -356,11 +409,12 @@ def create_app(
     ) -> ApprovalOperatorResponse:
         """Apply an approval decision using the authenticated subject as approver."""
         try:
-            scoped_case_id = _identifier(case_id, "case_id")
             scoped_approval_id = _identifier(approval_id, "approval_id")
-            identity.require_case(scoped_case_id, "approval:decide")
             decision_key = _required_idempotency_key(idempotency_key)
             with database.transaction() as connection:
+                scoped_case_id, _ = _authorized_case(
+                    connection, identity, case_id, "approval:decide"
+                )
                 repository = ApprovalRepository()
                 approval = repository.get(connection, identity.tenant_id, scoped_approval_id)
                 if approval is None or approval.case_id != scoped_case_id:
@@ -390,7 +444,7 @@ def create_app(
     ) -> StreamingResponse:
         """Return replay, or a bounded PostgreSQL polling tail after replay."""
         try:
-            identity.require_case(case_id, "case:read")
+            scoped_case_id = _identifier(case_id, "case_id")
             cursor = after
             if last_event_id is not None:
                 try:
@@ -407,20 +461,23 @@ def create_app(
                     wait_seconds=wait_seconds,
                     poll_seconds=0.5,
                 )
+                with database.transaction() as connection:
+                    _authorized_case(connection, identity, scoped_case_id, "case:read")
                 events_iter = PostgresEventTail(database).stream(
                     tenant_id=identity.tenant_id,
-                    case_id=case_id,
+                    case_id=scoped_case_id,
                     after_case_seq=cursor,
                     limit=limit,
                     wait_seconds=wait_seconds,
                 )
             else:
                 with database.transaction() as connection:
+                    _authorized_case(connection, identity, scoped_case_id, "case:read")
                     events_iter = iter(
                         EventRepository().list_case_events(
                             connection,
                             tenant_id=identity.tenant_id,
-                            case_id=case_id,
+                            case_id=scoped_case_id,
                             after_case_seq=cursor,
                             limit=limit,
                         )
@@ -428,6 +485,16 @@ def create_app(
 
             def stream() -> Iterator[str]:
                 for event in events_iter:
+                    # A live tail can outlive the transaction that started the
+                    # response.  Re-resolve before each event; revocation then
+                    # stops subsequent data without holding a DB transaction
+                    # while the client is reading.
+                    if not identity.synthetic:
+                        try:
+                            with database.transaction() as connection:
+                                _authorized_case(connection, identity, scoped_case_id, "case:read")
+                        except ContractViolation:
+                            return
                     yield (
                         f"id: {event.case_seq}\n"
                         f"event: {event.event_type}\n"
@@ -469,7 +536,7 @@ def create_default_app() -> FastAPI:
     if all(configured):
         if synthetic_enabled == "1":
             raise RuntimeError("synthetic identity cannot be enabled with OIDC")
-        require_case_ids = os.environ.get("AFTERCARE_OIDC_REQUIRE_CASE_IDS", "1")
+        require_case_ids = os.environ.get("AFTERCARE_OIDC_REQUIRE_CASE_IDS", "0")
         if require_case_ids not in {"0", "1"}:
             raise RuntimeError("AFTERCARE_OIDC_REQUIRE_CASE_IDS must be 0 or 1")
         issuer = oidc_values["issuer"]

@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from aftercare_agent.auth.context import AuthContext
+from aftercare_agent.auth.grants import CaseGrantRecord
 from aftercare_agent.auth.oidc import OidcConfig, VerifiedOidcClaims, auth_context_from_claims
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 
@@ -24,13 +25,31 @@ def claims(**changes: object) -> VerifiedOidcClaims:
     return VerifiedOidcClaims.model_validate(value)
 
 
-def test_verified_claims_produce_case_scoped_non_synthetic_context() -> None:
+def test_verified_claims_are_not_authorization_without_database_grant() -> None:
     context = auth_context_from_claims(claims(), CONFIG, now=NOW)
     assert isinstance(context, AuthContext)
     assert not context.synthetic
-    context.require_case("case-1", "case:read")
     with pytest.raises(ContractViolation) as error:
-        context.require_case("case-2", "case:read")
+        context.require_case("case-1", "case:read")
+    assert error.value.code is ErrorCode.FORBIDDEN
+
+
+def test_verified_claims_intersect_with_database_case_grant() -> None:
+    context = auth_context_from_claims(claims(), CONFIG, now=NOW)
+    grant = CaseGrantRecord(
+        tenant_id="tenant-1",
+        subject_id="user-1",
+        case_id="case-1",
+        permissions=frozenset({"case:read", "review:read"}),
+        revision=3,
+        granted_by="auth-admin",
+        granted_at=NOW,
+        updated_at=NOW,
+    )
+    scoped = context.bind_case_grant(grant)
+    scoped.require_case("case-1", "case:read")
+    with pytest.raises(ContractViolation) as error:
+        scoped.require_case("case-1", "review:read")
     assert error.value.code is ErrorCode.FORBIDDEN
 
 

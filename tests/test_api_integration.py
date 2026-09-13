@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 from aftercare_agent.api.app import create_app
 from aftercare_agent.auth import AuthContext, JwtJwksVerifier
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
-from aftercare_agent.persistence import Database
+from aftercare_agent.domain.runtime import CaseRecord, RunRecord
+from aftercare_agent.persistence import CaseGrantRepository, Database, RunRepository, migrate
 
 
 @pytest.fixture()
@@ -79,15 +80,16 @@ def test_synthetic_identity_is_not_enabled_in_production_mode() -> None:
 class _StubBearerVerifier:
     """Small seam test double; JWT/JWKS behavior is covered separately."""
 
-    def __init__(self, *, reject: bool = False) -> None:
+    def __init__(self, *, reject: bool = False, tenant_id: str = "api-tenant") -> None:
         self.reject = reject
+        self.tenant_id = tenant_id
 
     def verify(self, authorization: str) -> AuthContext:
         if self.reject or authorization != "Bearer test-token":
             raise ContractViolation(ErrorCode.UNAUTHENTICATED, "invalid bearer token")
         return AuthContext(
             subject_id="oidc-subject",
-            tenant_id="api-tenant",
+            tenant_id=self.tenant_id,
             permissions=frozenset({"case:read"}),
             case_ids=frozenset({"case"}),
         )
@@ -120,3 +122,61 @@ def test_bearer_path_precedes_synthetic_headers(database: Database, client: Test
         )
     assert rejected.status_code == 401
     assert synthetic_only.status_code == 401
+
+
+def test_bearer_case_access_requires_database_grant_and_honors_revoke(
+    database: Database,
+) -> None:
+    tenant = "api-grant-tenant"
+    with database.transaction() as connection:
+        migrate(connection)
+        connection.execute("DELETE FROM aftercare_case_grants WHERE tenant_id=%s", (tenant,))
+        connection.execute("DELETE FROM aftercare_runs WHERE tenant_id=%s", (tenant,))
+        connection.execute("DELETE FROM aftercare_cases WHERE tenant_id=%s", (tenant,))
+        RunRepository().create_case(
+            connection,
+            CaseRecord(tenant_id=tenant, case_id="case", order_id="order", version=1),
+        )
+        RunRepository().create_run(
+            connection,
+            RunRecord(
+                tenant_id=tenant,
+                case_id="case",
+                run_id="run",
+                definition_version="v1",
+                input_version=1,
+            ),
+        )
+        grant = CaseGrantRepository().grant(
+            connection,
+            tenant_id=tenant,
+            subject_id="oidc-subject",
+            case_id="case",
+            permissions=("case:read",),
+            granted_by="auth-admin",
+        )
+    from aftercare_agent.api.app import create_app
+
+    app = create_app(
+        database,
+        oidc_verifier=cast(JwtJwksVerifier, _StubBearerVerifier(tenant_id="api-grant-tenant")),
+    )
+    with TestClient(app) as bearer_client:
+        allowed = bearer_client.get(
+            "/v1/cases/case/runs/run", headers={"Authorization": "Bearer test-token"}
+        )
+    assert allowed.status_code == 200
+    with database.transaction() as connection:
+        CaseGrantRepository().revoke(
+            connection,
+            tenant_id=tenant,
+            subject_id="oidc-subject",
+            case_id="case",
+            revoked_by="auth-admin",
+            expected_revision=grant.revision,
+        )
+    with TestClient(app) as bearer_client:
+        denied = bearer_client.get(
+            "/v1/cases/case/runs/run", headers={"Authorization": "Bearer test-token"}
+        )
+    assert denied.status_code == 403

@@ -11,6 +11,7 @@ from .admission import (
 )
 from .approvals import ApprovalRepository
 from .assessments import InvestigationAssessmentRepository
+from .case_grants import CaseGrantRepository
 from .db import Database, migrate
 from .events import EventRepository, OutboxDelivery
 from .investigations import InvestigationObservationRepository
@@ -29,6 +30,7 @@ __all__ = [
     "AdmissionRepository",
     "AdmissionResult",
     "ActionRepository",
+    "CaseGrantRepository",
     "InvestigationAssessmentRepository",
     "ApprovalRepository",
     "AttemptRepository",

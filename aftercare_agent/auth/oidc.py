@@ -54,10 +54,11 @@ class JwtVerifierConfig(OidcConfig):
     permissions_claim: Identifier = "permissions"
     scope_claim: Identifier = "scope"
     case_ids_claim: Identifier = "case_ids"
-    # Case-scoped grants are the safe default.  A tenant-wide operator role
-    # must be an explicit deployment decision, not an accidental omission in
-    # a token.
-    require_case_ids: bool = True
+    # Case grants are resolved against PostgreSQL by the API.  Token case_ids
+    # are an optional attenuation bound; requiring them here would make a
+    # legitimate create request impossible because the new Case ID is server
+    # generated.  The API still fails closed when its DB grant is absent.
+    require_case_ids: bool = False
 
     @model_validator(mode="after")
     def validate_security_policy(self) -> "JwtVerifierConfig":

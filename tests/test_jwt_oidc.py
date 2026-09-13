@@ -188,8 +188,8 @@ def test_non_https_jwks_url_is_rejected() -> None:
         _config(jwks_url="http://idp.example/jwks")
 
 
-def test_case_grants_are_required_by_default() -> None:
-    assert _config().require_case_ids is True
+def test_case_ids_are_an_optional_token_attenuation_bound() -> None:
+    assert _config().require_case_ids is False
 
 
 def test_case_scope_claim_has_a_bounded_size(

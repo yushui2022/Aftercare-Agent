@@ -1,6 +1,7 @@
 """Trusted authentication context boundaries for the HTTP adapter."""
 
 from .context import AuthContext, SyntheticAuthError, synthetic_context
+from .grants import CaseGrantRecord
 from .oidc import (
     JwtJwksVerifier,
     JwtVerifierConfig,
@@ -11,6 +12,7 @@ from .oidc import (
 
 __all__ = [
     "AuthContext",
+    "CaseGrantRecord",
     "JwtJwksVerifier",
     "JwtVerifierConfig",
     "OidcConfig",

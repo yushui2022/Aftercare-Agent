@@ -109,6 +109,10 @@ Case 锁，排序同类 ID 后取锁；不得另一路径倒序取锁。纯 Run 
 
 Checkpoint 保存输入/Case/检查点版本、历史 token、Step/Attempt、定义/策略/工具/
 模型配置版本、原生协议版本与引用、工具结果、证据和 Action 引用、剩余预算及下一步。
+当下一步是 `wait` 时，新写入的 checkpoint 还保存 `resume_next_step`，表示等待
+结算后唯一允许进入的模型/工具/评估阶段；这样恢复位置属于 Run 的持久事实，而不是
+Daemon 的全局配置。早于该字段的 schema-v1 checkpoint 可以由可信调用方显式提供兼容
+参数恢复，Worker 不会自行猜测。
 ArtifactReference 带 tenant/case/reference_id/SHA-256；字段绑定相等不等于文件存在、
 归属正确或内容已核验，解引用必须由存储授权层检查。相同检查点不得有重复 call_id 结果。
 

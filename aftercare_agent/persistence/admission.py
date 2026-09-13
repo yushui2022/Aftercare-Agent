@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import psycopg
 
@@ -237,18 +237,21 @@ class AdmissionRepository:
         assert now_row is not None
         if existing is not None and existing[2] > now_row[0]:
             if existing[0] == claim.owner and int(existing[1]) == claim.fencing_token:
-                connection.execute(
+                renewed = connection.execute(
                     "UPDATE aftercare_execution_slots SET lease_until=clock_timestamp() + "
-                    "(%s * interval '1 second') WHERE tenant_id=%s AND run_id=%s",
+                    "(%s * interval '1 second') WHERE tenant_id=%s AND run_id=%s "
+                    "RETURNING lease_until",
                     (lease.total_seconds(), claim.tenant_id, claim.run_id),
-                )
+                ).fetchone()
+                if renewed is None:
+                    raise ContractViolation(ErrorCode.LEASE_LOST, "execution slot lease lost")
                 return SlotReservation(
                     claim.tenant_id,
                     claim.case_id,
                     claim.run_id,
                     claim.owner,
                     claim.fencing_token,
-                    existing[2],
+                    cast(datetime, renewed[0]),
                     True,
                 )
             raise ContractViolation(ErrorCode.RATE_LIMITED, "run already owns an active slot")
@@ -302,14 +305,21 @@ class AdmissionRepository:
         connection: psycopg.Connection[Any],
         claim: ExecutionClaim,
         lease: timedelta,
-    ) -> None:
-        """Renew a slot only for its current Run fence; absent slots are a no-op."""
+    ) -> datetime:
+        """Renew a reservation for its current Run fence.
+
+        The Worker calls this only when the slice acquired a reservation.  A
+        missing, expired, or superseded row therefore means the capacity
+        reservation was lost and must fail closed instead of allowing the Run
+        lease to continue on its own.
+        """
         if lease.total_seconds() <= 0:
             raise ContractViolation(ErrorCode.INVALID_INPUT, "lease must be positive")
-        connection.execute(
+        row = connection.execute(
             "UPDATE aftercare_execution_slots SET lease_until=clock_timestamp() + "
             "(%s * interval '1 second') WHERE tenant_id=%s AND case_id=%s AND run_id=%s "
-            "AND owner=%s AND fencing_token=%s AND lease_until > clock_timestamp()",
+            "AND owner=%s AND fencing_token=%s AND lease_until > clock_timestamp() "
+            "RETURNING lease_until",
             (
                 lease.total_seconds(),
                 claim.tenant_id,
@@ -318,7 +328,10 @@ class AdmissionRepository:
                 claim.owner,
                 claim.fencing_token,
             ),
-        )
+        ).fetchone()
+        if row is None:
+            raise ContractViolation(ErrorCode.LEASE_LOST, "execution slot lease lost")
+        return cast(datetime, row[0])
 
     def release_slot(self, connection: psycopg.Connection[Any], claim: ExecutionClaim) -> None:
         connection.execute(

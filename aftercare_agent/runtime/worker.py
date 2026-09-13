@@ -77,6 +77,7 @@ class LeaseHeartbeat:
         claim: ExecutionClaim,
         lease: timedelta,
         *,
+        slot: SlotReservation | None = None,
         interval: timedelta | None = None,
     ) -> None:
         _validate_duration("lease", lease)
@@ -86,6 +87,11 @@ class LeaseHeartbeat:
         self._database = database
         self._claim = claim
         self._lease = lease
+        # ``None`` means no admission limit was configured when this slice
+        # was claimed.  When a reservation exists, losing it is a capacity
+        # safety failure and must stop the slice rather than silently letting
+        # the Run lease continue without a slot.
+        self._slot = slot
         self._interval = selected
         self._stop = Event()
         self._lock = Lock()
@@ -118,7 +124,8 @@ class LeaseHeartbeat:
             try:
                 with self._database.transaction() as connection:
                     RunRepository().renew(connection, self._claim, self._lease)
-                    AdmissionRepository().renew_slot(connection, self._claim, self._lease)
+                    if self._slot is not None:
+                        AdmissionRepository().renew_slot(connection, self._claim, self._lease)
             except Exception as exc:
                 with self._lock:
                     self._failure = exc
@@ -163,6 +170,7 @@ def _execute_claim(
         database,
         claim,
         lease,
+        slot=slot,
         interval=heartbeat_interval,
     )
     heartbeat.start()

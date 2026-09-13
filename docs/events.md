@@ -127,5 +127,5 @@ buffer，返回 `buffer_gap`，不能在这里确认消息已被业务应用。�
 它在每次查询时使用短事务，等待期间不持有连接锁，最长等待由 `wait_seconds` 限制在
 60 秒以内。该实现是 broker-neutral 的小规模参考，仍应先回放游标，再由 Kafka/NATS/
 Redis 等适配器接管高吞吐 live tail；它不是数据库 LISTEN/NOTIFY 或生产消息总线的替代品。
-当前身份入口仍是显式合成身份，仅用于开发测试；真实 OIDC、订阅授权和 React 工作台
-尚未实现。
+当前 API 支持显式合成身份（仅开发测试）或配置静态 JWKS 的 Bearer 验证；CaseGrant
+订阅授权、真实 IdP 演练和 React 工作台尚未实现。

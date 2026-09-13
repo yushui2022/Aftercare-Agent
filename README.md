@@ -31,7 +31,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [调查证据契约 v1](docs/contracts/investigation-v1.md) | 订单/物流/买家陈述、可信来源、证据新鲜度、引用和人审边界；EGM 调查 schema 仍待固定 |
 | [A0-03 合成案件与确定性评测](docs/evals.md) | 12 个合成售后案件、固定预期和离线评测；不调用模型或真实业务系统 |
 | [PostgreSQL 持久化骨架](docs/persistence.md) | 迁移、租约/fencing、调度队列、检查点和调查观察账本；完整运行时仍未完成 |
-| [API 与认证边界](docs/api-auth.md) | FastAPI 受理、Run/事件读取与 Review/Approval operator 控制面；真实 OIDC 仍待接入 |
+| [API 与认证边界](docs/api-auth.md) | FastAPI 受理、Run/事件读取、Review/Approval operator 控制面与可选 JWT/JWKS Bearer 验证；CaseGrant/真实 IdP 演练仍待完成 |
 | [SSE 事件回放](docs/events.md) | A3-03 case-scoped SSE replay、`Last-Event-ID` 续传、持久事件游标与有界 PostgreSQL tail |
 | [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
 | [Human Review 边界](docs/reviews.md) | `HUMAN_REVIEW` 的持久请求、人工决定、恢复和取消语义 |

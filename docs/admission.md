@@ -7,7 +7,9 @@ Worker 的执行槽不能放在进程内 semaphore：多副本部署时每个进
 - `aftercare_admission_limits` 保存 global/tenant 上限；
 - `aftercare_execution_slots` 保存 `(tenant, run, owner, fencing_token, lease_until)`；
 - 获取槽时先锁定限额行，再清理过期租约并统计当前占用，和 Run claim 在同一短事务中完成；
-- 心跳同时续租 Run 与 slot；最终 Run 转换和 slot 释放在一个事务里完成；
+- 心跳同时续租 Run 与 slot；若本切片原先持有的 slot 缺失、过期或被新 fence
+  接管，slot 续租会返回 `LEASE_LOST`，Heartbeat fail-closed，不会只延长 Run
+  lease；最终 Run 转换和 slot 释放在一个事务里完成；
 - `aftercare_execution_queue` 由 008 的 Run 状态触发器维护：READY/RETRY_AT 自动入队，
   RUNNING 保存 owner/token，等待/完成/取消自动出队；旧数据库启动时会回填队列；
 - `run_next(tenant_id=None)` 按持久 tenant cursor 轮转，并跳过已满的 global/tenant 槽；

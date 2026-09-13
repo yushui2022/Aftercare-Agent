@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from aftercare_agent.auth import AuthContext, synthetic_context
+from aftercare_agent.auth import AuthContext, JwtJwksVerifier, JwtVerifierConfig, synthetic_context
 from aftercare_agent.domain.approvals import ApprovalRecord
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, Identifier
 from aftercare_agent.domain.reviews import ReviewRecord
@@ -148,11 +148,18 @@ def _error(exc: ContractViolation) -> HTTPException:
         ErrorCode.RETRYABLE: status.HTTP_503_SERVICE_UNAVAILABLE,
     }
     return HTTPException(
-        status_code=mapping.get(exc.code, status.HTTP_400_BAD_REQUEST), detail=exc.code.value
+        status_code=mapping.get(exc.code, status.HTTP_400_BAD_REQUEST),
+        detail=exc.code.value,
+        headers={"WWW-Authenticate": "Bearer"} if exc.code is ErrorCode.UNAUTHENTICATED else None,
     )
 
 
-def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
+def create_app(
+    database: Database,
+    *,
+    allow_synthetic: bool = False,
+    oidc_verifier: JwtJwksVerifier | None = None,
+) -> FastAPI:
     app = FastAPI(title="Aftercare Agent", version="v1")
 
     @app.get("/healthz")
@@ -173,12 +180,27 @@ def create_app(database: Database, *, allow_synthetic: bool = False) -> FastAPI:
         return {"status": "ready"}
 
     def auth(request: Request) -> AuthContext:
+        authorization = request.headers.get("Authorization")
         tenant = request.headers.get("X-Synthetic-Tenant")
         subject = request.headers.get("X-Synthetic-Subject")
         try:
+            # A supplied bearer token always takes precedence.  In particular,
+            # an invalid token must never fall back to a synthetic header.
+            if authorization is not None:
+                if oidc_verifier is None:
+                    raise ContractViolation(
+                        ErrorCode.UNAUTHENTICATED, "OIDC authentication is not configured"
+                    )
+                return oidc_verifier.verify(authorization)
             if tenant is None or subject is None:
                 raise ContractViolation(ErrorCode.UNAUTHENTICATED, "authentication required")
-            return synthetic_context(enabled=allow_synthetic, tenant_id=tenant, subject_id=subject)
+            # Once a real verifier is configured, synthetic identities are
+            # disabled even if a stale test flag remains in the environment.
+            return synthetic_context(
+                enabled=allow_synthetic and oidc_verifier is None,
+                tenant_id=tenant,
+                subject_id=subject,
+            )
         except ContractViolation as exc:
             raise _error(exc) from exc
 
@@ -429,8 +451,43 @@ def create_default_app() -> FastAPI:
             return {"status": "ok"}
 
         return app
+    oidc_values = {
+        "issuer": os.environ.get("AFTERCARE_OIDC_ISSUER"),
+        "audience": os.environ.get("AFTERCARE_OIDC_AUDIENCE"),
+        "jwks_url": os.environ.get("AFTERCARE_OIDC_JWKS_URL"),
+    }
+    configured = [value is not None for value in oidc_values.values()]
+    if any(configured) and not all(configured):
+        raise RuntimeError(
+            "AFTERCARE_OIDC_ISSUER, AFTERCARE_OIDC_AUDIENCE and "
+            "AFTERCARE_OIDC_JWKS_URL must be configured together"
+        )
+    synthetic_enabled = os.environ.get("AFTERCARE_ALLOW_SYNTHETIC_IDENTITY", "0")
+    if synthetic_enabled not in {"0", "1"}:
+        raise RuntimeError("AFTERCARE_ALLOW_SYNTHETIC_IDENTITY must be 0 or 1")
+    verifier = None
+    if all(configured):
+        if synthetic_enabled == "1":
+            raise RuntimeError("synthetic identity cannot be enabled with OIDC")
+        require_case_ids = os.environ.get("AFTERCARE_OIDC_REQUIRE_CASE_IDS", "1")
+        if require_case_ids not in {"0", "1"}:
+            raise RuntimeError("AFTERCARE_OIDC_REQUIRE_CASE_IDS must be 0 or 1")
+        issuer = oidc_values["issuer"]
+        audience = oidc_values["audience"]
+        jwks_url = oidc_values["jwks_url"]
+        assert issuer is not None and audience is not None and jwks_url is not None
+        verifier = JwtJwksVerifier(
+            JwtVerifierConfig(
+                issuer=issuer,
+                audience=audience,
+                jwks_url=jwks_url,
+                require_case_ids=require_case_ids == "1",
+            )
+        )
     return create_app(
-        Database(dsn), allow_synthetic=os.environ.get("AFTERCARE_ALLOW_SYNTHETIC_IDENTITY") == "1"
+        Database(dsn),
+        allow_synthetic=synthetic_enabled == "1",
+        oidc_verifier=verifier,
     )
 
 

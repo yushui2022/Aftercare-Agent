@@ -43,3 +43,17 @@ def test_default_app_exposes_liveness_probe_without_database(
     response = TestClient(create_default_app()).get("/healthz")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_default_app_rejects_synthetic_bypass_when_oidc_is_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unused")
+    monkeypatch.setenv("AFTERCARE_OIDC_ISSUER", "https://idp.example")
+    monkeypatch.setenv("AFTERCARE_OIDC_AUDIENCE", "aftercare-api")
+    monkeypatch.setenv("AFTERCARE_OIDC_JWKS_URL", "https://idp.example/jwks")
+    monkeypatch.setenv("AFTERCARE_ALLOW_SYNTHETIC_IDENTITY", "1")
+    from aftercare_agent.api.app import create_default_app
+
+    with pytest.raises(RuntimeError, match="synthetic identity"):
+        create_default_app()

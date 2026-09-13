@@ -26,12 +26,13 @@ Node 24 在本次核查的官方计划中属于 LTS；前端落地时再次检�
 | 类型与数据校验 | Python 类型注解、Pydantic 2；公共接口不传播无约束 Any | A0-01 / A0-02 |
 | Web 服务 | FastAPI + Uvicorn | A1-02 |
 | 数据库 | psycopg 3 + psycopg_pool，同步短事务函数 | A1-01 |
-| 外部 HTTP | httpx；统一超时、重试与错误分类 | A3-01 / B-03 |
+| 外部 HTTP | httpx；统一超时、重试与错误分类；JWKS 拉取使用固定 HTTPS URL | D-01 / A3-01 / B-03 |
+| 身份验证 | PyJWT + cryptography；provider-neutral JWKS 验签适配器 | D-01；具体 IdP 与 CaseGrant 服务待选 |
 | 模型接口 | FakeModelAdapter 先行；官方 OpenAI Python SDK 的 Responses 适配器随后 | A1-03 / A3-01 |
 | 质量检查 | Ruff、mypy、pytest、pytest-asyncio；依任务加入测试依赖 | A0-01 |
 | 观测 | 起步结构化日志与关联 ID；随后 OpenTelemetry SDK/Collector | A1-03 / C-03 |
 
-依赖在引入时锁定经过测试的精确版本。当前 [pyproject.toml](../pyproject.toml) / [uv.lock](../uv.lock) 已包含 Aftercare 0.1.0a0、EGM、直接使用的 Pydantic 和质量工具；没有提前安装 FastAPI、模型 SDK、前端或整套观测平台。Pydantic 必须直接声明，不能因为 EGM 间接安装就漏掉 Aftercare 自己的依赖。
+依赖在引入时锁定经过测试的精确版本。当前 [pyproject.toml](../pyproject.toml) / [uv.lock](../uv.lock) 已包含 Aftercare 0.1.0a0、EGM、FastAPI、httpx、PyJWT/cryptography、直接使用的 Pydantic 和质量工具；模型 SDK、前端或整套观测平台仍未加入。Pydantic 必须直接声明，不能因为 EGM 间接安装就漏掉 Aftercare 自己的依赖。
 
 当前锁定的主要版本：Pydantic 2.13.5、psycopg/psycopg-binary 3.3.5、PyYAML 6.0.3、Ruff 0.16.6、mypy 1.20.2、pytest 9.1.1、pytest-asyncio 1.4.0；构建采用 setuptools 84.0.0、wheel 0.48.0、packaging 26.3。完整版本与来源以锁文件/构建配置为准；安装、质量与产物检查见[开发指南](development.md)。这份清单不表示已有 PostgreSQL 服务或生产镜像。
 
@@ -72,6 +73,12 @@ Python/Pydantic 定义 HTTP 边界，导出版本化 OpenAPI；前端从已检�
 | 记忆 | Worker 内嵌 EGM；业务状态与检查点独立；长期记忆默认关闭 | Letta、TencentDB Agent Memory、向量库 |
 | 沙箱 | 服务端 Harness + 窄 SandboxProvider；先 Fake，后选一个真实后端 | 同时部署 E2B 和 K8s、把完整业务控制面搬入沙箱 |
 | 部署 | A1 最小 Compose，后续 Linux 试点；K8s 按运维与隔离需要引入 | 未经验证的生产 Helm/YAML 和自动扩容承诺 |
+
+认证实现边界：`auth.oidc` 现在包含 provider-neutral 的 `JwtJwksVerifier`，API 可在显式
+配置 `AFTERCARE_OIDC_ISSUER`、`AFTERCARE_OIDC_AUDIENCE`、`AFTERCARE_OIDC_JWKS_URL`
+后验签 Bearer。PyJWT + cryptography 负责签名验证，httpx 仅访问静态 HTTPS JWKS；密钥短期
+缓存、未知 `kid` 一次刷新和缓存失效 fail-closed 已有离线测试。它仍不等于企业授权：CaseGrant
+数据库、撤销/introspection、真实 IdP 权限映射、密钥轮换演练和生产部署验收属于 D-01 后续。
 
 Responses 适配器保存完整工具请求、call_id 和恢复所需协议项，再执行经过校验的本地工具；应用自管业务状态。供应商提供会话关联不等于已经提供我们的持久业务运行时。该约束来自本项目设计，并与 [OpenAI Function Calling](https://developers.openai.com/api/docs/guides/function-calling)、[Conversation State](https://developers.openai.com/api/docs/guides/conversation-state) 的能力边界一致。
 

@@ -11,8 +11,8 @@
 | 本轮请求范围 | 用户授权继续完善项目；本轮在已推送运行骨架上补 B-02-01 持久化审批门禁，并完成参数/策略/有效期/幂等与 fail-closed 验收 |
 | 当前任务 | A3/C/D 运行控制面与生产边界进行中 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | B-02-02：审批与 WAITING_APPROVAL/Inbox 原子唤醒；A3-03：broker-neutral live tail/工作台；A3-02：调查 EGM schema 与真实模型接线 |
-| 活跃实现任务 | B-02-01 审批门禁实现与回归；后续接入审批等待唤醒、业务 Harness、真实 provider 和真实沙箱后端 |
+| 下一项代码候选 | B-02-03：审批 API/真实身份与供应商回执核对；A3-03：broker-neutral live tail/工作台；A3-02：调查 EGM schema 与真实模型接线 |
+| 活跃实现任务 | B-02-02 审批等待唤醒实现与回归已完成；后续接入审批 API、业务 Harness、真实 provider 和真实沙箱后端 |
 | 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
 ## 2. 核验过的源码基线
@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合、审批等待唤醒、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；OIDC claims 转换边界已实现，真实认证仍未接入。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合、审批 API/真实身份、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒和跨实例 admission 最小闭环，但仍不是完整执行服务。A1-02 已有最小 API，但仅支持显式合成身份测试模式；OIDC claims 转换边界已实现，真实认证仍未接入。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；PostgreSQL 观察账本与重载已实现，但真实调查 EGM schema 与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -54,7 +54,7 @@
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；审批门禁已补入但支付聚合、额度预留和真实供应商对账仍待实现 |
-| B-02 | IN PROGRESS | B-02-01 已实现 `ApprovalRepository`、010 迁移、参数/策略/身份/有效期绑定、重复决定幂等和 `RESERVED` 派发 fail-closed；审批尚未绑定 WAITING_APPROVAL/Inbox 唤醒、真实权限 API 或供应商回执核对 |
+| B-02 | IN PROGRESS | B-02-01/02 已实现 `ApprovalRepository`、010/011 迁移、参数/策略/身份/有效期绑定、重复决定幂等、`RESERVED` 派发 fail-closed 和绑定 Wait 的 Inbox 原子唤醒；审批 API/真实权限、支付聚合和供应商回执核对仍待实现 |
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页和有界 PostgreSQL polling tail；高吞吐 live broker tail、React 工作台和生产认证仍待实现 |
@@ -86,6 +86,8 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 - 2026-09-12 / B-02-01 审批门禁增量：新增 `010_approvals.sql`、`ApprovalRequest/ApprovalRecord` 和 `ApprovalRepository`；Action 默认 `approval_required=true`，派发按 Case → Run → Action → Approval 锁序重查 APPROVED、摘要、当前策略和数据库有效期，缺失审批 fail closed。临时 PostgreSQL 审批/Action 回归 `8 passed`，离线全量 `243 passed`；审批等待唤醒、真实认证和供应商仍未接入。
 
 - 2026-09-12 / B-02-01 完整回归：审批门禁加入显式低风险豁免路径、过期结算和打包迁移资源；临时 PostgreSQL 全量回归 `296 passed`，Ruff、格式、严格 mypy、`git diff --check` 和 wheel/sdist 构建通过。临时 PostgreSQL 容器已移除；远端 CI、真实认证和供应商仍未验证。
+
+- 2026-09-13 / B-02-02 审批等待联动：新增 `011_approval_wait_binding.sql` 和 `WaitRepository.resolve_locked()`；绑定 `run_id/wait_id/generation` 的批准/拒绝在 Case → Run → Wait → Action → Approval 锁序下写 Inbox 并原子结算 Wait/Run，重复决定不重复唤醒，超时代次不复活，宿主事务回滚同时回滚审批和唤醒。临时 PostgreSQL 全量回归 `299 passed`，静态检查通过；审批 API、真实身份和供应商仍未接入。
 
 - 2026-09-12 / A1-04 Compose 启动边界：API 增加 `/readyz` healthcheck，Worker profile 等待 API readiness（从而等待迁移完成），补充 daemon/跨租户队列环境参数；`docker compose config` 已静态核对，未做生产部署。
 

@@ -10,6 +10,7 @@ from .common import (
     ContractViolation,
     ErrorCode,
     Identifier,
+    PositiveInt,
     SchemaVersion,
     Sha256,
     UtcDatetime,
@@ -29,6 +30,21 @@ class ApprovalRequest(CaseScope):
     policy_version: Identifier
     requested_by: Identifier
     expires_at: UtcDatetime
+    # Optional binding to an already registered approval Wait.  Legacy callers
+    # may create a standalone approval record, but only a fully bound request
+    # can atomically wake a WAITING_APPROVAL Run.
+    run_id: Identifier | None = None
+    wait_id: Identifier | None = None
+    wait_generation: PositiveInt | None = None
+
+    @model_validator(mode="after")
+    def coherent_wait_binding(self) -> Self:
+        bound = (
+            self.run_id is not None or self.wait_id is not None or self.wait_generation is not None
+        )
+        if bound and (self.run_id is None or self.wait_id is None or self.wait_generation is None):
+            raise ValueError("approval wait binding must be complete")
+        return self
 
 
 class ApprovalRecord(ApprovalRequest):

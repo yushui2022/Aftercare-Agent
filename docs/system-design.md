@@ -78,7 +78,7 @@ flowchart TB
 | 已实现 | SQLite/真实 PostgreSQL 两个后端，以及显式 join 宿主事务 |
 | 已实现 | 固定退款完成声明，失败回执与绑定错配的门控；不是自由事实文本 |
 | 已实现（骨架） | API、Session/Case/Run/Step/Attempt、Fake Harness、Worker、等待、检查点与 PostgreSQL 调度队列 |
-| 已实现（骨架） | Action Ledger、跨工单 business key 幂等、租约/fencing、执行槽与重试预算、审批参数绑定与派发 fail-closed 门禁；审批等待唤醒和真实业务连接器仍待实现 |
+| 已实现（骨架） | Action Ledger、跨工单 business key 幂等、租约/fencing、执行槽与重试预算、审批参数绑定、派发 fail-closed 门禁和绑定 Wait 的原子唤醒；审批 API 与真实业务连接器仍待实现 |
 | 已实现（边界） | Responses 解析/预算、SSE 持久回放、OIDC claims 转换、OTel tracer 边界、Fake 沙箱；真实模型、live tail、JWKS、E2B/Kubernetes 和生产压测仍待实现 |
 | 未承诺 | 数据库 HA、RLS、保留删除、备份恢复体系、真实退款 exactly-once |
 

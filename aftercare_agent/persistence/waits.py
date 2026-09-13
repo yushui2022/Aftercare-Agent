@@ -207,6 +207,27 @@ class WaitRepository:
             return current
         return self._settle_if_ready(conn, current, run, event=event)
 
+    def resolve_locked(
+        self,
+        conn: psycopg.Connection[Any],
+        wait: WaitRecord,
+        run: tuple[Any, ...],
+        signal: InboxSignal,
+        *,
+        event: DomainEvent | None = None,
+    ) -> WaitRecord:
+        """Apply a signal after the caller already holds Case→Run→Wait locks.
+
+        This narrow entry point lets an approval transaction acquire Action
+        and Approval locks after the Wait, then settle the wait without
+        re-entering the lock order in reverse.
+        """
+
+        if not matches_wait(wait, signal):
+            raise ContractViolation(ErrorCode.CONFLICT, "signal does not match locked wait")
+        EventRepository().receive_inbox(conn, signal)
+        return self._settle_if_ready(conn, wait, run, event=event)
+
     def resolve_timeout(
         self, conn: psycopg.Connection[Any], wait: WaitRecord, *, event: DomainEvent | None = None
     ) -> WaitRecord:

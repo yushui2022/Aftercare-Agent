@@ -26,11 +26,11 @@ RESERVED ──> REQUESTED ──> CONFIRMED
 
 ## 审批台账（B-02-01）
 
-`ApprovalRepository.request()` 在锁定 Case → Action 后创建一条 `PENDING` 记录。记录绑定 `tenant_id/case_id/action_id`、Action 参数摘要、`policy_version`、可信 `requested_by` 和数据库时钟校验的 `expires_at`；同一 Action 不能有第二条审批。`decide()` 只接受可信调用方传入的批准人，禁止申请人自批；相同决定幂等重放，换决定或换决定键返回 `CONFLICT`。
+`ApprovalRepository.request()` 在锁定 Case → Action 后创建一条 `PENDING` 记录。记录绑定 `tenant_id/case_id/action_id`、Action 参数摘要、`policy_version`、可信 `requested_by` 和数据库时钟校验的 `expires_at`；同一 Action 不能有第二条审批。需要唤醒 Agent 时，`ApprovalRequest` 还绑定已有的 `run_id/wait_id/wait_generation`，并要求 Wait 的 `kind=approval`、`correlation_key=approval_id`、`condition_version=action digest`。`decide()` 只接受可信调用方传入的批准人，禁止申请人自批；相同决定幂等重放，换决定或换决定键返回 `CONFLICT`。
 
 派发器必须在同一短事务内调用 `mark_requested(..., approval_id=..., policy_version=...)`。它重新锁定当前审批并检查 APPROVED、未过期、精确 Action 摘要和调用方当前策略版本，然后才允许 `RESERVED → REQUESTED`。`ApprovalRepository.expire()` 供定时扫描器显式结算过期 PENDING；派发仍以数据库当前时间再次检查，不依赖扫描器及时运行。
 
-这一轮是审批安全门，不是完整人工工作流：审批决定尚未绑定 `WAITING_APPROVAL` 的 `WaitRecord`，也尚未通过 Inbox/Outbox 事件自动唤醒 Run；B-02 的等待联动、支付聚合、真实身份/API 和供应商回执仍未完成。审批正文以数据库行作为权威，不信任模型提交的 approver、金额或自由事实文本。
+绑定 Wait 的审批决定在同一 Case → Run → Wait → Action → Approval 事务里写入 Inbox，并通过已持有的 Wait 锁结算：批准或拒绝都只唤醒对应代次，重复决定不会产生第二个 wakeup；已经超时/取消的 Wait 不会被迟到审批复活。未绑定 Wait 的审批仍可作为独立台账，适合提前审批。支付聚合、真实身份/API 和供应商回执仍未完成。审批正文以数据库行作为权威，不信任模型提交的 approver、金额或自由事实文本。
 
 终态重放是幂等的：相同状态和相同回执身份返回原行；同一 Action 的不同终态或不同回执身份返回 `CONFLICT`。`UNKNOWN` 到 `CONFIRMED/FAILED` 是对账路径，不存在 `UNKNOWN → REQUESTED` 的盲目重发边。
 

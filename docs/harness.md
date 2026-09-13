@@ -17,6 +17,7 @@
 `run_fake_harness()` 每推进一步就生成新的 `Checkpoint`：
 
 - `next_step` 表示下一次应执行模型、工具或结束；
+- `next_step=wait` 时，`resume_next_step` 固定记录结算后的继续阶段；
 - `remaining_budget` 保存模型步、工具步和截止时间；
 - `tool_results` 只记录确定性 artifact 引用；
 - `checkpoint_version` 单调递增；

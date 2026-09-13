@@ -40,6 +40,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [Action Ledger 与审批门禁](docs/actions.md) | B-01 台账与 B-02 审批参数/身份/策略/有效期绑定；真实供应商尚未接入 |
 | [跨实例执行准入](docs/admission.md) | A2-03 全局/租户执行槽、数据库租约心跳和按 Run 重试预算 |
 | [本地 Compose](deploy/compose/README.md) | A1-04 开发环境：PostgreSQL + API，Worker 可选 profile；不含模型或真实动作 |
+| [合成 Aftercare 演示](deploy/compose/README.md#合成-aftercare-演示) | 一条命令运行受理、等待/唤醒、检查点恢复、证据评估和 fake 审批动作；只写合成数据 |
 | [Agent 执行与恢复规则](AGENTS.md) | 恢复阅读顺序、状态维护和授权/安全边界 |
 | [工程总设计与 Mermaid 架构图](docs/system-design.md) | 下一步怎样建设：部署、Session/Run、并发、持久事件、沙箱、记忆与 API；区分已实现和目标设计 |
 | [完整技术文章](docs/architecture.md) | 从 Demo 到企业级：跨境电商售后 Agent 的并发、沙箱与故障恢复设计 |
@@ -105,7 +106,7 @@ uv sync --locked
 uv run --locked pytest -q
 ~~~
 
-依赖从 uv.lock 安装，EGM 固定为审核过的 Git 提交，无需并排克隆。首次安装需要网络；测试本身不需要模型 API Key 或真实业务凭证。Windows 的 G 盘缓存配置、解释器安装、Ruff/mypy 与打包验收见[开发指南](docs/development.md)，适配器用法见[嵌入式接入](docs/integrations/egm-embedded.md)。目前没有完整业务服务的启动命令。
+依赖从 uv.lock 安装，EGM 固定为审核过的 Git 提交，无需并排克隆。首次安装需要网络；测试本身不需要模型 API Key 或真实业务凭证。Windows 的 G 盘缓存配置、解释器安装、Ruff/mypy 与打包验收见[开发指南](docs/development.md)，适配器用法见[嵌入式接入](docs/integrations/egm-embedded.md)。完整业务服务仍未交付；本地可用的合成纵向演示见 [Compose 文档](deploy/compose/README.md#合成-aftercare-演示)。
 
 ## 参与与许可
 

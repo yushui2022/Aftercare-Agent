@@ -57,3 +57,36 @@ configuration; production should run migrations as a separately audited job.
 The volume contains only local synthetic data. Production deployment still
 needs real authentication, secret injection, backups, TLS, migrations policy,
 resource limits, and a separate Worker deployment.
+
+## 合成 Aftercare 演示
+
+如果只想验证完整的业务边界，不需要先手工调用 API。下面的命令会在
+PostgreSQL 中迁移 schema，并由一个进程运行一条新的合成 Case：
+
+`admit → WAITING_INPUT → Inbox 唤醒 → checkpoint 恢复 → 可信证据评估 →
+WAITING_APPROVAL → 批准 → fake provider CONFIRMED`。
+
+先启动本地 PostgreSQL（使用仓库自带的开发 Compose）：
+
+```powershell
+docker compose -f deploy/compose/docker-compose.yml up -d --wait postgres
+$env:DATABASE_URL = 'postgresql://aftercare:local-only-aftercare@localhost:55433/aftercare'
+uv run aftercare-demo
+```
+
+PostgreSQL 的默认宿主端口是 `55433`，可用 `AFTERCARE_POSTGRES_PORT` 覆盖；
+这避免占用机器上已有的 `5432` 服务。
+
+命令默认生成 `demo-<random>` Case，因此重复运行不会删除或重置已有数据。也
+可以固定租户和 Case 便于演示，但同一个 Case 不能重复执行；若它已存在，请
+换一个 `--case-id`。输出是一行 JSON，包含 Case 标识、每个持久阶段、最终
+assessment digest、审批/动作结果和按 `case_seq` 排序的 Outbox 事件。
+
+```powershell
+uv run aftercare-demo --tenant-id tenant-demo --case-id demo-001
+```
+
+这是确定性 Fake Harness 演示：没有模型 API、供应商凭证、沙箱或真实退款。
+`aftercare-demo` 只证明 PostgreSQL 事务、Wait/Inbox、检查点恢复和 Action
+门禁可以连成一条可复制路径；生产部署仍需真实身份、连接器、审批工作台、
+租约调度和安全沙箱。

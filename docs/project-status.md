@@ -8,11 +8,11 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权继续完善项目；本轮集中收口 Review/Approval 事件语义、Case 内序号分配、幂等重放和审计快照，不拆成单点小提交 |
+| 本轮请求范围 | 用户授权继续完善项目；在门控事件收口后，集中补一条可复制的合成 Aftercare CLI/Compose 演示链，不拆成单点小提交 |
 | 当前任务 | A2 纵向恢复切片已接入；A3/C/D 运行控制面与生产边界继续进行 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
 | 下一项代码候选 | A3-04：有来源调查建议与 REVIEW 工作台评测；B-02-03：审批 API/真实身份与供应商回执核对；C-01：真实沙箱后端 |
-| 活跃实现任务 | 合成 Aftercare 纵向切片已增加可信订单/物流/买家观察、来源评估和 Review 持久边界；后续接入人工工作台、审批 API、真实 provider 和真实沙箱后端 |
+| 活跃实现任务 | 合成 Aftercare 纵向切片已增加可信订单/物流/买家观察、来源评估、Review 持久边界和一键 CLI 演示；后续接入人工工作台、审批 API、真实 provider 和真实沙箱后端 |
 | 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
 ## 2. 核验过的源码基线
@@ -49,7 +49,7 @@
 | A1-01 | DONE | 新增 PostgreSQL 迁移、受理幂等、Case/Session/Step/Attempt/Run/Checkpoint Repository；隔离 PostgreSQL 17 容器中 5 项集成测试通过 |
 | A1-02 | DONE | 新增 FastAPI 受理/读取接口、显式合成身份边界、API 单测；临时 PostgreSQL 端到端 7 项测试通过 |
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
-| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和 GitHub Actions 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
+| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和合成 Aftercare CLI 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
 | A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 已有有界持久回放，live tail/工作台待补 |
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
@@ -64,11 +64,11 @@
 
 ## 5. 工作区与提交边界
 
-本轮提交范围为 Review/Approval 门控事件收口：事件类型契约、014 Case 序号与快照迁移、事务内 Outbox 写入、Review 重放修复、测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本轮提交范围为 Review/Approval 门控事件收口与可复制演示：事件类型契约、014 Case 序号与快照迁移、事务内 Outbox 写入、Review 重放修复、`aftercare-demo` CLI、Compose 端口/等待说明、测试和文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：本轮用户明确要求提交并推送；`e60102f` 已在本地 PostgreSQL 验收后提交并推送到 `origin/main`。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：本轮用户明确要求提交并推送；事件批次 `01fd49a` 已推送到 `origin/main`，本轮演示增量将在本地 PostgreSQL/Compose 验收后统一提交并核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
@@ -99,6 +99,7 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 
 - 2026-09-13 / Review 与门控事件收口：修复已决定 Review 的旧决定/请求重放不能误路由后续 Run；新增 `approval.requested/decided/expired`、`review.requested/decided` 事件、事务内 Case 序号分配和不可变请求/决定快照。待本轮 PostgreSQL 17 全量回归后记录实际结果；人工工作台、真实身份和供应商仍未接入。
 - 2026-09-13 / Review 与门控事件验收：临时 PostgreSQL 17 全量 `308 passed`、16 warnings；Ruff、format、严格 mypy 和 `git diff --check` 通过。事件决策与 Review 回归证明首次写入产生明确类型、Case 序号连续、快照可重放，重复请求/决定不重复产生事件；临时容器已移除。远端 CI、真实身份、供应商和生产压测仍未验证。
+- 2026-09-13 / 可复制演示入口：新增 `aftercare-demo`/`python -m aftercare_agent.demo`，串联 admit、等待/Inbox 唤醒、检查点恢复、可信观察评估、审批和 fake provider；Compose 为 PostgreSQL 增加可覆盖宿主端口并使用 `up --wait`。临时 PostgreSQL 17 + Compose CLI smoke 成功，输出 `recommendation_ready`、`APPROVED`、`CONFIRMED` 及事件 seq=1/2；PostgreSQL 17 全量回归 `313 passed, 16 warnings`，无数据库的离线全量回归 `249 passed, 64 skipped`，远端 CI、真实模型/连接器/沙箱仍未验证。
 
 - 2026-09-12 / A1-04 Compose 启动边界：API 增加 `/readyz` healthcheck，Worker profile 等待 API readiness（从而等待迁移完成），补充 daemon/跨租户队列环境参数；`docker compose config` 已静态核对，未做生产部署。
 

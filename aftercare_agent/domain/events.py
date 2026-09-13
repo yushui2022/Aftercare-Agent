@@ -17,18 +17,26 @@ from .common import (
 )
 from .protocol import ArtifactReference
 
+type EventType = Literal[
+    "case.opened",
+    "input.received",
+    "run.state_changed",
+    "wait.resolved",
+    "investigation.proposed",
+    "approval.requested",
+    "approval.decided",
+    "approval.expired",
+    "review.requested",
+    "review.decided",
+]
 
-class DomainEvent(CaseScope):
+
+class DomainEventDraft(CaseScope):
+    """Event metadata before the database assigns the case-local sequence."""
+
     schema_version: SchemaVersion = 1
     event_id: Identifier
-    case_seq: PositiveInt
-    event_type: Literal[
-        "case.opened",
-        "input.received",
-        "run.state_changed",
-        "wait.resolved",
-        "investigation.proposed",
-    ]
+    event_type: EventType
     payload_schema_version: SchemaVersion = 1
     payload: ArtifactReference
     run_id: Identifier | None = None
@@ -37,17 +45,42 @@ class DomainEvent(CaseScope):
     recorded_at: UtcDatetime
 
     @model_validator(mode="after")
-    def coherent_event(self) -> Self:
+    def coherent_draft(self) -> Self:
         require_same_case(self, self.payload)
-        if self.event_type in ("run.state_changed", "wait.resolved", "investigation.proposed"):
-            if self.run_id is None:
-                raise ValueError("run event requires run_id")
+        if (
+            self.event_type
+            in (
+                "run.state_changed",
+                "wait.resolved",
+                "investigation.proposed",
+                "review.requested",
+                "review.decided",
+            )
+            and self.run_id is None
+        ):
+            raise ValueError("run event requires run_id")
         return self
+
+
+class DomainEvent(DomainEventDraft):
+    schema_version: SchemaVersion = 1
+    event_id: Identifier
+    case_seq: PositiveInt
 
 
 class ProjectionPosition(CaseScope):
     consumer_id: Identifier
     last_case_seq: NonNegativeInt
+
+
+__all__ = [
+    "DomainEvent",
+    "DomainEventDraft",
+    "EventType",
+    "ProjectionPosition",
+    "consumer_application_key",
+    "projection_decision",
+]
 
 
 def consumer_application_key(consumer: str, event: DomainEvent) -> tuple[str, str, str, str]:

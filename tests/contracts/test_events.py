@@ -119,7 +119,14 @@ def test_event_payload_cannot_reference_a_different_scope(field: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "event_type", ["run.state_changed", "wait.resolved", "investigation.proposed"]
+    "event_type",
+    [
+        "run.state_changed",
+        "wait.resolved",
+        "investigation.proposed",
+        "review.requested",
+        "review.decided",
+    ],
 )
 def test_run_related_events_require_run_identity(event_type: str) -> None:
     with pytest.raises(ValidationError):

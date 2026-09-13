@@ -7,6 +7,8 @@ import psycopg
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.reviews import ReviewRecord, ReviewRequest
 
+from .gate_events import append_review_decided, append_review_requested
+
 _FIELDS = (
     "tenant_id",
     "case_id",
@@ -79,6 +81,16 @@ class ReviewRepository:
         """
         self._lock_case(conn, request.tenant_id, request.case_id)
         run = self._lock_run(conn, request.tenant_id, request.case_id, request.run_id)
+        existing = conn.execute(
+            "SELECT " + ",".join(_FIELDS) + " FROM aftercare_reviews "
+            "WHERE tenant_id=%s AND review_id=%s FOR UPDATE",
+            (request.tenant_id, request.review_id),
+        ).fetchone()
+        if existing is not None:
+            current = _record(existing)
+            if not self._same_request(current, request):
+                raise ContractViolation(ErrorCode.CONFLICT, "review request replay changed")
+            return current, True
         if run[0] != "REVIEW":
             raise ContractViolation(ErrorCode.CONFLICT, "review request requires REVIEW run")
         if int(run[1]) != request.input_version:
@@ -100,7 +112,9 @@ class ReviewRepository:
             ),
         ).fetchone()
         if inserted is not None:
-            return _record(inserted), False
+            result = _record(inserted)
+            append_review_requested(conn, result)
+            return result, False
         row = conn.execute(
             "SELECT " + ",".join(_FIELDS) + " FROM aftercare_reviews "
             "WHERE tenant_id=%s AND review_id=%s FOR UPDATE",
@@ -109,21 +123,15 @@ class ReviewRepository:
         if row is None:
             raise ContractViolation(ErrorCode.RETRYABLE, "review request outcome is unknown")
         current = _record(row)
-        if current.model_copy(
-            update={
-                "decision": None,
-                "reviewer": None,
-                "decision_idempotency_key": None,
-                "decision_reason": None,
-                "decided_at": None,
-            }
-        ) != ReviewRecord(
-            **request.model_dump(),
-            created_at=current.created_at,
-            updated_at=current.updated_at,
-        ):
+        if not self._same_request(current, request):
             raise ContractViolation(ErrorCode.CONFLICT, "review request replay changed")
         return current, True
+
+    @staticmethod
+    def _same_request(current: ReviewRecord, request: ReviewRequest) -> bool:
+        return all(
+            current.model_dump()[field] == value for field, value in request.model_dump().items()
+        )
 
     def decide(
         self,
@@ -159,7 +167,9 @@ class ReviewRepository:
                 and current.decision_idempotency_key == decision_idempotency_key
                 and current.decision_reason == decision_reason
             ):
-                self._resolve_locked(conn, current, run)
+                # The initial decision and Run resolution commit together.
+                # The Run may already have advanced or entered a later
+                # REVIEW.  Replaying this decision must never route it again.
                 return current
             raise ContractViolation(ErrorCode.CONFLICT, "review decision replay changed")
         if run[0] != "REVIEW":
@@ -185,6 +195,7 @@ class ReviewRepository:
         assert updated is not None
         result = _record(updated)
         self._resolve_locked(conn, result, run)
+        append_review_decided(conn, result)
         return result
 
     def resolve_review(
@@ -193,12 +204,18 @@ class ReviewRepository:
         tenant_id: str,
         review_id: str,
     ) -> ReviewRecord:
-        """Apply an already recorded decision after a retried host call."""
+        """Replay a committed decision without routing the Run again.
+
+        ``decide`` records and resolves in one transaction, so a committed
+        terminal decision has already been applied.  The Run may since have
+        advanced or entered another review; an older decision cannot revive
+        it or resolve that newer review.
+        """
         initial = self.get(conn, tenant_id, review_id)
         if initial is None:
             raise ContractViolation(ErrorCode.FORBIDDEN, "review not found")
         self._lock_case(conn, tenant_id, initial.case_id)
-        run = self._lock_run(conn, tenant_id, initial.case_id, initial.run_id)
+        self._lock_run(conn, tenant_id, initial.case_id, initial.run_id)
         row = conn.execute(
             "SELECT " + ",".join(_FIELDS) + " FROM aftercare_reviews "
             "WHERE tenant_id=%s AND review_id=%s FOR UPDATE",
@@ -209,7 +226,6 @@ class ReviewRepository:
         current = _record(row)
         if current.decision is None:
             raise ContractViolation(ErrorCode.CONFLICT, "review decision is still pending")
-        self._resolve_locked(conn, current, run)
         return current
 
     @staticmethod

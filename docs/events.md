@@ -13,8 +13,57 @@ A2-01 的第一块可靠事件能力使用 PostgreSQL，而不是提前引入 Ka
 - **Consumer application**：每个消费者独立使用 `(tenant_id, case_id, consumer_id, event_id)`
   记录应用标记，所以审计投影和通知投影可以分别消费同一事件。
 
+### Case sequence allocation
+
+新写入方使用 `EventRepository.append_event()` 传入 `DomainEventDraft`，由数据库在
+同一个事务中分配下一个 `case_seq`。迁移 `014_event_sequences.sql` 的
+`aftercare_case_event_sequences` 行在分配时加锁；如果 Case 已存在，先按 Case→sequence
+顺序锁定 Case，再锁计数器，和审批、Review 的业务锁顺序一致。分配在事务回滚时也回滚，
+因此不会产生可见的提交序号空洞。旧版 `append_outbox(DomainEvent)` 仍接受显式序号，
+但会在同一计数器上推进高水位，避免与自动分配器冲突；新业务代码不应自行计算序号。
+
+### Approval and Review events
+
+审批/人工 Review 的成功状态转换会在同一 Case 事务追加以下不可变事件：
+
+| 事件 | 触发点 |
+| --- | --- |
+| `approval.requested` | 新建 PENDING 审批 |
+| `approval.decided` / `approval.expired` | 首次批准、拒绝或过期 |
+| `review.requested` | 新建 REVIEW 请求 |
+| `review.decided` | 首次 CONTINUE/CANCEL 决定 |
+
+重复请求或相同幂等决定只返回原记录，不再生成第二个事件。事件 payload 是
+`aftercare_event_payloads` 中按 SHA-256 寻址的完整记录快照，Outbox 只保存引用，因而
+后续审批状态变化不会篡改历史事件。快照仍是受保护的内部审计数据；发布器不能把它或
+数据库连接交给模型/沙箱。事件追加失败会让外层业务事务整体回滚，不能出现“审批已生效
+但事件缺失”。
+
 `EventRepository` 的方法只负责持久化和幂等，不执行消费者业务逻辑。调用方必须把接收、
 状态变更和 Outbox 写入放在同一个短事务中；处理函数不应持有事务等待网络或模型。
+
+## 审批与人工 Review 事件
+
+可信门控路径使用独立、可筛选的事件类型，而不是让消费者从状态快照猜发生了什么：
+
+| 事件 | 产生时机 | 运行标识 |
+|---|---|---|
+| `approval.requested` | 首次创建审批请求 | 绑定审批 Run 时必有 `run_id` |
+| `approval.decided` | 首次批准或拒绝 | 绑定审批 Run 时必有 `run_id` |
+| `approval.expired` | 过期回收器首次结算请求 | 绑定审批 Run 时必有 `run_id` |
+| `review.requested` | 首次登记人工 Review | 必有 `run_id` |
+| `review.decided` | 首次人工继续或取消 | 必有 `run_id` |
+
+这些事件和对应的审批/Review 行在同一个 PostgreSQL 事务中写入。事件 payload 仍然只是
+`ArtifactReference`；迁移 `014_event_sequences.sql` 的 payload 表按引用保存不可变的完整
+决策/请求快照，便于审计重放而不把正文直接塞进事件信封。`case_seq` 由 Case 行锁保护的
+高水位分配器自动递增；同一个事件 ID 的重放返回原事件，不会消耗新序号。历史调用仍可
+使用显式 `DomainEvent.case_seq` 的 `append_outbox`，但也会更新高水位，避免新旧写法制造
+重复序号。
+
+因此，消费者可以按事件类型驱动工作台、审计或通知投影，并用自己的 Inbox/application
+记录去重。事件的存在只说明可信状态变更已经提交，不代表外部供应商动作已经成功；外部
+动作仍须读取 Action Ledger 的状态和结果未知处理规则。
 
 Wait 持久化现已落地：`WaitRepository` 用 Case→Run→Wait 的行锁顺序实现
 PENDING→ACTIVE、早到回执重查、回复优先的超时解析和唯一 wakeup。Inbox 信号只有在

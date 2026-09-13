@@ -16,6 +16,7 @@ from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.protocol import ArtifactReference
 from aftercare_agent.domain.waits import InboxSignal, WaitRecord
 
+from .gate_events import append_approval_decided, append_approval_requested
 from .waits import WaitRepository
 
 _APPROVAL_FIELDS = (
@@ -225,7 +226,9 @@ class ApprovalRepository:
             ),
         ).fetchone()
         if inserted is not None:
-            return _record(inserted), False
+            result = _record(inserted)
+            append_approval_requested(conn, result)
+            return result, False
         rows = conn.execute(
             "SELECT " + ",".join(_APPROVAL_FIELDS) + " FROM aftercare_approvals WHERE tenant_id=%s "
             "AND (approval_id=%s OR action_id=%s) FOR UPDATE",
@@ -373,6 +376,7 @@ class ApprovalRepository:
                 ),
             )
             WaitRepository().resolve_locked(conn, wait, run, signal)
+        append_approval_decided(conn, result)
         return result
 
     def expire(
@@ -410,7 +414,9 @@ class ApprovalRepository:
             (f"expiry:{approval_id}", tenant_id, approval_id),
         ).fetchone()
         assert updated is not None
-        return _record(updated)
+        result = _record(updated)
+        append_approval_decided(conn, result)
+        return result
 
     def lock_for_dispatch(
         self,

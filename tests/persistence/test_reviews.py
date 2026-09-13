@@ -1,6 +1,7 @@
 """PostgreSQL tests for the trusted REVIEW gate."""
 
 import os
+from datetime import timedelta
 
 import pytest
 
@@ -62,6 +63,11 @@ def test_request_and_continue_resolution_requeues_run(db: Database) -> None:
     with db.transaction() as conn:
         record, replayed = repository.request(conn, request)
         assert record.decision is None and not replayed
+        assert conn.execute(
+            "SELECT event_type FROM aftercare_outbox WHERE tenant_id=%s AND case_id=%s "
+            "ORDER BY case_seq",
+            (request.tenant_id, request.case_id),
+        ).fetchall() == [("review.requested",)]
         same, replayed = repository.request(conn, request)
         assert same == record and replayed
         decided = repository.decide(
@@ -75,6 +81,11 @@ def test_request_and_continue_resolution_requeues_run(db: Database) -> None:
         )
         assert decided.decision == "CONTINUE"
         assert conn.execute(
+            "SELECT event_type FROM aftercare_outbox WHERE tenant_id=%s AND case_id=%s "
+            "ORDER BY case_seq",
+            (request.tenant_id, request.case_id),
+        ).fetchall() == [("review.requested",), ("review.decided",)]
+        assert conn.execute(
             "SELECT state FROM aftercare_runs WHERE tenant_id=%s AND run_id=%s",
             (request.tenant_id, request.run_id),
         ).fetchone() == ("READY",)
@@ -83,6 +94,51 @@ def test_request_and_continue_resolution_requeues_run(db: Database) -> None:
             (request.tenant_id, request.run_id),
         ).fetchone() == ("READY",)
         assert repository.resolve_review(conn, request.tenant_id, request.review_id) == decided
+        assert conn.execute(
+            "SELECT count(*) FROM aftercare_outbox WHERE tenant_id=%s AND case_id=%s",
+            (request.tenant_id, request.case_id),
+        ).fetchone() == (2,)
+
+
+def test_old_decision_replay_cannot_resolve_a_later_review(db: Database) -> None:
+    request = _seed(db, "review-replay")
+    repository = ReviewRepository()
+    with db.transaction() as conn:
+        repository.request(conn, request)
+        decided = repository.decide(
+            conn,
+            request.tenant_id,
+            request.review_id,
+            reviewer="ops-reviewer",
+            decision="CONTINUE",
+            decision_idempotency_key="decision-1",
+        )
+        runs = RunRepository()
+        claim = runs.claim(
+            conn, request.tenant_id, request.run_id, "worker-a", timedelta(seconds=30)
+        )
+        runs.transition(conn, claim, "REVIEW")
+        later = request.model_copy(update={"review_id": "review-2"})
+        repository.request(conn, later)
+        assert (
+            repository.decide(
+                conn,
+                request.tenant_id,
+                request.review_id,
+                reviewer="ops-reviewer",
+                decision="CONTINUE",
+                decision_idempotency_key="decision-1",
+            )
+            == decided
+        )
+        assert repository.resolve_review(conn, request.tenant_id, request.review_id) == decided
+        assert repository.request(conn, request) == (decided, True)
+        assert conn.execute(
+            "SELECT state FROM aftercare_runs WHERE tenant_id=%s AND run_id=%s",
+            (request.tenant_id, request.run_id),
+        ).fetchone() == ("REVIEW",)
+        pending = repository.get(conn, later.tenant_id, later.review_id)
+        assert pending is not None and pending.decision is None
 
 
 def test_cancel_resolution_is_terminal_and_replay_is_exact(db: Database) -> None:

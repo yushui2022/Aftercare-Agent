@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
-from aftercare_agent.domain.events import DomainEvent
+from aftercare_agent.domain.events import DomainEvent, DomainEventDraft
 from aftercare_agent.domain.protocol import ArtifactReference
 from aftercare_agent.domain.waits import InboxSignal
 from aftercare_agent.persistence import Database, EventRepository, migrate
@@ -125,3 +125,61 @@ def test_each_consumer_is_deduplicated_independently(db: Database) -> None:
             consumer_id="projection-b",
             event_id="event-1",
         )
+
+
+def test_append_event_allocates_case_sequence_and_preserves_snapshot(db: Database) -> None:
+    events = EventRepository()
+    with db.transaction() as connection:
+        connection.execute(
+            "DELETE FROM aftercare_event_payloads WHERE tenant_id=%s", ("event-auto",)
+        )
+        connection.execute("DELETE FROM aftercare_outbox WHERE tenant_id=%s", ("event-auto",))
+        connection.execute(
+            "DELETE FROM aftercare_case_event_sequences WHERE tenant_id=%s", ("event-auto",)
+        )
+        draft = DomainEventDraft(
+            tenant_id="event-auto",
+            case_id="case-1",
+            event_id="approval:one:requested",
+            event_type="approval.requested",
+            run_id="run-1",
+            payload=ArtifactReference(
+                tenant_id="event-auto",
+                case_id="case-1",
+                reference_id="event-payload:approval:one:requested",
+                sha256="a" * 64,
+            ),
+            correlation_id="approval-one",
+            recorded_at=NOW,
+        )
+        snapshot = {"approval_id": "one", "decision": "PENDING"}
+        # Use the repository's canonical digest instead of hand-editing the
+        # event contract in this test.
+        draft = draft.model_copy(
+            update={
+                "payload": draft.payload.model_copy(
+                    update={"sha256": events._snapshot_sha256(snapshot)}
+                )
+            }
+        )
+        first, replayed = events.append_event(connection, draft, snapshot=snapshot)
+        assert first.case_seq == 1 and not replayed
+        second, replayed = events.append_event(connection, draft, snapshot=snapshot)
+        assert second == first and replayed
+        row = connection.execute(
+            "SELECT payload FROM aftercare_event_payloads WHERE tenant_id=%s AND reference_id=%s",
+            ("event-auto", draft.payload.reference_id),
+        ).fetchone()
+        assert row is not None and row[0] == snapshot
+
+        next_draft = draft.model_copy(update={"event_id": "approval:one:decided"})
+        next_draft = next_draft.model_copy(
+            update={
+                "event_type": "approval.decided",
+                "payload": next_draft.payload.model_copy(
+                    update={"reference_id": "event-payload:approval:one:decided"}
+                ),
+            }
+        )
+        third, _ = events.append_event(connection, next_draft, snapshot=snapshot)
+        assert third.case_seq == 2

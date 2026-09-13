@@ -1,5 +1,6 @@
 """Transactional Inbox/Outbox primitives with explicit replay semantics."""
 
+import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -9,7 +10,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
-from aftercare_agent.domain.events import DomainEvent
+from aftercare_agent.domain.events import DomainEvent, DomainEventDraft
 from aftercare_agent.domain.waits import InboxSignal, check_inbox_replay
 
 
@@ -39,7 +40,128 @@ class OutboxDelivery:
 class EventRepository:
     """Persist source signals and application events inside a caller transaction."""
 
+    @staticmethod
+    def _lock_case_sequence(
+        connection: psycopg.Connection[Any], tenant_id: str, case_id: str
+    ) -> int:
+        """Lock and return a case-local high-water mark.
+
+        This is deliberately a row lock, rather than a PostgreSQL sequence:
+        aborted transactions do not consume visible case positions and two
+        workers cannot allocate the same position.  The counter is also
+        reconciled with legacy explicit ``case_seq`` writes below.
+        """
+        # Production case writers already have a Case row.  Lock it first so
+        # event allocation composes with Case→Run→Wait/Action gate paths.  A
+        # few import/backfill callers intentionally write events before the
+        # case exists; those retain the counter-only compatibility path.
+        connection.execute(
+            "SELECT 1 FROM aftercare_cases WHERE tenant_id=%s AND case_id=%s FOR UPDATE",
+            (tenant_id, case_id),
+        )
+        connection.execute(
+            "INSERT INTO aftercare_case_event_sequences(tenant_id,case_id,last_case_seq) "
+            "SELECT %s,%s,COALESCE(MAX(case_seq),0) FROM aftercare_outbox "
+            "WHERE tenant_id=%s AND case_id=%s ON CONFLICT DO NOTHING",
+            (tenant_id, case_id, tenant_id, case_id),
+        )
+        row = connection.execute(
+            "SELECT last_case_seq FROM aftercare_case_event_sequences "
+            "WHERE tenant_id=%s AND case_id=%s FOR UPDATE",
+            (tenant_id, case_id),
+        ).fetchone()
+        if row is None:
+            raise ContractViolation(ErrorCode.RETRYABLE, "case event sequence row is unavailable")
+        return int(row[0])
+
+    @staticmethod
+    def _snapshot_sha256(payload: dict[str, Any]) -> str:
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def append_event(
+        self,
+        connection: psycopg.Connection[Any],
+        draft: DomainEventDraft,
+        *,
+        snapshot: dict[str, Any] | None = None,
+    ) -> tuple[DomainEvent, bool]:
+        """Allocate the next case position and append one immutable event.
+
+        ``snapshot`` is optional for compatibility, but gate events should
+        provide it: the outbox stores only a content-addressed artifact
+        reference while this table preserves the exact decision/request that
+        was true at the transition.  Replays return the original event and
+        never advance the counter.
+        """
+        current = self._lock_case_sequence(connection, draft.tenant_id, draft.case_id)
+        existing = connection.execute(
+            "SELECT payload FROM aftercare_outbox WHERE tenant_id=%s AND event_id=%s FOR UPDATE",
+            (draft.tenant_id, draft.event_id),
+        ).fetchone()
+        if existing is not None:
+            try:
+                event = DomainEvent.model_validate_json(json.dumps(existing[0], ensure_ascii=False))
+            except (TypeError, ValueError) as exc:
+                raise ContractViolation(
+                    ErrorCode.RETRYABLE, "stored outbox event is invalid"
+                ) from exc
+            if event != DomainEvent.model_validate(
+                draft.model_dump() | {"case_seq": event.case_seq}
+            ):
+                raise ContractViolation(ErrorCode.CONFLICT, "outbox event identity conflicts")
+            return event, True
+        if snapshot is not None:
+            digest = self._snapshot_sha256(snapshot)
+            if digest != draft.payload.sha256:
+                raise ContractViolation(ErrorCode.CONFLICT, "event snapshot digest does not match")
+            payload_row = connection.execute(
+                "SELECT sha256,payload FROM aftercare_event_payloads "
+                "WHERE tenant_id=%s AND case_id=%s AND reference_id=%s FOR UPDATE",
+                (draft.tenant_id, draft.case_id, draft.payload.reference_id),
+            ).fetchone()
+            if payload_row is not None and (
+                payload_row[0] != draft.payload.sha256 or payload_row[1] != snapshot
+            ):
+                raise ContractViolation(ErrorCode.CONFLICT, "event payload snapshot conflicts")
+            connection.execute(
+                "INSERT INTO aftercare_event_payloads(tenant_id,case_id,reference_id,sha256,"
+                "payload) VALUES (%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+                (
+                    draft.tenant_id,
+                    draft.case_id,
+                    draft.payload.reference_id,
+                    draft.payload.sha256,
+                    Jsonb(snapshot),
+                ),
+            )
+        event = DomainEvent.model_validate(draft.model_dump() | {"case_seq": current + 1})
+        inserted = connection.execute(
+            "INSERT INTO aftercare_outbox(tenant_id,case_id,event_id,case_seq,event_type,payload) "
+            "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
+            (
+                event.tenant_id,
+                event.case_id,
+                event.event_id,
+                event.case_seq,
+                event.event_type,
+                Jsonb(event.model_dump(mode="json")),
+            ),
+        ).fetchone()
+        if inserted is None:
+            # A concurrent legacy writer may have occupied the position.  The
+            # case counter is locked, so only a cross-transaction explicit
+            # write can produce this path; surface conflict rather than guess.
+            raise ContractViolation(ErrorCode.CONFLICT, "case event sequence was occupied")
+        connection.execute(
+            "UPDATE aftercare_case_event_sequences SET last_case_seq=%s "
+            "WHERE tenant_id=%s AND case_id=%s",
+            (event.case_seq, event.tenant_id, event.case_id),
+        )
+        return event, False
+
     def append_outbox(self, connection: psycopg.Connection[Any], event: DomainEvent) -> bool:
+        current = self._lock_case_sequence(connection, event.tenant_id, event.case_id)
         inserted = connection.execute(
             "INSERT INTO aftercare_outbox(tenant_id,case_id,event_id,case_seq,event_type,payload) "
             "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
@@ -53,6 +175,12 @@ class EventRepository:
             ),
         ).fetchone()
         if inserted is not None:
+            if event.case_seq > current:
+                connection.execute(
+                    "UPDATE aftercare_case_event_sequences SET last_case_seq=%s "
+                    "WHERE tenant_id=%s AND case_id=%s",
+                    (event.case_seq, event.tenant_id, event.case_id),
+                )
             return True
         existing = connection.execute(
             "SELECT event_id,case_id,case_seq,event_type,payload FROM aftercare_outbox "

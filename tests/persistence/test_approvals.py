@@ -138,6 +138,11 @@ def test_decision_is_bound_and_idempotent(db: Database) -> None:
     with db.transaction() as conn:
         first, replayed = repository.request(conn, request)
         assert first.decision == "PENDING" and not replayed
+        assert conn.execute(
+            "SELECT event_type FROM aftercare_outbox WHERE tenant_id=%s AND case_id=%s "
+            "ORDER BY case_seq",
+            (intent.tenant_id, intent.case_id),
+        ).fetchall() == [("approval.requested",)]
         approved = repository.decide(
             conn,
             intent.tenant_id,
@@ -148,6 +153,11 @@ def test_decision_is_bound_and_idempotent(db: Database) -> None:
             decision_reason="policy matched",
         )
         assert approved.decision == "APPROVED"
+        assert conn.execute(
+            "SELECT event_type FROM aftercare_outbox WHERE tenant_id=%s AND case_id=%s "
+            "ORDER BY case_seq",
+            (intent.tenant_id, intent.case_id),
+        ).fetchall() == [("approval.requested",), ("approval.decided",)]
         assert (
             repository.decide(
                 conn,
@@ -160,6 +170,10 @@ def test_decision_is_bound_and_idempotent(db: Database) -> None:
             )
             == approved
         )
+        assert conn.execute(
+            "SELECT count(*) FROM aftercare_outbox WHERE tenant_id=%s AND case_id=%s",
+            (intent.tenant_id, intent.case_id),
+        ).fetchone() == (2,)
         with pytest.raises(ContractViolation) as error:
             repository.decide(
                 conn,

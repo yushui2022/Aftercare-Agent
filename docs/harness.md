@@ -45,6 +45,8 @@
 
 这条切片证明的是“停机期间输入不丢、恢复不重复、模型预算不被等待重复消耗”，并把订单、物流、买家三类受信观察接入确定性评估。把承运商改为 `DELIVERED` 或提交不匹配引用即可得到 `HUMAN_REVIEW`，结果仍会保留完整引用和策略版本。当前仍未接真实模型、EGM 调查 schema、审批 API 或供应商副作用；完整 A3-04 评测还要报告真实模型效果/成本。旧的 schema-v1 等待 checkpoint 可能没有恢复阶段，Worker 会 fail-closed，只有可信调用方显式传入 `resume_next_step` 才能兼容恢复；新 checkpoint 不再依赖这个部署级参数。
 
+在 `RECOMMENDATION_READY` 后，`request_refund_approval()` 展示受控动作边界：可信宿主从订单台账固定金额、币种、业务键和 provider 幂等键，创建一个以前序调查 Run 为 `predecessor_run_id` 的派生审批 Run，并按 Action → approval Wait → `ApprovalRequest` 的顺序在一个短事务中登记。调查 Run 已完成后不能倒退回等待状态，派生 Run 是审计链上的明确阶段。`approve_and_confirm_refund()` 先通过 `ApprovalRepository.decide()` 原子唤醒等待，再由新的 provider Worker 通过 `mark_requested()` 重查批准、策略和参数摘要，最后在事务外调用 fake provider，并用同一 Run fence 写入 `CONFIRMED`。真实 provider 仍需把未知回执保留为 `UNKNOWN`，不能自动重发。
+
 ## 常驻 Worker 与心跳
 
 `run_daemon()` 每次只领取一个 READY Run；没有任务时按 `idle_sleep` 退避，收到进程的停止事件或达到测试用 `max_iterations` 后返回计数结果。数据库仍是调度权威，进程内循环和计数器不会替代租约。

@@ -95,6 +95,8 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 
 - 2026-09-13 / A2 评估快照：新增迁移 `012_investigation_assessments.sql`、`InvestigationAssessmentRepository` 和不可变 assessment digest；调查结果按 tenant/case/run 保存，重启后可读取最近快照，重复写入按完整结果幂等校验。临时 PostgreSQL 全量回归 `302 passed`，静态检查通过；快照仍不是外部动作授权。
 
+- 2026-09-13 / B-02 合成动作切片：纵向流程新增可信 `ActionIntent`、绑定 `WAITING_APPROVAL`、审批原子唤醒、批准后 `mark_requested` 复核和 fake provider `CONFIRMED`；金额/币种/供应商键均不来自模型。相关 PostgreSQL 审批、Action、纵向回归 `13 passed`；真实审批身份、支付聚合、供应商未知回执和拒绝后 REVIEW 仍待实现。
+
 - 2026-09-12 / A1-04 Compose 启动边界：API 增加 `/readyz` healthcheck，Worker profile 等待 API readiness（从而等待迁移完成），补充 daemon/跨租户队列环境参数；`docker compose config` 已静态核对，未做生产部署。
 
 ### A1-02：最小 API 与认证边界

@@ -11,6 +11,9 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from aftercare_agent.actions import ActionIntent
+from aftercare_agent.domain.approvals import ApprovalRecord, ApprovalRequest
+from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.investigation import (
     BuyerAssertion,
     BuyerStatement,
@@ -40,7 +43,9 @@ from aftercare_agent.domain.runtime import (
 )
 from aftercare_agent.domain.waits import InboxSignal, WaitRecord
 from aftercare_agent.persistence import (
+    ActionRepository,
     AdmissionRepository,
+    ApprovalRepository,
     CheckpointRepository,
     Database,
     InvestigationAssessmentRepository,
@@ -64,6 +69,10 @@ class SyntheticCase:
     run_id: str
     wait_id: str = "customer-input-1"
     wait_generation: int = 1
+    approval_run_id: str = "approval-run-1"
+    approval_wait_id: str = "approval-wait-1"
+    approval_id: str = "approval-1"
+    action_id: str = "refund-action-1"
 
 
 @dataclass(frozen=True)
@@ -71,6 +80,15 @@ class WaitingSlice:
     case: SyntheticCase
     wait: WaitRecord
     checkpoint: Checkpoint
+
+
+@dataclass(frozen=True)
+class ApprovalSlice:
+    run_id: str
+    action_id: str
+    approval_id: str
+    wait_id: str
+    approval: ApprovalRecord
 
 
 class SyntheticAftercareFlow:
@@ -385,6 +403,174 @@ class SyntheticAftercareFlow:
             )
         return result
 
+    def request_refund_approval(self, *, now: datetime) -> ApprovalSlice:
+        """Create a trusted refund obligation and park its approval Wait.
+
+        Amount, currency and provider idempotency are fixed by this trusted
+        demo host; no model output participates in the Action identity.
+        """
+        intent = ActionIntent(
+            tenant_id=self.case.tenant_id,
+            case_id=self.case.case_id,
+            order_id=self.case.order_id,
+            action_id=self.case.action_id,
+            action_type="refund",
+            business_key=f"payment:{self.case.order_id}:refund",
+            idempotency_key=f"refund-request:{self.case.case_id}",
+            parameters_sha256="c" * 64,
+            amount_minor="2500",
+            currency="USD",
+            provider_idempotency_key=f"refund:{self.case.order_id}",
+        )
+        request_run = RunRecord(
+            tenant_id=self.case.tenant_id,
+            case_id=self.case.case_id,
+            run_id=self.case.approval_run_id,
+            session_id=self.case.session_id,
+            predecessor_run_id=self.case.run_id,
+            definition_version="synthetic-aftercare-v1",
+            input_version=1,
+        )
+        wait = WaitRecord(
+            tenant_id=self.case.tenant_id,
+            case_id=self.case.case_id,
+            run_id=self.case.approval_run_id,
+            wait_id=self.case.approval_wait_id,
+            generation=1,
+            kind="approval",
+            correlation_key=self.case.approval_id,
+            condition_version=intent.parameters_sha256,
+            created_at=now,
+            deadline=now + timedelta(hours=1),
+            state="PENDING",
+        )
+        request = ApprovalRequest(
+            tenant_id=self.case.tenant_id,
+            case_id=self.case.case_id,
+            approval_id=self.case.approval_id,
+            action_id=intent.action_id,
+            action_parameters_sha256=intent.parameters_sha256,
+            policy_version="refund-v1",
+            requested_by="synthetic-agent",
+            expires_at=now + timedelta(hours=1),
+            run_id=request_run.run_id,
+            wait_id=wait.wait_id,
+            wait_generation=wait.generation,
+        )
+        runs = RunRepository()
+        waits = WaitRepository()
+        approvals = ApprovalRepository()
+        with self.database.transaction() as conn:
+            assessment = InvestigationAssessmentRepository().get_latest(
+                conn,
+                tenant_id=self.case.tenant_id,
+                case_id=self.case.case_id,
+                run_id=self.case.run_id,
+            )
+            if assessment is None or assessment.disposition != "recommendation_ready":
+                raise ContractViolation(
+                    ErrorCode.FORBIDDEN,
+                    "only a recommendation-ready assessment may create a refund action",
+                )
+            existing_approval = approvals.get(conn, self.case.tenant_id, self.case.approval_id)
+            if existing_approval is not None:
+                if existing_approval.run_id != self.case.approval_run_id:
+                    raise ContractViolation(ErrorCode.CONFLICT, "approval replay changed run")
+                return ApprovalSlice(
+                    run_id=self.case.approval_run_id,
+                    action_id=self.case.action_id,
+                    approval_id=existing_approval.approval_id,
+                    wait_id=self.case.approval_wait_id,
+                    approval=existing_approval,
+                )
+            runs.create_run(conn, request_run)
+            claim = runs.claim(
+                conn,
+                self.case.tenant_id,
+                request_run.run_id,
+                "synthetic-worker-approval",
+                timedelta(seconds=30),
+            )
+            slot = AdmissionRepository().acquire_slot(conn, claim, timedelta(seconds=30))
+            ActionRepository().reserve(conn, intent, claim=claim)
+            waits.register(conn, wait, claim)
+            runs.transition(
+                conn,
+                claim,
+                "WAITING_APPROVAL",
+                wait_id=wait.wait_id,
+                wait_generation=wait.generation,
+            )
+            waits.activate(conn, wait)
+            approval, _ = approvals.request(conn, request)
+            if slot is not None:
+                AdmissionRepository().release_slot(conn, claim)
+        return ApprovalSlice(
+            run_id=request_run.run_id,
+            action_id=intent.action_id,
+            approval_id=approval.approval_id,
+            wait_id=wait.wait_id,
+            approval=approval,
+        )
+
+    def approve_and_confirm_refund(
+        self, approval: ApprovalSlice, *, now: datetime, decision_key: str = "decision-1"
+    ) -> str:
+        """Approve, atomically wake, then dispatch a fake provider once."""
+        approvals = ApprovalRepository()
+        runs = RunRepository()
+        actions = ActionRepository()
+        provider_reference = f"synthetic-refund:{approval.action_id}"
+        result_sha = hashlib.sha256(provider_reference.encode("utf-8")).hexdigest()
+        with self.database.transaction() as conn:
+            decided = approvals.decide(
+                conn,
+                self.case.tenant_id,
+                approval.approval_id,
+                approver="synthetic-ops",
+                decision="APPROVED",
+                decision_idempotency_key=decision_key,
+                decision_reason="synthetic policy matched",
+            )
+            assert decided.decision == "APPROVED"
+            existing = actions.get(conn, self.case.tenant_id, approval.action_id)
+            if existing is not None and existing.state == "CONFIRMED":
+                if (
+                    existing.provider_reference != provider_reference
+                    or existing.result_sha256 != result_sha
+                ):
+                    raise ContractViolation(ErrorCode.CONFLICT, "confirmed provider result changed")
+                return provider_reference
+        # The provider call is outside the transaction in production.  This
+        # deterministic connector returns a stable reference and is safe to
+        # replay only through the same Action idempotency key.
+        with self.database.transaction() as conn:
+            claim = runs.claim(
+                conn,
+                self.case.tenant_id,
+                approval.run_id,
+                "synthetic-provider-worker",
+                timedelta(seconds=30),
+            )
+            actions.mark_requested(
+                conn,
+                approval.action_id,
+                claim,
+                approval_id=approval.approval_id,
+                policy_version="refund-v1",
+            )
+        with self.database.transaction() as conn:
+            actions.mark_result(
+                conn,
+                approval.action_id,
+                claim,
+                state="CONFIRMED",
+                provider_reference=provider_reference,
+                result_sha256=result_sha,
+            )
+            runs.transition(conn, claim, "COMPLETED")
+        return provider_reference
+
     def resume(self, *, now: datetime) -> WorkerResult:
         """Let a new Worker claim the woken Run and finish the Harness slice."""
         result = run_next(
@@ -398,4 +584,4 @@ class SyntheticAftercareFlow:
         return result
 
 
-__all__ = ["SyntheticAftercareFlow", "SyntheticCase", "WaitingSlice"]
+__all__ = ["ApprovalSlice", "SyntheticAftercareFlow", "SyntheticCase", "WaitingSlice"]

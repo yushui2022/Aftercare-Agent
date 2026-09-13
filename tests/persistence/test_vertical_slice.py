@@ -11,6 +11,7 @@ from aftercare_agent.domain.investigation import (
     InvestigationProposal,
 )
 from aftercare_agent.persistence import (
+    ActionRepository,
     Database,
     InvestigationAssessmentRepository,
     RunRepository,
@@ -87,6 +88,31 @@ def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> No
         )
     assert snapshot is not None
     assert snapshot.assessment == assessment
+    with db.transaction() as conn:
+        run = RunRepository().get(conn, case.tenant_id, case.run_id)
+        assert run is not None and run.state == "COMPLETED"
+
+    # A retried channel delivery is an exact no-op, not a second wakeup.
+    replay = flow.reply(now=reply_time, event_id="reply-1")
+    assert replay.state == "SATISFIED"
+
+    approval = flow.request_refund_approval(now=datetime.now(UTC) - timedelta(seconds=2))
+    assert approval.approval.decision == "PENDING"
+    assert flow.request_refund_approval(now=datetime.now(UTC)).approval == approval.approval
+    provider_reference = flow.approve_and_confirm_refund(
+        approval, now=datetime.now(UTC), decision_key="decision-1"
+    )
+    assert provider_reference == "synthetic-refund:refund-action-1"
+    assert (
+        flow.approve_and_confirm_refund(approval, now=datetime.now(UTC), decision_key="decision-1")
+        == provider_reference
+    )
+    with db.transaction() as conn:
+        action = ActionRepository().get(conn, case.tenant_id, case.action_id)
+        approval_run = RunRepository().get(conn, case.tenant_id, case.approval_run_id)
+    assert action is not None and action.state == "CONFIRMED"
+    assert approval_run is not None and approval_run.state == "COMPLETED"
+
     review = flow.assess(
         now=datetime.now(UTC),
         proposal=InvestigationProposal(
@@ -99,10 +125,3 @@ def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> No
         ),
     )
     assert review.disposition == "human_review"
-    with db.transaction() as conn:
-        run = RunRepository().get(conn, case.tenant_id, case.run_id)
-        assert run is not None and run.state == "COMPLETED"
-
-    # A retried channel delivery is an exact no-op, not a second wakeup.
-    replay = flow.reply(now=reply_time, event_id="reply-1")
-    assert replay.state == "SATISFIED"

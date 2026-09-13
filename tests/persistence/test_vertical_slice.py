@@ -10,7 +10,12 @@ from aftercare_agent.domain.investigation import (
     InvestigationClaim,
     InvestigationProposal,
 )
-from aftercare_agent.persistence import Database, RunRepository, migrate
+from aftercare_agent.persistence import (
+    Database,
+    InvestigationAssessmentRepository,
+    RunRepository,
+    migrate,
+)
 from aftercare_agent.runtime import SyntheticAftercareFlow, SyntheticCase
 
 
@@ -39,6 +44,9 @@ def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> No
         conn.execute("DELETE FROM aftercare_waits WHERE tenant_id=%s", (case.tenant_id,))
         conn.execute("DELETE FROM aftercare_inbox WHERE tenant_id=%s", (case.tenant_id,))
         conn.execute("DELETE FROM aftercare_checkpoints WHERE tenant_id=%s", (case.tenant_id,))
+        conn.execute(
+            "DELETE FROM aftercare_investigation_assessments WHERE tenant_id=%s", (case.tenant_id,)
+        )
         conn.execute("DELETE FROM aftercare_execution_queue WHERE tenant_id=%s", (case.tenant_id,))
         conn.execute("DELETE FROM aftercare_runs WHERE tenant_id=%s", (case.tenant_id,))
         conn.execute("DELETE FROM aftercare_sessions WHERE tenant_id=%s", (case.tenant_id,))
@@ -70,6 +78,15 @@ def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> No
     assert assessment.disposition == "recommendation_ready"
     assert len(assessment.decisions) == 3
     assert all(decision.accepted for decision in assessment.decisions)
+    with db.transaction() as conn:
+        snapshot = InvestigationAssessmentRepository().get_latest(
+            conn,
+            tenant_id=case.tenant_id,
+            case_id=case.case_id,
+            run_id=case.run_id,
+        )
+    assert snapshot is not None
+    assert snapshot.assessment == assessment
     review = flow.assess(
         now=datetime.now(UTC),
         proposal=InvestigationProposal(

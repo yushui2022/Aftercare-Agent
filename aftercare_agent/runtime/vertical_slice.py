@@ -43,6 +43,7 @@ from aftercare_agent.persistence import (
     AdmissionRepository,
     CheckpointRepository,
     Database,
+    InvestigationAssessmentRepository,
     InvestigationObservationRepository,
     RunRepository,
     WaitRepository,
@@ -366,7 +367,7 @@ class SyntheticAftercareFlow:
             selected = InvestigationProposal(claims=tuple(claims))
         else:
             selected = proposal
-        return assess_investigation(
+        result = assess_investigation(
             scope,
             selected,
             observations,
@@ -374,6 +375,15 @@ class SyntheticAftercareFlow:
             policy,
             now=now,
         )
+        with self.database.transaction() as conn:
+            InvestigationAssessmentRepository().put(
+                conn,
+                tenant_id=self.case.tenant_id,
+                case_id=self.case.case_id,
+                run_id=self.case.run_id,
+                assessment=result,
+            )
+        return result
 
     def resume(self, *, now: datetime) -> WorkerResult:
         """Let a new Worker claim the woken Run and finish the Harness slice."""

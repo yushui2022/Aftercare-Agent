@@ -93,6 +93,8 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 
 - 2026-09-13 / A2 纵向证据增量：纵向切片加入受信订单快照、物流状态和买家陈述的持久观察，`assess()` 对完整账本生成带引用的 `RECOMMENDATION_READY`，并保留冲突/错配时转 `HUMAN_REVIEW` 的确定性规则；相关 PostgreSQL 回归 `6 passed`。这仍不是真实 EGM provider 或真实模型评测。
 
+- 2026-09-13 / A2 评估快照：新增迁移 `012_investigation_assessments.sql`、`InvestigationAssessmentRepository` 和不可变 assessment digest；调查结果按 tenant/case/run 保存，重启后可读取最近快照，重复写入按完整结果幂等校验。临时 PostgreSQL 全量回归 `302 passed`，静态检查通过；快照仍不是外部动作授权。
+
 - 2026-09-12 / A1-04 Compose 启动边界：API 增加 `/readyz` healthcheck，Worker profile 等待 API readiness（从而等待迁移完成），补充 daemon/跨租户队列环境参数；`docker compose config` 已静态核对，未做生产部署。
 
 ### A1-02：最小 API 与认证边界

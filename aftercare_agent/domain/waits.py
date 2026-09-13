@@ -1,4 +1,4 @@
-"""Waiting v1 candidate rules. Inbox lookup/locking/atomic wakeup are not implemented."""
+"""Waiting v1 rules shared by the Inbox and durable wake-up implementation."""
 
 from datetime import datetime
 from typing import Literal, Self

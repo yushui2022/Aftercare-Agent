@@ -33,6 +33,17 @@
 
 因此 Fake Harness 的价值是把“模型循环能够安全暂停并恢复”的纯规则固定下来。A1-04 已提供一次性 Worker CLI、`run_next()` 的 `SKIP LOCKED` 领取原语和 `worker` Compose profile；A2-02 现在补上了可停止的 `run_daemon()` 轮询和独立连接租约心跳。
 
+## 合成售后纵向切片
+
+`SyntheticAftercareFlow` 把上述边界接成一条可复现的验收路径：
+
+1. `admit()` 在一个短事务内创建 Case、Session 和 READY Run；
+2. `pause_for_customer()` 先领取 Run，再在事务外运行两步 Fake Harness，随后用另一短事务保存 checkpoint、注册并激活 `WAITING_INPUT`；
+3. `reply()` 以受信任的渠道适配器身份写入 Inbox，按 `wait_id/generation/correlation_key/condition_version` 原子结算 Wait 并唤醒 Run；
+4. `resume()` 由另一 Worker 重新 claim，明确从等待前的 `tool` 阶段继续，最终保存 fenced checkpoint 并完成 Run。
+
+这条切片证明的是“停机期间输入不丢、恢复不重复、模型预算不被等待重复消耗”。它仍然是合成 Harness：没有真实模型、EGM 调查建议、审批 API 或供应商副作用；完整 A3-04 评测仍需把有来源的调查结论和 `REVIEW` 分支接入。恢复步骤由调用方显式传入，Worker 不根据 checkpoint 猜测业务语义。
+
 ## 常驻 Worker 与心跳
 
 `run_daemon()` 每次只领取一个 READY Run；没有任务时按 `idle_sleep` 退避，收到进程的停止事件或达到测试用 `max_iterations` 后返回计数结果。数据库仍是调度权威，进程内循环和计数器不会替代租约。

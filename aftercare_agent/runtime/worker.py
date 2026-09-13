@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock, Thread
+from typing import Literal
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.protocol import Checkpoint
@@ -155,6 +156,7 @@ def _execute_claim(
     lease: timedelta,
     heartbeat_interval: timedelta | None = None,
     slot: SlotReservation | None = None,
+    resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
 ) -> WorkerResult:
     _validate_steps(max_steps)
     heartbeat = LeaseHeartbeat(
@@ -165,6 +167,28 @@ def _execute_claim(
     )
     heartbeat.start()
     try:
+        # A wait is settled by the trusted Inbox/Approval path before the Run
+        # becomes READY again.  The checkpoint intentionally keeps the wait
+        # identity for audit/recovery; once a fresh claim is acquired, clear
+        # that execution marker before handing control back to the Harness.
+        # This makes WAITING_INPUT/WAITING_APPROVAL a durable boundary rather
+        # than an in-memory branch in the worker loop.
+        if previous is not None and previous.next_step == "wait":
+            if resume_next_step is None:
+                raise ContractViolation(
+                    ErrorCode.CONFLICT, "wait checkpoint needs an explicit resume step"
+                )
+            previous = previous.model_copy(
+                update={
+                    "checkpoint_version": previous.checkpoint_version + 1,
+                    # The wait is registered after a bounded step.  Resume
+                    # the exact pending phase; do not spend a second model
+                    # budget just because the Run was parked.
+                    "next_step": resume_next_step,
+                    "wait_id": None,
+                    "wait_generation": None,
+                }
+            )
         result: HarnessResult = run_fake_harness(
             tenant_id=claim.tenant_id,
             case_id=claim.case_id,
@@ -208,6 +232,7 @@ def run_once(
     lease: timedelta = timedelta(seconds=30),
     max_steps: int = 8,
     heartbeat_interval: timedelta | None = None,
+    resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
 ) -> WorkerResult:
     """Claim one Run, execute a bounded Fake Harness slice, and persist it.
 
@@ -235,6 +260,7 @@ def run_once(
         lease=lease,
         heartbeat_interval=heartbeat_interval,
         slot=slot,
+        resume_next_step=resume_next_step,
     )
 
 
@@ -247,6 +273,7 @@ def run_next(
     lease: timedelta = timedelta(seconds=30),
     max_steps: int = 8,
     heartbeat_interval: timedelta | None = None,
+    resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
 ) -> WorkerResult | None:
     """Claim and execute one runnable Run, or return ``None`` when idle.
 
@@ -274,6 +301,7 @@ def run_next(
         lease=lease,
         heartbeat_interval=heartbeat_interval,
         slot=slot,
+        resume_next_step=resume_next_step,
     )
 
 
@@ -289,6 +317,7 @@ def run_daemon(
     max_steps: int = 8,
     max_iterations: int | None = None,
     on_error: Callable[[Exception], None] | None = None,
+    resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
 ) -> WorkerLoopResult:
     """Poll runnable Runs until stopped, with bounded idle backoff.
 
@@ -318,6 +347,7 @@ def run_daemon(
                 lease=lease,
                 max_steps=max_steps,
                 heartbeat_interval=heartbeat_interval,
+                resume_next_step=resume_next_step,
             )
             if result is None:
                 idle_polls += 1

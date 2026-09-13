@@ -34,6 +34,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [API 与认证边界](docs/api-auth.md) | A1-02 最小 FastAPI 受理/读取接口；当前仅支持显式合成身份测试模式 |
 | [SSE 事件回放](docs/events.md) | A3-03 case-scoped SSE replay、`Last-Event-ID` 续传、持久事件游标与有界 PostgreSQL tail |
 | [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
+| [Human Review 边界](docs/reviews.md) | `HUMAN_REVIEW` 的持久请求、人工决定、恢复和取消语义 |
 | [Responses 模型适配边界](docs/model-adapters.md) | A3-01 严格解析、工具白名单、托管工具事件、provider 错误脱敏与 token/cost budget |
 | [Inbox/Outbox 说明](docs/events.md) | A2-01 PostgreSQL 事务内事件、来源幂等与消费者去重；外部 Broker 尚未接入 |
 | [Action Ledger 与审批门禁](docs/actions.md) | B-01 台账与 B-02 审批参数/身份/策略/有效期绑定；真实供应商尚未接入 |

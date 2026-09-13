@@ -11,8 +11,8 @@
 | 本轮请求范围 | 用户授权继续完善项目；本轮在已推送运行骨架上补 B-02-01 持久化审批门禁，并完成参数/策略/有效期/幂等与 fail-closed 验收 |
 | 当前任务 | A2 纵向恢复切片已接入；A3/C/D 运行控制面与生产边界继续进行 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | A3-04：有来源调查建议与 REVIEW 评测；B-02-03：审批 API/真实身份与供应商回执核对；C-01：真实沙箱后端 |
-| 活跃实现任务 | 合成 Aftercare 纵向切片已增加可信订单/物流/买家观察与有来源确定性评估；后续接入 REVIEW 评测、审批 API、真实 provider 和真实沙箱后端 |
+| 下一项代码候选 | A3-04：有来源调查建议与 REVIEW 工作台评测；B-02-03：审批 API/真实身份与供应商回执核对；C-01：真实沙箱后端 |
+| 活跃实现任务 | 合成 Aftercare 纵向切片已增加可信订单/物流/买家观察、来源评估和 Review 持久边界；后续接入人工工作台、审批 API、真实 provider 和真实沙箱后端 |
 | 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
 ## 2. 核验过的源码基线
@@ -54,7 +54,7 @@
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；审批门禁已补入但支付聚合、额度预留和真实供应商对账仍待实现 |
-| B-02 | IN PROGRESS | B-02-01/02 已实现 `ApprovalRepository`、010/011 迁移、参数/策略/身份/有效期绑定、重复决定幂等、`RESERVED` 派发 fail-closed 和绑定 Wait 的 Inbox 原子唤醒；审批 API/真实权限、支付聚合和供应商回执核对仍待实现 |
+| B-02 | IN PROGRESS | B-02-01/02 已实现 `ApprovalRepository`、010/011 迁移、参数/策略/身份/有效期绑定、重复决定幂等、`RESERVED` 派发 fail-closed 和绑定 Wait 的 Inbox 原子唤醒；Review 013 已实现 `REVIEW→READY/CANCELLED` 决定边界；审批 API/真实权限、支付聚合和供应商回执核对仍待实现 |
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页和有界 PostgreSQL polling tail；高吞吐 live broker tail、React 工作台和生产认证仍待实现 |
@@ -96,6 +96,8 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 - 2026-09-13 / A2 评估快照：新增迁移 `012_investigation_assessments.sql`、`InvestigationAssessmentRepository` 和不可变 assessment digest；调查结果按 tenant/case/run 保存，重启后可读取最近快照，重复写入按完整结果幂等校验。临时 PostgreSQL 全量回归 `302 passed`，静态检查通过；快照仍不是外部动作授权。
 
 - 2026-09-13 / B-02 合成动作切片：纵向流程新增可信 `ActionIntent`、绑定 `WAITING_APPROVAL`、审批原子唤醒、批准后 `mark_requested` 复核和 fake provider `CONFIRMED`；金额/币种/供应商键均不来自模型。相关 PostgreSQL 审批、Action、纵向回归 `13 passed`；真实审批身份、支付聚合、供应商未知回执和拒绝后 REVIEW 仍待实现。
+
+- 2026-09-13 / Review 里程碑：新增 `ReviewRequest/ReviewRecord`、迁移 `013_reviews.sql` 和 `ReviewRepository`；人工决定按输入版本和 reviewer 身份校验，`CONTINUE` 原子回到 READY，`CANCEL` 进入终态，重复决定幂等，普通 Worker 不可直接 claim REVIEW。Review/Approval/纵向 PostgreSQL 回归 `11 passed`；人工工作台、真实身份和 Review 事件仍待接入。
 
 - 2026-09-12 / A1-04 Compose 启动边界：API 增加 `/readyz` healthcheck，Worker profile 等待 API readiness（从而等待迁移完成），补充 daemon/跨租户队列环境参数；`docker compose config` 已静态核对，未做生产部署。
 

@@ -22,6 +22,7 @@ from .repositories import (
     SessionRepository,
     StepRepository,
 )
+from .reviews import ReviewRepository
 from .waits import WaitRepository
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "InvestigationObservationRepository",
     "ProjectionIngestResult",
     "ProjectionRepository",
+    "ReviewRepository",
     "WaitRepository",
     "RunRepository",
     "SessionRepository",

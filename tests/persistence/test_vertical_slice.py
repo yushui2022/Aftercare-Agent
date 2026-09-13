@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.investigation import (
     ClaimProposal,
     InvestigationClaim,
@@ -88,6 +89,22 @@ def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> No
         )
     assert snapshot is not None
     assert snapshot.assessment == assessment
+    review = flow.assess(
+        now=datetime.now(UTC),
+        proposal=InvestigationProposal(
+            claims=(
+                ClaimProposal(
+                    claim=InvestigationClaim.BUYER_REPORTED_NOT_RECEIVED,
+                    evidence_refs=("model-invented-reference",),
+                ),
+            )
+        ),
+    )
+    assert review.disposition == "human_review"
+    with pytest.raises(ContractViolation) as guard:
+        flow.request_refund_approval(now=datetime.now(UTC))
+    assert guard.value.code is ErrorCode.FORBIDDEN
+    flow.assess(now=datetime.now(UTC))
     with db.transaction() as conn:
         run = RunRepository().get(conn, case.tenant_id, case.run_id)
         assert run is not None and run.state == "COMPLETED"
@@ -112,16 +129,3 @@ def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> No
         approval_run = RunRepository().get(conn, case.tenant_id, case.approval_run_id)
     assert action is not None and action.state == "CONFIRMED"
     assert approval_run is not None and approval_run.state == "COMPLETED"
-
-    review = flow.assess(
-        now=datetime.now(UTC),
-        proposal=InvestigationProposal(
-            claims=(
-                ClaimProposal(
-                    claim=InvestigationClaim.BUYER_REPORTED_NOT_RECEIVED,
-                    evidence_refs=("model-invented-reference",),
-                ),
-            )
-        ),
-    )
-    assert review.disposition == "human_review"

@@ -318,6 +318,38 @@ def test_bound_approval_cannot_resurrect_timed_out_wait(db: Database) -> None:
         assert error.value.code is ErrorCode.CONFLICT
 
 
+def test_rejected_approval_wakes_but_action_remains_fail_closed(db: Database) -> None:
+    intent, wait = _seed_bound(db, "approval-rejected")
+    repository = ApprovalRepository()
+    request = _bound_request(intent, wait)
+    with db.transaction() as conn:
+        repository.request(conn, request)
+        decision = repository.decide(
+            conn,
+            intent.tenant_id,
+            request.approval_id,
+            approver="ops-reviewer",
+            decision="REJECTED",
+            decision_idempotency_key="decision-rejected",
+            decision_reason="insufficient evidence",
+        )
+        assert decision.decision == "REJECTED"
+        claim = RunRepository().claim(
+            conn, intent.tenant_id, wait.run_id, "worker-after-reject", timedelta(seconds=30)
+        )
+        with pytest.raises(ContractViolation) as error:
+            ActionRepository().mark_requested(
+                conn,
+                intent.action_id,
+                claim,
+                approval_id=request.approval_id,
+                policy_version=request.policy_version,
+            )
+        assert error.value.code is ErrorCode.FORBIDDEN
+        stored = ActionRepository().get(conn, intent.tenant_id, intent.action_id)
+        assert stored is not None and stored.state == "RESERVED"
+
+
 def test_decision_and_wait_wakeup_roll_back_together(db: Database) -> None:
     intent, wait = _seed_bound(db, "approval-rollback")
     repository = ApprovalRepository()

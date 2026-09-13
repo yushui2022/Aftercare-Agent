@@ -517,6 +517,13 @@ class SyntheticAftercareFlow:
         self, approval: ApprovalSlice, *, now: datetime, decision_key: str = "decision-1"
     ) -> str:
         """Approve, atomically wake, then dispatch a fake provider once."""
+        if (
+            approval.run_id != self.case.approval_run_id
+            or approval.action_id != self.case.action_id
+            or approval.approval_id != self.case.approval_id
+            or approval.wait_id != self.case.approval_wait_id
+        ):
+            raise ContractViolation(ErrorCode.FORBIDDEN, "approval slice scope mismatch")
         approvals = ApprovalRepository()
         runs = RunRepository()
         actions = ActionRepository()
@@ -570,6 +577,42 @@ class SyntheticAftercareFlow:
             )
             runs.transition(conn, claim, "COMPLETED")
         return provider_reference
+
+    def reject_approval_to_review(
+        self, approval: ApprovalSlice, *, decision_key: str = "reject-1"
+    ) -> ApprovalRecord:
+        """Route a rejected approval to durable human review, never dispatch."""
+        if (
+            approval.run_id != self.case.approval_run_id
+            or approval.action_id != self.case.action_id
+            or approval.approval_id != self.case.approval_id
+            or approval.wait_id != self.case.approval_wait_id
+        ):
+            raise ContractViolation(ErrorCode.FORBIDDEN, "approval slice scope mismatch")
+        approvals = ApprovalRepository()
+        runs = RunRepository()
+        with self.database.transaction() as conn:
+            decision = approvals.decide(
+                conn,
+                self.case.tenant_id,
+                approval.approval_id,
+                approver="synthetic-ops",
+                decision="REJECTED",
+                decision_idempotency_key=decision_key,
+                decision_reason="synthetic reviewer rejected",
+            )
+            current_run = runs.get(conn, self.case.tenant_id, approval.run_id)
+            if current_run is not None and current_run.state == "REVIEW":
+                return decision
+            claim = runs.claim(
+                conn,
+                self.case.tenant_id,
+                approval.run_id,
+                "synthetic-review-worker",
+                timedelta(seconds=30),
+            )
+            runs.transition(conn, claim, "REVIEW")
+            return decision
 
     def resume(self, *, now: datetime) -> WorkerResult:
         """Let a new Worker claim the woken Run and finish the Harness slice."""

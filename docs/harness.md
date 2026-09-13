@@ -47,6 +47,8 @@
 
 在 `RECOMMENDATION_READY` 后，`request_refund_approval()` 展示受控动作边界：可信宿主从订单台账固定金额、币种、业务键和 provider 幂等键，创建一个以前序调查 Run 为 `predecessor_run_id` 的派生审批 Run，并按 Action → approval Wait → `ApprovalRequest` 的顺序在一个短事务中登记。调查 Run 已完成后不能倒退回等待状态，派生 Run 是审计链上的明确阶段。`approve_and_confirm_refund()` 先通过 `ApprovalRepository.decide()` 原子唤醒等待，再由新的 provider Worker 通过 `mark_requested()` 重查批准、策略和参数摘要，最后在事务外调用 fake provider，并用同一 Run fence 写入 `CONFIRMED`。真实 provider 仍需把未知回执保留为 `UNKNOWN`，不能自动重发。
 
+如果审批被拒绝，`reject_approval_to_review()` 只把被唤醒的派生 Run 转为 `REVIEW`，Action 保持 `RESERVED`，不会尝试调用 provider；真实系统还需要在该状态上接入人工决定和通知策略。
+
 ## 常驻 Worker 与心跳
 
 `run_daemon()` 每次只领取一个 READY Run；没有任务时按 `idle_sleep` 退避，收到进程的停止事件或达到测试用 `max_iterations` 后返回计数结果。数据库仍是调度权威，进程内循环和计数器不会替代租约。

@@ -7,6 +7,9 @@ interface Props {
   statusFilter: CaseStatus | "ALL";
   onSelect: (caseId: string) => void;
   onStatusFilter: (status: CaseStatus | "ALL") => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
 }
 
 const FILTERS: Array<{ value: CaseStatus | "ALL"; label: string }> = [
@@ -16,7 +19,16 @@ const FILTERS: Array<{ value: CaseStatus | "ALL"; label: string }> = [
   { value: "CLOSED", label: "已关闭" },
 ];
 
-export function CaseList({ cases, selectedId, statusFilter, onSelect, onStatusFilter }: Props) {
+export function CaseList({
+  cases,
+  selectedId,
+  statusFilter,
+  onSelect,
+  onStatusFilter,
+  hasMore,
+  loadingMore,
+  onLoadMore,
+}: Props) {
   return (
     <aside className="case-list">
       <div className="case-list-head">
@@ -65,6 +77,11 @@ export function CaseList({ cases, selectedId, statusFilter, onSelect, onStatusFi
           ))}
         </ul>
       )}
+      {hasMore ? (
+        <button type="button" className="load-more" disabled={loadingMore} onClick={onLoadMore}>
+          {loadingMore ? "加载中…" : "加载更多"}
+        </button>
+      ) : null}
     </aside>
   );
 }

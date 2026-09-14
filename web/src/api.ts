@@ -15,14 +15,14 @@ import type {
 export type { Identity } from "./http";
 export { ApiError } from "./http";
 
-function decisionInit(body: unknown): RequestInit {
+function decisionInit(body: unknown, idempotencyKey: string): RequestInit {
   return {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       // The server de-duplicates decisions by this key, so a retry after a
       // dropped response replays the first decision instead of conflicting.
-      "Idempotency-Key": crypto.randomUUID(),
+      "Idempotency-Key": idempotencyKey,
     },
     body: JSON.stringify(body),
   };
@@ -31,6 +31,8 @@ function decisionInit(body: unknown): RequestInit {
 export interface CaseQuery {
   status?: CaseStatus;
   limit?: number;
+  afterCreatedAt?: string;
+  afterCaseId?: string;
 }
 
 export const api = {
@@ -40,6 +42,12 @@ export const api = {
       params.set("status", query.status);
     }
     params.set("limit", String(query.limit ?? 50));
+    if (query.afterCreatedAt !== undefined) {
+      params.set("after_created_at", query.afterCreatedAt);
+    }
+    if (query.afterCaseId !== undefined) {
+      params.set("after_case_id", query.afterCaseId);
+    }
     return request<CaseListResponse>(identity, `/v1/cases?${params.toString()}`);
   },
 
@@ -87,11 +95,12 @@ export const api = {
     reviewId: string,
     decision: ReviewDecision,
     reason: string,
+    idempotencyKey: string = crypto.randomUUID(),
   ): Promise<Review> {
     return request<Review>(
       identity,
       `/v1/cases/${encodeURIComponent(caseId)}/reviews/${encodeURIComponent(reviewId)}/decision`,
-      decisionInit({ decision, decision_reason: reason === "" ? null : reason }),
+      decisionInit({ decision, decision_reason: reason === "" ? null : reason }, idempotencyKey),
     );
   },
 
@@ -101,11 +110,12 @@ export const api = {
     approvalId: string,
     decision: "APPROVED" | "REJECTED",
     reason: string,
+    idempotencyKey: string = crypto.randomUUID(),
   ): Promise<Approval> {
     return request<Approval>(
       identity,
       `/v1/cases/${encodeURIComponent(caseId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
-      decisionInit({ decision, decision_reason: reason === "" ? null : reason }),
+      decisionInit({ decision, decision_reason: reason === "" ? null : reason }, idempotencyKey),
     );
   },
 };

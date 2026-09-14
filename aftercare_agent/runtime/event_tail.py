@@ -6,7 +6,8 @@ as SSE replay.  A Kafka/NATS/Redis adapter can implement the same shape later
 without changing the API's replay contract.
 """
 
-from collections.abc import Iterator
+import asyncio
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from math import isfinite
 from time import monotonic, sleep
@@ -83,3 +84,56 @@ class PostgresEventTail:
             if remaining <= 0:
                 return
             sleep(min(self.poll_seconds, remaining))
+
+    async def stream_async(
+        self,
+        *,
+        tenant_id: str,
+        case_id: str,
+        after_case_seq: int = 0,
+        limit: int = 100,
+        wait_seconds: float = 15.0,
+    ) -> AsyncIterator[DomainEvent]:
+        """Asynchronously tail committed rows without blocking the event loop.
+
+        ``Database`` intentionally exposes a synchronous psycopg API.  Each
+        short poll is therefore delegated to a worker thread, while the
+        potentially long wait happens with ``asyncio.sleep``.  This keeps one
+        FastAPI event-loop thread available for many idle SSE clients instead
+        of pinning a thread per connection during the polling interval.
+        """
+        self.validate(
+            after_case_seq=after_case_seq,
+            limit=limit,
+            wait_seconds=wait_seconds,
+            poll_seconds=self.poll_seconds,
+        )
+
+        cursor = after_case_seq
+        deadline = monotonic() + wait_seconds
+        while True:
+            events = await asyncio.to_thread(self._poll_once, tenant_id, case_id, cursor, limit)
+            if events:
+                for event in events:
+                    cursor = event.case_seq
+                    yield event
+                if monotonic() >= deadline:
+                    return
+                continue
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(self.poll_seconds, remaining))
+
+    def _poll_once(
+        self, tenant_id: str, case_id: str, cursor: int, limit: int
+    ) -> tuple[DomainEvent, ...]:
+        """Read one bounded batch in a short transaction (thread target)."""
+        with self.database.transaction() as connection:
+            return EventRepository().list_case_events(
+                connection,
+                tenant_id=tenant_id,
+                case_id=case_id,
+                after_case_seq=cursor,
+                limit=limit,
+            )

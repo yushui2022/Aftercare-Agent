@@ -1,8 +1,9 @@
 """Minimal A1-02 FastAPI adapter; business authority remains in repositories."""
 
+import asyncio
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from aftercare_agent.auth import AuthContext, JwtJwksVerifier, JwtVerifierConfig, synthetic_context
 from aftercare_agent.domain.approvals import ApprovalRecord
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, Identifier
+from aftercare_agent.domain.events import DomainEvent
 from aftercare_agent.domain.reviews import ReviewRecord
 from aftercare_agent.domain.runtime import (
     AdmissionKey,
@@ -306,6 +308,21 @@ def _authorized_case_row(
     if entry is None:
         raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
     return entry, scoped_identity
+
+
+def _authorize_stream_event(database: Database, identity: AuthContext, case_id: str) -> None:
+    """Re-check a live stream grant in a short transaction (thread target)."""
+    with database.transaction() as connection:
+        _authorized_case(connection, identity, case_id, "case:read")
+
+
+def _format_sse_event(event: DomainEvent) -> str:
+    """Render one event using the stable replay cursor contract."""
+    return (
+        f"id: {event.case_seq}\n"
+        f"event: {event.event_type}\n"
+        f"data: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
+    )
 
 
 def _error(exc: ContractViolation) -> HTTPException:
@@ -715,7 +732,9 @@ def create_app(
                 )
                 with database.transaction() as connection:
                     _authorized_case(connection, identity, scoped_case_id, "case:read")
-                events_iter = PostgresEventTail(database).stream(
+                events_iter: Iterator[DomainEvent] | AsyncIterator[DomainEvent] = PostgresEventTail(
+                    database
+                ).stream_async(
                     tenant_id=identity.tenant_id,
                     case_id=scoped_case_id,
                     after_case_seq=cursor,
@@ -735,23 +754,43 @@ def create_app(
                         )
                     )
 
-            def stream() -> Iterator[str]:
-                for event in events_iter:
+            async def stream() -> AsyncIterator[str]:
+                iterator = events_iter
+                if follow:
+                    async for event in cast(AsyncIterator[DomainEvent], iterator):
+                        # A live tail can outlive the transaction that started
+                        # the response. Re-resolve in a worker thread so a
+                        # revoked grant stops subsequent data without blocking
+                        # the event loop while the client is reading.
+                        if not identity.synthetic:
+                            try:
+                                await asyncio.to_thread(
+                                    _authorize_stream_event,
+                                    database,
+                                    identity,
+                                    scoped_case_id,
+                                )
+                            except ContractViolation:
+                                return
+                        yield _format_sse_event(event)
+                    return
+
+                for event in cast(Iterator[DomainEvent], iterator):
                     # A live tail can outlive the transaction that started the
-                    # response.  Re-resolve before each event; revocation then
+                    # response. Re-resolve before each event; revocation then
                     # stops subsequent data without holding a DB transaction
                     # while the client is reading.
                     if not identity.synthetic:
                         try:
-                            with database.transaction() as connection:
-                                _authorized_case(connection, identity, scoped_case_id, "case:read")
+                            await asyncio.to_thread(
+                                _authorize_stream_event,
+                                database,
+                                identity,
+                                scoped_case_id,
+                            )
                         except ContractViolation:
                             return
-                    yield (
-                        f"id: {event.case_seq}\n"
-                        f"event: {event.event_type}\n"
-                        f"data: {json.dumps(event.model_dump(mode='json'), ensure_ascii=False)}\n\n"
-                    )
+                    yield _format_sse_event(event)
 
             return StreamingResponse(stream(), media_type="text/event-stream")
         except ContractViolation as exc:

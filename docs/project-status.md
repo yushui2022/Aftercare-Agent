@@ -8,21 +8,21 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权继续完善项目；本轮补齐操作员工单发现能力（可访问工单列表、工单详情、工单下 Review/Approval 列表）、最小运营工作台、工作台 SSE 实时订阅，并修复远端 CI 在 `main` 上自 run #37 起连续失败的 `Set up Python` 步骤；不改变授权、租约与外部动作语义，不调用真实 provider |
-| 当前任务 | A3-03-a 工单发现与工作台、A3-03-b 工作台 SSE 实时订阅、A1-04 远端 CI 解释器解析修复 |
+| 本轮请求范围 | 用户授权继续完善项目；本轮在工作台与 SSE 之后补异步 polling tail、工单 keyset 分页、决策幂等键稳定性，并修复越权投影和 Outbox 序号/批量边界；不改变外部动作语义，不调用真实 provider |
+| 当前任务 | A3-03-c SSE 并发可靠性与工作台操作可靠性、A2-01 Outbox 事件连续性边界 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成 |
 | 下一项代码候选 | D-01：真实 IdP/撤销演练；A3-04：完整业务评测；B-02-03：供应商回执核对；C-01：真实沙箱后端；随后补生产准入与容量验证 |
-| 活跃实现任务 | `b0ddffe` 已交付操作员工单发现 API、`web/` 最小工作台、工作台 SSE 实时订阅和 CI 解释器修复；控制面 Review/Approval 决定 API、JWT/JWKS Bearer、PostgreSQL CaseGrant 与 admission lease safety 已在此前批次补齐 |
-| 本轮外部行为 | 本轮只新增只读查询端点、前端静态资源和 CI 配置，不调用模型、真实业务动作或生产部署；远端状态以 GitHub Actions run #44 和 Git 日志为准 |
+| 活跃实现任务 | 本轮已完成 `b0ddffe` 工作台基础上的异步 tail、分页和决策重试边界；下一阶段转入真实身份/撤销演练、完整业务评测、供应商回执、沙箱后端与生产准入 |
+| 本轮外部行为 | 本轮只调整运行时读取/事件边界、工作台客户端状态和配套测试文档，不调用模型、真实业务动作或生产部署；交付后以 Git 日志和 CI 为准 |
 
 ## 2. 核验过的源码基线
 
 | 仓库 | 已核验源码 HEAD | 用途 |
 |---|---|---|
-| Aftercare-Agent | b0ddffe95e487f5520bb3d2f29f781b3fb72417f | 当前已推送交付提交：工单发现、React 工作台、SSE 实时订阅与 CI 修复；此前 CaseGrant 基线为 `3fa7b51` |
+| Aftercare-Agent | b0ddffe95e487f5520bb3d2f29f781b3fb72417f | 本轮异步 tail/工作台可靠性改动的提交前基线；交付提交编号以 Git 日志为准 |
 | Evidence-Gated-Memory | 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd | 源码 0.6.0、嵌入式应用层与 PostgreSQL；已固定在 Aftercare 依赖中 |
 
-这是当前核验的源码基线。当前 `main` 与 `origin/main` 均指向 `b0ddffe`；GitHub Actions run #44 已在该提交上成功完成。历史验证条目保留原日期和当时边界，不向旧结果回填新结论。
+这是本轮改动开始时核验的源码基线。历史验证条目保留原日期和当时边界；本轮交付后的 HEAD 和远端状态以 Git 日志为准。
 
 本机位置：G:\Projects\Aftercare-Agent；EGM 相邻仓库 G:\Projects\Evidence-Gated-Memory。脚本应使用仓库相对路径或显式配置，不把本机布局当其他贡献者的强制前提。
 
@@ -60,6 +60,7 @@
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页、有界 PostgreSQL polling tail 和 React 工作台；高吞吐 live broker tail、真实认证和生产压测仍待实现 |
 | A3-03-a | DONE | 新增操作员工单发现：可访问工单列表（活动 CaseGrant 收紧、`case_ids` 仅收窄、keyset 游标）、工单详情（Run 投影不含 tenant/lease/fence）、工单下 Review/Approval 列表，以及 `web/` 最小 React+TS+Vite 工作台（列表、详情、决定、事件时间线）；真实 PostgreSQL 全量 `362 passed`（含新增 11 项），前端 `tsc --noEmit` 与 `vite build` 通过，合成身份端到端冒烟通过；live broker tail、真实认证与生产压测仍待实现 |
 | A3-03-b | DONE | 工作台接入 SSE 实时订阅：`follow=true&limit=200&wait_seconds=60`，按 `case_seq` 游标续订串接有界读，`fetch`+`ReadableStream` 增量解析（不使用无法带 Header 的 `EventSource`），按 `case_seq` 去重并封顶 500 条，指数退避重连、`401/403` 终止不重试，界面显示 连接中/实时/重连中/已暂停 并可暂停改一次性回放；`web/src/sse.test.ts` 13 项、`tsc --noEmit`、`vite build` 通过，真实后端 `follow` 参数返回 `200 text/event-stream`、非法 `limit` 返回 `400`；订阅级授权、真实 IdP 与高吞吐 broker tail 仍未实现 |
+| A3-03-c | IN PROGRESS | SSE follow 改为异步生成器，数据库短轮询放入线程、等待异步 sleep；工作台接入 keyset 加载更多、筛选/身份切换请求代际保护和稳定决策幂等键；异步 tail、前端 API 与回归通过，仍需生产连接池/broker 和真实身份验收 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
 | D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口与 `015_case_grants.sql`/`CaseGrantRepository`：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销/introspection、真实 IdP 和生产演练仍待实现 |
 | D-01-03 | DONE | PostgreSQL CaseGrant 按 `(tenant_id,subject_id,case_id)` 持久化 scope/revision/有效期/撤销审计；AuthContext 非 synthetic 未绑定时 fail-closed，API 在业务短事务锁定 grant；创建者授权与受理原子提交，撤销/过期/跨主体及 token 收窄回归通过；真实 IdP、introspection、RLS 和管理面仍待完成 |
@@ -67,15 +68,18 @@
 
 ## 5. 工作区与提交边界
 
-本轮提交范围为真实身份与执行准入安全：JWT/JWKS Bearer 验证、PostgreSQL CaseGrant 资源授权、Case grant 默认收紧、admission slot lease safety、API/PG/离线测试和配套文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本轮提交范围为 SSE/工作台运行可靠性与事件边界：异步 follow tail、短 DB 轮询与非阻塞等待、工单 keyset 分页、筛选代际保护、稳定决策幂等键、Outbox 连续序号和批量上限，以及 API/PG/离线测试和配套文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：前序批次与本轮 `b0ddffe` 均已按用户授权提交并推送到 `origin/main`；本轮没有部署、生产数据或真实业务操作。GitHub Actions run #44 已成功；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：前序批次已按用户授权提交并推送到 `origin/main`；本轮代码完成验证后集中提交，不做零散提交。本轮没有部署、生产数据或真实业务操作。GitHub Actions run #44 已成功；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
+
+
+- 2026-09-14 / A3-03-c 与 A2-01 并发可靠性：`PostgresEventTail.stream_async()` 将短数据库轮询放入线程、空闲等待改为异步 sleep，FastAPI follow SSE 使用异步生成器并在线程中执行 Bearer/CaseGrant 复核；工作台新增 keyset 加载更多、筛选/身份切换代际保护和稳定决策幂等键，重复提交在请求完成前禁用且失败可重试；Outbox 拒绝非连续显式 `case_seq`，领取批量限制为 1–500。离线全量 `281 passed, 84 skipped`；临时 PostgreSQL 17 全量 `365 passed, 38 warnings`；前端 Vitest `15 passed`、TypeScript 与 Vite build 通过；Ruff、format、严格 mypy、`uv lock --check`、`git diff --check` 和文档检查通过。仍未完成有界 AsyncConnectionPool、LISTEN/NOTIFY 或 Kafka/NATS/Redis broker、真实身份验收和生产压测。
 
 
 - 2026-09-14 / 远端 CI 修复：核查 GitHub Actions 发现 `main` 上自 run #37 起连续失败（可见 7 次记录全为 `failure`，21–35 秒内结束）；用 GitHub API 定位到失败步骤是 `Set up Python`（命令 `uv python install 3.13.15`），其后的静态检查与测试步骤全部 `skipped`。根因：uv 0.9.26 内置 Python 下载索引最高只到 3.13.11（`uv python list --all-versions` 实测），而项目固定 3.13.15（2026-08-05 发布的 3.13 维护版），裸装必然找不到该补丁；本地此前是靠 `--python-downloads-json-url` 绕过，CI 没有这个参数。修复：在 `.github/workflows/ci.yml` 的 job 级 `env` 增加 `UV_PYTHON_DOWNLOADS_JSON_URL`，指向固定提交 `dbda4fbf…`（2026-09-09，含 3.13.15）的下载元数据，使 `uv python install` 与 `uv sync --locked` 都能解析该补丁。已排除的方案：在仓库根新增 `uv.toml`——uv 实测警告它会忽略 `pyproject.toml` 的 `[tool.uv]` 字段（含 `required-version`），会静默破坏构建约束。验证：默认索引下 3.13 最高 3.13.11、固定元数据下出现 `cpython-3.13.15-…`；YAML 经 PyYAML 解析确认 `env` 位于 job 级并同时覆盖 `Set up Python` 与 `Install locked dependencies`。本地等价检查（Ruff/format/严格 mypy 含 `evals`/真实 PostgreSQL 全量 `362 passed`）此前已通过，说明失败与业务代码无关。推送后 GitHub Actions run #44（提交 `b0ddffe`）已完成且为 `success`，因此该 CI 解析问题已验证修复；A1-04 仍因 Linux/容器启动和完整重启矩阵未验收而保持 IN PROGRESS。运行页面：[run #44](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34805186170)。本机访问 `raw.githubusercontent.com` 存在抖动（实测一次 `connection reset`、一次超时、重试后成功），CI 侧未复现。

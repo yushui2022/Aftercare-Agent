@@ -125,9 +125,11 @@ buffer，返回 `buffer_gap`，不能在这里确认消息已被业务应用。�
 `GET /v1/cases/{case_id}/events` 提供有界、按 `case_seq` 排序的 SSE 回放页。客户端可用
 查询参数 `after` 或 `Last-Event-ID` 续传；服务端取两者较大的游标，因此重连不会倒退。
 默认请求是持久回放页。传入 `follow=true` 可启用一个有界的 PostgreSQL polling tail：
-它在每次查询时使用短事务，等待期间不持有连接锁，最长等待由 `wait_seconds` 限制在
-60 秒以内。该实现是 broker-neutral 的小规模参考，仍应先回放游标，再由 Kafka/NATS/
-Redis 等适配器接管高吞吐 live tail；它不是数据库 LISTEN/NOTIFY 或生产消息总线的替代品。
+每次查询使用短事务，等待期间不持有连接锁，最长等待由 `wait_seconds` 限制在 60 秒以内；
+FastAPI 通过异步生成器串接轮询，数据库查询短暂放入线程执行，等待使用异步 sleep，避免
+每个空闲连接独占一个同步 worker 线程。该实现是 broker-neutral 的小规模参考，仍应先回放
+游标，再由 Kafka/NATS/Redis 等适配器接管高吞吐 live tail；它不是数据库 LISTEN/NOTIFY
+或生产消息总线的替代品。
 当前 API 支持显式合成身份（仅开发测试）或配置静态 JWKS 的 Bearer 验证；CaseGrant
 资源授权已按短事务接入。订阅级授权（按 topic 或消费者再授权）、真实 IdP 演练和高吞吐
 broker tail 仍未实现。
@@ -142,6 +144,8 @@ broker tail 仍未实现。
 - 浏览器不能给 `EventSource` 附加自定义 Header，所以工作台用 `fetch` + `ReadableStream`
   读取响应体并增量解析 SSE 帧（`SseDecoder`）。合成身份不会退化成 URL 查询参数里的凭据。
 - 时间线按 `case_seq` 去重并封顶 500 条：重连重放不会重复渲染，长会话不会无限增长内存。
+- 工单列表使用 `(created_at, case_id)` keyset cursor 加载更多；决策请求为同一业务意图
+  保留幂等键，网络丢响应后的重试不会意外生成第二个决定。
 - 断线重连使用有上限的指数退避；`401`/`403` 视为终止错误，不做无意义重试。
 - 界面显示 连接中/实时/重连中/已暂停，并可暂停实时改为一次性回放。
 

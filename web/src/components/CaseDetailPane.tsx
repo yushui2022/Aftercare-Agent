@@ -65,6 +65,7 @@ interface Props {
   streamStatus: StreamStatus;
   live: boolean;
   busy: boolean;
+  pendingDecisionIds: ReadonlySet<string>;
   onToggleLive: () => void;
   onReviewDecision: (reviewId: string, decision: ReviewDecision, reason: string) => void;
   onApprovalDecision: (
@@ -82,6 +83,7 @@ export function CaseDetailPane({
   streamStatus,
   live,
   busy,
+  pendingDecisionIds,
   onToggleLive,
   onReviewDecision,
   onApprovalDecision,
@@ -168,7 +170,7 @@ export function CaseDetailPane({
                 {review.decision === null ? (
                   canDecideReview ? (
                     <DecisionForm
-                      disabled={busy}
+                      disabled={busy || pendingDecisionIds.has(review.review_id)}
                       options={[
                         { value: "CONTINUE", label: "继续执行", tone: "positive" },
                         { value: "CANCEL", label: "取消", tone: "negative" },
@@ -218,7 +220,7 @@ export function CaseDetailPane({
                 {approval.decision === "PENDING" ? (
                   canDecideApproval ? (
                     <DecisionForm
-                      disabled={busy}
+                      disabled={busy || pendingDecisionIds.has(approval.approval_id)}
                       options={[
                         { value: "APPROVED", label: "批准", tone: "positive" },
                         { value: "REJECTED", label: "拒绝", tone: "negative" },

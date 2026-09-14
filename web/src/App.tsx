@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, api, type Identity } from "./api";
 import { CaseDetailPane } from "./components/CaseDetailPane";
@@ -41,13 +41,30 @@ export default function App() {
   const [streamStatus, setStreamStatus] = useState<StreamStatus>("stopped");
   const [error, setError] = useState<string | null>(null);
   const [listBusy, setListBusy] = useState(false);
+  const [listMoreBusy, setListMoreBusy] = useState(false);
+  const [nextCursor, setNextCursor] = useState<{
+    createdAt: string;
+    caseId: string;
+  } | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
+  const [pendingDecisionIds, setPendingDecisionIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const listGeneration = useRef(0);
+  // Keep one idempotency key per decision payload so a retry after a dropped
+  // response replays the same server operation instead of creating a second one.
+  const decisionKeys = useRef(new Map<string, string>());
   // Bumped by the refresh button and after every decision so the case list and
   // its gates re-read from the server instead of trusting local state.
   const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    const generation = listGeneration.current + 1;
+    listGeneration.current = generation;
+    setNextCursor(null);
+    setCases([]);
+    setListMoreBusy(false);
     setListBusy(true);
     setError(null);
     api
@@ -57,6 +74,11 @@ export default function App() {
           return;
         }
         setCases(response.cases);
+        setNextCursor(
+          response.next_created_at !== null && response.next_case_id !== null
+            ? { createdAt: response.next_created_at, caseId: response.next_case_id }
+            : null,
+        );
         setSelectedId((current) =>
           current !== null && response.cases.some((item) => item.case_id === current)
             ? current
@@ -80,6 +102,42 @@ export default function App() {
       cancelled = true;
     };
   }, [identity, statusFilter, refreshToken]);
+
+  const loadMoreCases = useCallback(async () => {
+    if (nextCursor === null || listMoreBusy || listBusy) {
+      return;
+    }
+    setListMoreBusy(true);
+    setError(null);
+    const generation = listGeneration.current;
+    try {
+      const response = await api.listCases(identity, {
+        ...(statusFilter === "ALL" ? {} : { status: statusFilter }),
+        afterCreatedAt: nextCursor.createdAt,
+        afterCaseId: nextCursor.caseId,
+      });
+      if (generation !== listGeneration.current) {
+        return;
+      }
+      setCases((current) => {
+        const known = new Set(current.map((item) => item.case_id));
+        return [...current, ...response.cases.filter((item) => !known.has(item.case_id))];
+      });
+      setNextCursor(
+        response.next_created_at !== null && response.next_case_id !== null
+          ? { createdAt: response.next_created_at, caseId: response.next_case_id }
+          : null,
+      );
+    } catch (cause: unknown) {
+      if (generation === listGeneration.current) {
+        setError(describe(cause));
+      }
+    } finally {
+      if (generation === listGeneration.current) {
+        setListMoreBusy(false);
+      }
+    }
+  }, [identity, listBusy, listMoreBusy, nextCursor, statusFilter]);
 
   useEffect(() => {
     if (selectedId === null) {
@@ -167,10 +225,21 @@ export default function App() {
         return;
       }
       setError(null);
+      const payloadKey = `review:${identity.tenantId}:${identity.subjectId}:${selectedId}:${reviewId}:${decision}:${reason.trim()}`;
+      const idempotencyKey = decisionKeys.current.get(payloadKey) ?? crypto.randomUUID();
+      decisionKeys.current.set(payloadKey, idempotencyKey);
+      setPendingDecisionIds((current) => new Set(current).add(reviewId));
       try {
-        await api.decideReview(identity, selectedId, reviewId, decision, reason);
+        await api.decideReview(identity, selectedId, reviewId, decision, reason, idempotencyKey);
+        decisionKeys.current.delete(payloadKey);
       } catch (cause: unknown) {
         setError(describe(cause));
+      } finally {
+        setPendingDecisionIds((current) => {
+          const next = new Set(current);
+          next.delete(reviewId);
+          return next;
+        });
       }
       reload();
     },
@@ -183,17 +252,28 @@ export default function App() {
         return;
       }
       setError(null);
+      const payloadKey = `approval:${identity.tenantId}:${identity.subjectId}:${selectedId}:${approvalId}:${decision}:${reason.trim()}`;
+      const idempotencyKey = decisionKeys.current.get(payloadKey) ?? crypto.randomUUID();
+      decisionKeys.current.set(payloadKey, idempotencyKey);
+      setPendingDecisionIds((current) => new Set(current).add(approvalId));
       try {
-        await api.decideApproval(identity, selectedId, approvalId, decision, reason);
+        await api.decideApproval(identity, selectedId, approvalId, decision, reason, idempotencyKey);
+        decisionKeys.current.delete(payloadKey);
       } catch (cause: unknown) {
         setError(describe(cause));
+      } finally {
+        setPendingDecisionIds((current) => {
+          const next = new Set(current);
+          next.delete(approvalId);
+          return next;
+        });
       }
       reload();
     },
     [identity, selectedId, reload],
   );
 
-  const busy = listBusy || detailBusy;
+  const busy = listBusy || listMoreBusy || detailBusy;
 
   return (
     <div className="app">
@@ -218,6 +298,11 @@ export default function App() {
           statusFilter={statusFilter}
           onSelect={setSelectedId}
           onStatusFilter={setStatusFilter}
+          hasMore={nextCursor !== null}
+          loadingMore={listMoreBusy}
+          onLoadMore={() => {
+            void loadMoreCases();
+          }}
         />
         {workspace === null ? (
           <section className="detail placeholder">
@@ -232,6 +317,7 @@ export default function App() {
             streamStatus={streamStatus}
             live={live}
             busy={busy}
+            pendingDecisionIds={pendingDecisionIds}
             onToggleLive={() => {
               setLive((current) => !current);
             }}

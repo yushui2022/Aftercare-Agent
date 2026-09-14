@@ -215,6 +215,11 @@ input {
   overflow: auto;
 }
 
+.load-more {
+  width: 100%;
+  margin-top: 0.75rem;
+}
+
 .case-row {
   display: flex;
   flex-direction: column;

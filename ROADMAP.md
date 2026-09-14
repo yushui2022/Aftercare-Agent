@@ -46,3 +46,7 @@
 依据启用功能完成真实认证/渠道审查、安全检查、备份恢复、保留删除、RPO/RTO、压测、成本与人工接管。真实接入的授权和数据检查必须在调用前完成，不能延后到最终上线日。
 
 Kafka、NATS JetStream、Redis Streams、ACP、Letta/TencentDB Agent Memory、额外模型路由仍是候选能力。只有确认解决了实际问题，并说明迁移、运维成本与验收方式后才引入。
+
+Session transcript references 已补入 A1 持久运行骨架：会话消息使用租户/Case/Session
+复合范围、连续序号和幂等重放；消息原文留在授权 artifact store，不能把供应商会话
+状态直接当作 Aftercare 的恢复权威。详见 [Session memory](docs/session-memory.md)。

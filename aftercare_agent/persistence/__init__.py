@@ -22,6 +22,7 @@ from .repositories import (
     AttemptRepository,
     CheckpointRepository,
     RunRepository,
+    SessionMessageRepository,
     SessionRepository,
     StepRepository,
 )
@@ -54,6 +55,7 @@ __all__ = [
     "WaitRepository",
     "RunRepository",
     "SessionRepository",
+    "SessionMessageRepository",
     "StepRepository",
     "migrate",
 ]

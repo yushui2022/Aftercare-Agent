@@ -10,37 +10,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import RLock
-from typing import Literal
 
-from pydantic import Field
+from aftercare_agent.domain.common import ContractViolation, ErrorCode
 
-from aftercare_agent.domain.common import ContractModel, ContractViolation, ErrorCode, Identifier
-
-type SandboxState = Literal["READY", "RUNNING", "DESTROY_REQUESTED", "DESTROYED"]
-
-
-class SandboxSpec(ContractModel):
-    image: Identifier
-    cpu_millis: int = Field(ge=1, le=1_000_000)
-    memory_mib: int = Field(ge=1, le=1_048_576)
-    max_artifact_bytes: int = Field(default=1_000_000, ge=1, le=100_000_000)
-
-
-class SandboxAllocation(ContractModel):
-    allocation_id: Identifier
-    request_key: Identifier
-    owner: Identifier
-    fencing_token: int
-    state: SandboxState
-    lease_until: datetime
-    spec: SandboxSpec
-
-
-class ArtifactRecord(ContractModel):
-    allocation_id: Identifier
-    name: Identifier
-    sha256: str
-    size_bytes: int
+from .models import ArtifactRecord, SandboxAllocation, SandboxSpec, SandboxState
 
 
 @dataclass
@@ -88,6 +61,10 @@ class FakeSandboxProvider:
                 existing = self._allocations[existing_id]
                 if existing.spec != spec:
                     raise ContractViolation(ErrorCode.CONFLICT, "sandbox request key reused")
+                if existing.owner != owner:
+                    raise ContractViolation(
+                        ErrorCode.CONFLICT, "sandbox request key owned by another worker"
+                    )
                 return self._public(existing)
             active = sum(item.state != "DESTROYED" for item in self._allocations.values())
             if active >= self.capacity:
@@ -109,11 +86,30 @@ class FakeSandboxProvider:
     def renew(
         self, allocation_id: str, *, owner: str, fencing_token: int, lease: timedelta
     ) -> SandboxAllocation:
+        if lease <= timedelta(0):
+            raise ContractViolation(ErrorCode.INVALID_INPUT, "sandbox lease must be positive")
         with self._lock:
             item = self._require_current(allocation_id, owner, fencing_token)
             if item.state in ("DESTROY_REQUESTED", "DESTROYED"):
                 raise ContractViolation(ErrorCode.CONFLICT, "sandbox is not renewable")
             item.lease_until = datetime.now(UTC) + lease
+            return self._public(item)
+
+    def start(self, allocation_id: str, *, owner: str, fencing_token: int) -> SandboxAllocation:
+        """Mark a leased warm allocation as actively executing.
+
+        Providers must expose this transition because allocation and execution
+        are separate operations: a warm-pool claim can be allocated before the
+        worker has safely persisted the command it intends to run.  Repeating
+        the call with the same fence is idempotent.
+        """
+        with self._lock:
+            item = self._require_current(allocation_id, owner, fencing_token)
+            if item.state == "DESTROY_REQUESTED":
+                raise ContractViolation(ErrorCode.CONFLICT, "sandbox is pending destroy")
+            if item.state == "DESTROYED":
+                raise ContractViolation(ErrorCode.CONFLICT, "sandbox is destroyed")
+            item.state = "RUNNING"
             return self._public(item)
 
     def request_destroy(
@@ -161,6 +157,13 @@ class FakeSandboxProvider:
                 sha256=sha256(content).hexdigest(),
                 size_bytes=len(content),
             )
+            previous = self._artifacts.get((allocation_id, name))
+            if previous is not None:
+                if previous == record:
+                    return previous
+                raise ContractViolation(
+                    ErrorCode.CONFLICT, "artifact name already has different content"
+                )
             self._artifacts[(allocation_id, name)] = record
             return record
 

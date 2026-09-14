@@ -3,9 +3,32 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
-from aftercare_agent.sandbox import FakeSandboxProvider, SandboxSpec
+from aftercare_agent.sandbox import FakeSandboxProvider, SandboxProvider, SandboxSpec
 
 SPEC = SandboxSpec(image="aftercare-tools", cpu_millis=250, memory_mib=256)
+
+
+def test_fake_provider_implements_provider_neutral_lifecycle() -> None:
+    assert isinstance(FakeSandboxProvider(capacity=1), SandboxProvider)
+
+
+def test_start_is_an_explicit_idempotent_fenced_transition() -> None:
+    provider = FakeSandboxProvider(capacity=1)
+    allocation = provider.create(
+        request_key="case-1", owner="worker-a", spec=SPEC, lease=timedelta(minutes=1)
+    )
+    started = provider.start(
+        allocation.allocation_id, owner="worker-a", fencing_token=allocation.fencing_token
+    )
+    replay = provider.start(
+        allocation.allocation_id, owner="worker-a", fencing_token=allocation.fencing_token
+    )
+    assert started.state == replay.state == "RUNNING"
+    with pytest.raises(ContractViolation) as error:
+        provider.start(
+            allocation.allocation_id, owner="worker-b", fencing_token=allocation.fencing_token
+        )
+    assert error.value.code is ErrorCode.LEASE_LOST
 
 
 def test_create_is_idempotent_and_capacity_is_shared() -> None:
@@ -22,6 +45,16 @@ def test_create_is_idempotent_and_capacity_is_shared() -> None:
             request_key="case-2", owner="worker-b", spec=SPEC, lease=timedelta(minutes=1)
         )
     assert error.value.code is ErrorCode.RATE_LIMITED
+
+
+def test_create_rejects_request_replay_by_another_owner() -> None:
+    provider = FakeSandboxProvider(capacity=1)
+    provider.create(request_key="case-1", owner="worker-a", spec=SPEC, lease=timedelta(minutes=1))
+    with pytest.raises(ContractViolation) as error:
+        provider.create(
+            request_key="case-1", owner="worker-b", spec=SPEC, lease=timedelta(minutes=1)
+        )
+    assert error.value.code is ErrorCode.CONFLICT
 
 
 def test_expiry_requires_destroy_confirmation_before_capacity_reuse() -> None:
@@ -70,6 +103,25 @@ def test_fencing_and_artifact_budget_are_enforced() -> None:
         content=b"ok",
     )
     assert artifact.size_bytes == 2
+    assert (
+        provider.put_artifact(
+            allocation.allocation_id,
+            owner="worker-a",
+            fencing_token=1,
+            name="result.json",
+            content=b"ok",
+        )
+        == artifact
+    )
+    with pytest.raises(ContractViolation) as error:
+        provider.put_artifact(
+            allocation.allocation_id,
+            owner="worker-a",
+            fencing_token=1,
+            name="result.json",
+            content=b"no",
+        )
+    assert error.value.code is ErrorCode.CONFLICT
     with pytest.raises(ContractViolation) as error:
         provider.put_artifact(
             allocation.allocation_id,

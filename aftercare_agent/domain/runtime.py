@@ -98,6 +98,23 @@ class SessionRecord(CaseScope):
     channel: Literal["buyer", "support", "synthetic"]
 
 
+class SessionMessage(CaseScope):
+    """Durable, ordered reference to one session turn.
+
+    Message bodies stay in the artifact store; the runtime keeps only the
+    immutable reference and digest needed to resume and audit a transcript.
+    """
+
+    schema_version: SchemaVersion = 1
+    session_id: Identifier
+    message_id: Identifier
+    message_seq: PositiveInt
+    role: Literal["user", "assistant", "tool", "system"]
+    message_ref: Identifier
+    message_sha256: Sha256
+    created_at: UtcDatetime
+
+
 class RunRecord(RunScope):
     schema_version: SchemaVersion = 1
     session_id: Identifier | None = None

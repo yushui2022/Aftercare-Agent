@@ -12,8 +12,8 @@
 | 当前任务 | A3-03-c SSE 并发可靠性与工作台操作可靠性、A2-01 Outbox 事件连续性边界 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成 |
 | 下一项代码候选 | D-01：真实 IdP/撤销演练；A3-04：完整业务评测；B-02-03：供应商回执核对；C-01：真实沙箱后端；随后补生产准入与容量验证 |
-| 活跃实现任务 | 本轮已完成 `b0ddffe` 工作台基础上的异步 tail、分页和决策重试边界；下一阶段转入真实身份/撤销演练、完整业务评测、供应商回执、沙箱后端与生产准入 |
-| 本轮外部行为 | 本轮只调整运行时读取/事件边界、工作台客户端状态和配套测试文档，不调用模型、真实业务动作或生产部署；交付后以 Git 日志和 CI 为准 |
+| 活跃实现任务 | 本轮已完成 `b0ddffe` 工作台基础上的异步 tail、分页和决策重试边界，并补齐 Session transcript 引用与 provider-neutral 沙箱契约；下一阶段转入真实身份/撤销演练、完整业务评测、供应商回执、沙箱后端与生产准入 |
+| 本轮外部行为 | 本轮只调整运行时读取/事件边界、工作台客户端状态、Session 持久引用和沙箱契约，不调用模型、真实业务动作或生产部署；交付后以 Git 日志和 CI 为准 |
 
 ## 2. 核验过的源码基线
 
@@ -61,6 +61,7 @@
 | A3-03-a | DONE | 新增操作员工单发现：可访问工单列表（活动 CaseGrant 收紧、`case_ids` 仅收窄、keyset 游标）、工单详情（Run 投影不含 tenant/lease/fence）、工单下 Review/Approval 列表，以及 `web/` 最小 React+TS+Vite 工作台（列表、详情、决定、事件时间线）；真实 PostgreSQL 全量 `362 passed`（含新增 11 项），前端 `tsc --noEmit` 与 `vite build` 通过，合成身份端到端冒烟通过；live broker tail、真实认证与生产压测仍待实现 |
 | A3-03-b | DONE | 工作台接入 SSE 实时订阅：`follow=true&limit=200&wait_seconds=60`，按 `case_seq` 游标续订串接有界读，`fetch`+`ReadableStream` 增量解析（不使用无法带 Header 的 `EventSource`），按 `case_seq` 去重并封顶 500 条，指数退避重连、`401/403` 终止不重试，界面显示 连接中/实时/重连中/已暂停 并可暂停改一次性回放；`web/src/sse.test.ts` 13 项、`tsc --noEmit`、`vite build` 通过，真实后端 `follow` 参数返回 `200 text/event-stream`、非法 `limit` 返回 `400`；订阅级授权、真实 IdP 与高吞吐 broker tail 仍未实现 |
 | A3-03-c | IN PROGRESS | SSE follow 改为异步生成器，数据库短轮询放入线程、等待异步 sleep；工作台接入 keyset 加载更多、筛选/身份切换请求代际保护和稳定决策幂等键；异步 tail、前端 API 与回归通过，仍需生产连接池/broker 和真实身份验收 |
+| A1-05 | IN PROGRESS | 新增 SessionMessage append-only transcript 引用表/Repository（tenant/case/session 隔离、连续序号、message_id 幂等、游标读取）与 provider-neutral `SandboxProvider` 生命周期契约；真实 artifact store、Responses transcript adapter、Kubernetes/E2B 后端仍待实现 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
 | D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口与 `015_case_grants.sql`/`CaseGrantRepository`：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销/introspection、真实 IdP 和生产演练仍待实现 |
 | D-01-03 | DONE | PostgreSQL CaseGrant 按 `(tenant_id,subject_id,case_id)` 持久化 scope/revision/有效期/撤销审计；AuthContext 非 synthetic 未绑定时 fail-closed，API 在业务短事务锁定 grant；创建者授权与受理原子提交，撤销/过期/跨主体及 token 收窄回归通过；真实 IdP、introspection、RLS 和管理面仍待完成 |
@@ -78,6 +79,8 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 
 ## 6. 验证台账
 
+
+- 2026-09-14 / A1-05 Session transcript 与 C-01 沙箱契约：新增 `SessionMessage` 和 `016_session_messages.sql`，按 tenant/case/session 保存不可变 artifact 引用、摘要、角色和连续 `message_seq`；短锁保证并发追加，`message_id` 完全重放幂等，列表支持游标且跨租户/Case 为空。新增 provider-neutral `SandboxProvider` Protocol，Fake provider 增加带 owner/fencing 的显式 `READY → RUNNING` 幂等启动；真实 artifact store、Responses transcript adapter、Kubernetes/E2B 后端仍未接入。离线全量 `284 passed, 87 skipped`；临时 PostgreSQL 17 全量 `371 passed, 38 warnings`；Ruff、format、严格 mypy、文档检查和 `git diff --check` 通过。
 
 - 2026-09-14 / A3-03-c 与 A2-01 并发可靠性：`PostgresEventTail.stream_async()` 将短数据库轮询放入线程、空闲等待改为异步 sleep，FastAPI follow SSE 使用异步生成器并在线程中执行 Bearer/CaseGrant 复核；工作台新增 keyset 加载更多、筛选/身份切换代际保护和稳定决策幂等键，重复提交在请求完成前禁用且失败可重试；Outbox 拒绝非连续显式 `case_seq`，领取批量限制为 1–500。离线全量 `281 passed, 84 skipped`；临时 PostgreSQL 17 全量 `365 passed, 38 warnings`；前端 Vitest `15 passed`、TypeScript 与 Vite build 通过；Ruff、format、严格 mypy、`uv lock --check`、`git diff --check` 和文档检查通过。仍未完成有界 AsyncConnectionPool、LISTEN/NOTIFY 或 Kafka/NATS/Redis broker、真实身份验收和生产压测。
 

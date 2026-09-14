@@ -14,6 +14,7 @@ from aftercare_agent.domain.runtime import (
     CaseRecord,
     ExecutionClaim,
     RunRecord,
+    SessionMessage,
     SessionRecord,
     StepRecord,
     validate_transition,
@@ -344,6 +345,108 @@ class SessionRepository:
             if row is None
             else SessionRecord.model_validate(dict(zip(_SESSION_FIELDS, row, strict=False)))
         )
+
+
+_SESSION_MESSAGE_FIELDS = (
+    "tenant_id",
+    "case_id",
+    "session_id",
+    "message_id",
+    "message_seq",
+    "role",
+    "message_ref",
+    "message_sha256",
+    "created_at",
+)
+
+
+def _session_message(row: tuple[Any, ...]) -> SessionMessage:
+    return SessionMessage.model_validate(dict(zip(_SESSION_MESSAGE_FIELDS, row, strict=False)))
+
+
+class SessionMessageRepository:
+    """Append-only transcript references with per-session ordering.
+
+    The session row is locked for the short append transaction, so workers
+    cannot allocate the same sequence concurrently. Content is deliberately
+    externalized; only its immutable artifact reference and digest are stored.
+    """
+
+    def append(
+        self, connection: psycopg.Connection[Any], message: SessionMessage
+    ) -> SessionMessage:
+        session = connection.execute(
+            "SELECT 1 FROM aftercare_sessions WHERE tenant_id=%s AND case_id=%s "
+            "AND session_id=%s FOR UPDATE",
+            (message.tenant_id, message.case_id, message.session_id),
+        ).fetchone()
+        if session is None:
+            raise ContractViolation(ErrorCode.FORBIDDEN, "session scope not found")
+        row = connection.execute(
+            "SELECT "
+            + ",".join(_SESSION_MESSAGE_FIELDS)
+            + " FROM aftercare_session_messages WHERE tenant_id=%s AND session_id=%s "
+            "AND message_id=%s",
+            (message.tenant_id, message.session_id, message.message_id),
+        ).fetchone()
+        if row is not None:
+            existing = _session_message(row)
+            if existing != message:
+                raise ContractViolation(ErrorCode.CONFLICT, "message replay conflicts")
+            return existing
+        current = connection.execute(
+            "SELECT COALESCE(MAX(message_seq), 0) FROM aftercare_session_messages "
+            "WHERE tenant_id=%s AND session_id=%s",
+            (message.tenant_id, message.session_id),
+        ).fetchone()
+        if current is None:
+            raise ContractViolation(ErrorCode.RETRYABLE, "message sequence lookup failed")
+        expected = int(current[0]) + 1
+        if message.message_seq != expected:
+            raise ContractViolation(
+                ErrorCode.CONFLICT,
+                f"message sequence must be contiguous; expected {expected}",
+            )
+        connection.execute(
+            "INSERT INTO aftercare_session_messages(tenant_id,case_id,session_id,message_id,"
+            "message_seq,role,message_ref,message_sha256,created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                message.tenant_id,
+                message.case_id,
+                message.session_id,
+                message.message_id,
+                message.message_seq,
+                message.role,
+                message.message_ref,
+                message.message_sha256,
+                message.created_at,
+            ),
+        )
+        return message
+
+    def list_for_session(
+        self,
+        connection: psycopg.Connection[Any],
+        tenant: str,
+        case_id: str,
+        session_id: str,
+        *,
+        after_seq: int = 0,
+        limit: int = 100,
+    ) -> tuple[SessionMessage, ...]:
+        if type(after_seq) is not int or after_seq < 0:
+            raise ValueError("after_seq must be a non-negative integer")
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        rows = connection.execute(
+            "SELECT "
+            + ",".join(_SESSION_MESSAGE_FIELDS)
+            + " FROM aftercare_session_messages WHERE tenant_id=%s AND case_id=%s "
+            "AND session_id=%s AND message_seq>%s ORDER BY message_seq LIMIT %s",
+            (tenant, case_id, session_id, after_seq, limit),
+        ).fetchall()
+        return tuple(_session_message(row) for row in rows)
 
 
 _STEP_FIELDS = ("tenant_id", "case_id", "run_id", "step_id", "kind", "input_version")

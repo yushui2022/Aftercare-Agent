@@ -183,3 +183,29 @@ def test_append_event_allocates_case_sequence_and_preserves_snapshot(db: Databas
         )
         third, _ = events.append_event(connection, next_draft, snapshot=snapshot)
         assert third.case_seq == 2
+
+
+def test_append_outbox_rejects_non_contiguous_new_sequence(db: Database) -> None:
+    events = EventRepository()
+    with db.transaction() as connection:
+        connection.execute("DELETE FROM aftercare_outbox WHERE tenant_id=%s", ("event-gap",))
+        connection.execute(
+            "DELETE FROM aftercare_case_event_sequences WHERE tenant_id=%s", ("event-gap",)
+        )
+        first = _event(event_id="gap-1", case_seq=1).model_copy(
+            update={
+                "tenant_id": "event-gap",
+                "case_id": "gap-case",
+                "payload": ArtifactReference(
+                    tenant_id="event-gap",
+                    case_id="gap-case",
+                    reference_id="artifact-gap",
+                    sha256="a" * 64,
+                ),
+            }
+        )
+        second = first.model_copy(update={"event_id": "gap-2", "case_seq": 3})
+        assert events.append_outbox(connection, first)
+        with pytest.raises(ContractViolation) as error:
+            events.append_outbox(connection, second)
+        assert error.value.code is ErrorCode.CONFLICT

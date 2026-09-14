@@ -21,15 +21,15 @@
 
 ## A1：确定性持久运行骨架
 
-实现最小 PostgreSQL 迁移、API/Worker、FakePlanner、检查点与基础 Run 租约/fencing，并交付最小 Compose。当前 A1-01、A1-02、A1-03 已完成：数据库骨架、最小 API/auth 和数据库无关 Fake Harness 已有回归；A1-04 仍需把执行骨架接入 Worker、Compose 与 CI。租户授权从入口开始设计；生产身份未接通时只允许显式本地测试模式。退出条件是固定步骤可以恢复且过期执行者无法提交。
+实现最小 PostgreSQL 迁移、API/Worker、FakePlanner、检查点与基础 Run 租约/fencing，并交付最小 Compose。当前 A1-01、A1-02、A1-03 已完成，A1-04 已交付 Worker、Compose、CI 解释器修复并在 GitHub Actions run #44 通过；Linux/容器启动和完整重启矩阵仍待验收。租户授权从入口开始设计；生产身份未接通时只允许显式本地测试模式。退出条件是固定步骤可以恢复且过期执行者无法提交。
 
 ## A2：等待、可靠事件与跨实例恢复
 
-实现 Wait、Inbox、每消费者去重、Outbox、定时扫描和原子唤醒；当前已完成 Inbox/Outbox 幂等持久化以及 Wait 注册、激活、早到回复、超时和唯一 wakeup 的 PostgreSQL 基础实现，仍需完成发布游标、gap 处理和两个独立 Worker 的失联接管验证。增加基础跨实例限额和公平调度；等待不得长期占用执行槽或数据库事务。
+实现 Wait、Inbox、每消费者去重、Outbox、定时扫描和原子唤醒；当前已完成 Inbox/Outbox 幂等持久化、Wait 注册/激活/早到回复/超时/唯一唤醒、gap 处理、跨实例限额与公平调度基础，并已提供有界 PostgreSQL SSE tail 和工作台消费路径。仍需完成选定 broker 的 live adapter、完整重启矩阵和生产运行验证；等待不得长期占用执行槽或数据库事务。
 
 ## A3：调查 Agent、证据与工作台
 
-在确定性恢复基础上接 Responses、调查专用 EGM 适配和最小 React/TypeScript 工作台。验证完整工具请求、证据语义、授权 SSE 续传、成本与质量；保留 Fake 测试通道。EGM 与简单显式证据规则作对照，区分准入价值、语义校验和上下文成本。
+在确定性恢复基础上接 Responses、调查专用 EGM 适配和最小 React/TypeScript 工作台。当前已交付严格 Responses 边界、调查观察账本、Case-scoped SSE 续传和最小工作台；仍需验证完整工具请求、证据语义、真实认证、成本与质量，并保留 Fake 测试通道。EGM 与简单显式证据规则作对照，区分准入价值、语义校验和上下文成本。
 
 整个 A 阶段只生成处理建议与通知草稿，使用模拟业务连接器；不真实退款、补发或发邮件。模型不填写高信任来源、观察时间、TTL 或高权限身份。
 

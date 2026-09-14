@@ -1,6 +1,6 @@
 # 当前工程状态与接手点
 
-格式版本：1。最后核验日期：2026-09-13（Asia/Shanghai）。记录者：本轮主 Agent。
+格式版本：1。最后核验日期：2026-09-14（Asia/Shanghai）。记录者：本轮主 Agent。
 
 本文件是进度与交接的唯一台账，不是实际代码/测试的替代证据，也不是自动执行授权。先读根 [AGENTS.md](../AGENTS.md)，任务定义见 [工程执行计划](engineering-plan.md)。
 
@@ -10,19 +10,19 @@
 |---|---|
 | 本轮请求范围 | 用户授权继续完善项目；本轮补齐操作员工单发现能力（可访问工单列表、工单详情、工单下 Review/Approval 列表）、最小运营工作台、工作台 SSE 实时订阅，并修复远端 CI 在 `main` 上自 run #37 起连续失败的 `Set up Python` 步骤；不改变授权、租约与外部动作语义，不调用真实 provider |
 | 当前任务 | A3-03-a 工单发现与工作台、A3-03-b 工作台 SSE 实时订阅、A1-04 远端 CI 解释器解析修复 |
-| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | 推送后在 GitHub 确认远端 CI 出现绿色 run；D-01：真实 IdP/撤销演练；A3-04：完整业务评测；B-02-03：供应商回执核对；C-01：真实沙箱后端 |
-| 活跃实现任务 | 本轮交付操作员工单发现 API、`web/` 最小工作台、工作台 SSE 实时订阅与远端 CI 解释器解析修复；控制面 Review/Approval 决定 API、JWT/JWKS Bearer、PostgreSQL CaseGrant 和 admission lease safety 已在此前批次补齐 |
-| 本轮外部行为 | 本轮只新增只读查询端点与前端静态资源，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
+| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成 |
+| 下一项代码候选 | D-01：真实 IdP/撤销演练；A3-04：完整业务评测；B-02-03：供应商回执核对；C-01：真实沙箱后端；随后补生产准入与容量验证 |
+| 活跃实现任务 | `b0ddffe` 已交付操作员工单发现 API、`web/` 最小工作台、工作台 SSE 实时订阅和 CI 解释器修复；控制面 Review/Approval 决定 API、JWT/JWKS Bearer、PostgreSQL CaseGrant 与 admission lease safety 已在此前批次补齐 |
+| 本轮外部行为 | 本轮只新增只读查询端点、前端静态资源和 CI 配置，不调用模型、真实业务动作或生产部署；远端状态以 GitHub Actions run #44 和 Git 日志为准 |
 
 ## 2. 核验过的源码基线
 
 | 仓库 | 已核验源码 HEAD | 用途 |
 |---|---|---|
-| Aftercare-Agent | 109a7d6451b22eea1bdbf8e1b99241192258d084 | 本轮 CaseGrant 批次的提交前基线；工程增量由包含本页的交付提交固化，实际编号以 Git 日志为准 |
+| Aftercare-Agent | b0ddffe95e487f5520bb3d2f29f781b3fb72417f | 当前已推送交付提交：工单发现、React 工作台、SSE 实时订阅与 CI 修复；此前 CaseGrant 基线为 `3fa7b51` |
 | Evidence-Gated-Memory | 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd | 源码 0.6.0、嵌入式应用层与 PostgreSQL；已固定在 Aftercare 依赖中 |
 
-这些是核验时的源码基线，不要求文档为了指向包含自身的提交而无限修改。本轮没有检查远端分支或远端 CI；不要把旧交接中“远端与本地一致”当作当前核验。
+这是当前核验的源码基线。当前 `main` 与 `origin/main` 均指向 `b0ddffe`；GitHub Actions run #44 已在该提交上成功完成。历史验证条目保留原日期和当时边界，不向旧结果回填新结论。
 
 本机位置：G:\Projects\Aftercare-Agent；EGM 相邻仓库 G:\Projects\Evidence-Gated-Memory。脚本应使用仓库相对路径或显式配置，不把本机布局当其他贡献者的强制前提。
 
@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合、真实供应商连接器、前端、沙箱接线、live SSE tail 和生产调度体系。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、合成 Aftercare 纵向切片（含订单/物流/买家观察与来源引用评估）、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒、跨实例 admission 最小闭环、显式合成身份下的 Review/Approval 控制面 API、可选静态 JWKS 的 Bearer 验签切片，以及按 tenant/subject/case 持久化并短事务解析的 CaseGrant；仍不是完整执行服务。真实撤销/introspection、IdP 权限映射、RLS 和生产认证验收仍未完成。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合、真实供应商连接器、沙箱接线、生产调度体系和高吞吐 live broker tail。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、合成 Aftercare 纵向切片（含订单/物流/买家观察与来源引用评估）、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒、跨实例 admission 最小闭环、显式合成身份或静态 JWKS Bearer 的 Review/Approval 控制面 API、CaseGrant，以及操作员工单发现 API、React 工作台和 case-scoped SSE replay/tail；仍不是完整执行服务。真实撤销/introspection、IdP 权限映射、RLS、生产认证验收、浏览器可访问性和高吞吐 broker 仍未完成。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；PostgreSQL 观察账本与重载已实现，但真实调查 EGM schema 与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -49,15 +49,15 @@
 | A1-01 | DONE | 新增 PostgreSQL 迁移、受理幂等、Case/Session/Step/Attempt/Run/Checkpoint Repository；隔离 PostgreSQL 17 容器中 5 项集成测试通过 |
 | A1-02 | DONE | 新增 FastAPI 受理/读取与 Review/Approval operator 控制面、显式合成身份边界和公开响应投影；JWT/JWKS Bearer 与 CaseGrant 入口已接入，真实 IdP 演练仍待完成 |
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
-| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和合成 Aftercare CLI 已新增；长运行基础已移入 A2-02。远端 CI 经核查在 `main` 上连续失败（可见记录 run #37–#43 全为 `failure`，失败步骤为 `uv python install 3.13.15`：uv 0.9.26 内置索引止于 3.13.11），已改为用 `UV_PYTHON_DOWNLOADS_JSON_URL` 指向固定提交的下载元数据；尚未推送、尚无绿色 run，Linux 完整启动验收仍待完成 |
-| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 已有有界持久回放，live tail/工作台待补 |
+| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和合成 Aftercare CLI 已新增；长运行基础已移入 A2-02。CI 解释器解析已修复，GitHub Actions run #44（提交 `b0ddffe`）已成功；Linux 完整启动、生产部署与重启矩阵仍待完成 |
+| A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 回放与有界 polling tail 已接入工作台，高吞吐 live broker 仍待补 |
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；审批门禁已补入但支付聚合、额度预留和真实供应商对账仍待实现 |
 | B-02 | IN PROGRESS | B-02-01/02 已实现 `ApprovalRepository`、010/011 迁移、参数/策略/身份/有效期绑定、重复决定幂等、`RESERVED` 派发 fail-closed 和绑定 Wait 的 Inbox 原子唤醒；Review 013 已实现 `REVIEW→READY/CANCELLED` 决定边界；已补齐 `approval.*`/`review.*` Outbox 事件、Case 序号分配、不可变门控快照和显式 operator API；支付聚合和供应商回执核对仍待实现 |
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
-| A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页和有界 PostgreSQL polling tail；高吞吐 live broker tail、React 工作台和生产认证仍待实现 |
+| A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页、有界 PostgreSQL polling tail 和 React 工作台；高吞吐 live broker tail、真实认证和生产压测仍待实现 |
 | A3-03-a | DONE | 新增操作员工单发现：可访问工单列表（活动 CaseGrant 收紧、`case_ids` 仅收窄、keyset 游标）、工单详情（Run 投影不含 tenant/lease/fence）、工单下 Review/Approval 列表，以及 `web/` 最小 React+TS+Vite 工作台（列表、详情、决定、事件时间线）；真实 PostgreSQL 全量 `362 passed`（含新增 11 项），前端 `tsc --noEmit` 与 `vite build` 通过，合成身份端到端冒烟通过；live broker tail、真实认证与生产压测仍待实现 |
 | A3-03-b | DONE | 工作台接入 SSE 实时订阅：`follow=true&limit=200&wait_seconds=60`，按 `case_seq` 游标续订串接有界读，`fetch`+`ReadableStream` 增量解析（不使用无法带 Header 的 `EventSource`），按 `case_seq` 去重并封顶 500 条，指数退避重连、`401/403` 终止不重试，界面显示 连接中/实时/重连中/已暂停 并可暂停改一次性回放；`web/src/sse.test.ts` 13 项、`tsc --noEmit`、`vite build` 通过，真实后端 `follow` 参数返回 `200 text/event-stream`、非法 `limit` 返回 `400`；订阅级授权、真实 IdP 与高吞吐 broker tail 仍未实现 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
@@ -71,14 +71,14 @@
 
 EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：本轮用户明确要求提交并推送；前序批次 `109a7d6` 已推送到 `origin/main`，本轮 CaseGrant 控制面增量将在全新 PostgreSQL 17 验收后统一提交并核验远端状态。部署：本轮没有。生产数据/真实业务操作：本轮没有。远端 CI 尚未核验；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：前序批次与本轮 `b0ddffe` 均已按用户授权提交并推送到 `origin/main`；本轮没有部署、生产数据或真实业务操作。GitHub Actions run #44 已成功；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
 
 
-- 2026-09-14 / 远端 CI 修复：核查 GitHub Actions 发现 `main` 上自 run #37 起连续失败（可见 7 次记录全为 `failure`，21–35 秒内结束）；用 GitHub API 定位到失败步骤是 `Set up Python`（命令 `uv python install 3.13.15`），其后的静态检查与测试步骤全部 `skipped`。根因：uv 0.9.26 内置 Python 下载索引最高只到 3.13.11（`uv python list --all-versions` 实测），而项目固定 3.13.15（2026-08-05 发布的 3.13 维护版），裸装必然找不到该补丁；本地此前是靠 `--python-downloads-json-url` 绕过，CI 没有这个参数。修复：在 `.github/workflows/ci.yml` 的 job 级 `env` 增加 `UV_PYTHON_DOWNLOADS_JSON_URL`，指向固定提交 `dbda4fbf…`（2026-09-09，含 3.13.15）的下载元数据，使 `uv python install` 与 `uv sync --locked` 都能解析该补丁。已排除的方案：在仓库根新增 `uv.toml`——uv 实测警告它会忽略 `pyproject.toml` 的 `[tool.uv]` 字段（含 `required-version`），会静默破坏构建约束。验证：默认索引下 3.13 最高 3.13.11、固定元数据下出现 `cpython-3.13.15-…`；YAML 经 PyYAML 解析确认 `env` 位于 job 级并同时覆盖 `Set up Python` 与 `Install locked dependencies`。本地等价检查（Ruff/format/严格 mypy 含 `evals`/真实 PostgreSQL 全量 `362 passed`）此前已通过，说明失败与业务代码无关。**未验证**：推送后的绿色 run（本轮未推送、未提交），因此 A1-04 仍不能标 DONE；本机访问 `raw.githubusercontent.com` 存在抖动（实测一次 `connection reset`、一次超时、重试后成功），CI 侧未复现。
+- 2026-09-14 / 远端 CI 修复：核查 GitHub Actions 发现 `main` 上自 run #37 起连续失败（可见 7 次记录全为 `failure`，21–35 秒内结束）；用 GitHub API 定位到失败步骤是 `Set up Python`（命令 `uv python install 3.13.15`），其后的静态检查与测试步骤全部 `skipped`。根因：uv 0.9.26 内置 Python 下载索引最高只到 3.13.11（`uv python list --all-versions` 实测），而项目固定 3.13.15（2026-08-05 发布的 3.13 维护版），裸装必然找不到该补丁；本地此前是靠 `--python-downloads-json-url` 绕过，CI 没有这个参数。修复：在 `.github/workflows/ci.yml` 的 job 级 `env` 增加 `UV_PYTHON_DOWNLOADS_JSON_URL`，指向固定提交 `dbda4fbf…`（2026-09-09，含 3.13.15）的下载元数据，使 `uv python install` 与 `uv sync --locked` 都能解析该补丁。已排除的方案：在仓库根新增 `uv.toml`——uv 实测警告它会忽略 `pyproject.toml` 的 `[tool.uv]` 字段（含 `required-version`），会静默破坏构建约束。验证：默认索引下 3.13 最高 3.13.11、固定元数据下出现 `cpython-3.13.15-…`；YAML 经 PyYAML 解析确认 `env` 位于 job 级并同时覆盖 `Set up Python` 与 `Install locked dependencies`。本地等价检查（Ruff/format/严格 mypy 含 `evals`/真实 PostgreSQL 全量 `362 passed`）此前已通过，说明失败与业务代码无关。推送后 GitHub Actions run #44（提交 `b0ddffe`）已完成且为 `success`，因此该 CI 解析问题已验证修复；A1-04 仍因 Linux/容器启动和完整重启矩阵未验收而保持 IN PROGRESS。运行页面：[run #44](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34805186170)。本机访问 `raw.githubusercontent.com` 存在抖动（实测一次 `connection reset`、一次超时、重试后成功），CI 侧未复现。
 
 - 2026-09-13 / A3-03-b 工作台实时订阅：工作台新增 SSE 实时订阅（`web/src/sse.ts`：`SseDecoder` 增量帧解析、`parseCaseEvent`、`appendEvent` 去重封顶、`nextBackoffMs` 退避、`subscribeCaseEvents` 游标续订），请求参数与 `PostgresEventTail.validate` 上限一致（`limit=200`、`wait_seconds=60`），流正常结束后立即按最后 `case_seq` 续订，`401/403` 终止不重试；因 `EventSource` 无法附加自定义 Header，改用 `fetch` + `ReadableStream`，不把合成身份降级为 URL 凭据。新增 `web/src/sse.test.ts` 13 项（跨 chunk 分帧、CRLF、注释行、无 id 消息、非法游标/JSON 拒绝、乱序插入、去重与 500 上限、退避封顶）通过；`tsc --noEmit` 与 `vite build` 通过（产物 234 KB JS + 6.2 KB CSS）。对运行中的真实后端验证 `follow=true&limit=200&wait_seconds=60` 返回 `200 text/event-stream`，`limit=900` 返回 `400`。未验证：真实 OIDC 下的订阅授权、浏览器端交互回归、高吞吐 broker tail。
 

@@ -99,6 +99,17 @@ def test_case_queue_lists_case_detail_and_empty_children(
     assert "lease_owner" not in detail_body["runs"][0]
     assert "fencing_token" not in detail_body["runs"][0]
 
+    direct_run = client.get(
+        f"/v1/cases/{case_id}/runs/{run_id}",
+        headers=headers,
+    )
+    assert direct_run.status_code == 200
+    direct_run_body = direct_run.json()
+    assert direct_run_body["run_id"] == run_id
+    assert "tenant_id" not in direct_run_body
+    assert "lease_owner" not in direct_run_body
+    assert "fencing_token" not in direct_run_body
+
     reviews = client.get(f"/v1/cases/{case_id}/reviews", headers=headers)
     assert reviews.status_code == 200 and reviews.json() == {"reviews": []}
 

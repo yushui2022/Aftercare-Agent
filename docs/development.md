@@ -1,6 +1,6 @@
 # 本地开发、测试与打包
 
-本文只提供已经具备的 Python 证据适配层入口，不是 API/Worker/Compose 启动指南。当前任务状态和验证记录统一在[状态台账](project-status.md)，后续实现按[工程执行计划](engineering-plan.md)推进。
+本文提供 Python 证据适配层入口，以及当前已具备的 API/Worker/Compose/工作台开发检查边界；它仍不是生产部署指南。当前任务状态和验证记录统一在[状态台账](project-status.md)，后续实现按[工程执行计划](engineering-plan.md)推进。
 
 ## 1. 环境与依赖来源
 
@@ -129,4 +129,4 @@ EGM 目前以 Git 来源安装，因此来源测试要求 direct_url.json 中存
 
 ## 6. 仍然没有的入口
 
-真实业务 Worker、SSE、模型和沙箱仍未交付。A1-04/A2 已提供仅供本地开发的 [Compose smoke 环境](../deploy/compose/README.md)、常驻轮询、租约心跳和 Outbox publisher；Compose 仍只启动 PostgreSQL/API，不能代替生产部署、安全审计、依赖漏洞扫描和性能验收。现有 SQLite 回归也不能代替真实 PostgreSQL 租约、事务和故障恢复测试。
+真实业务连接器、模型和沙箱仍未交付。A1-04/A2 已提供仅供本地开发的 [Compose smoke 环境](../deploy/compose/README.md)、常驻轮询、租约心跳和 Outbox publisher；A3-03 已提供有界 SSE 回放/tail 和 `web/` 工作台，但不含真实身份登录，也不能代替生产部署、安全审计、依赖漏洞扫描和性能验收。现有 SQLite 回归也不能代替真实 PostgreSQL 租约、事务和故障恢复测试。

@@ -205,6 +205,12 @@ def test_invalid_claim_and_retry_parameters_do_not_mutate_delivery(db: Database)
             events.claim_outbox(connection, tenant, "publisher-a", timedelta(0))
         with pytest.raises(ContractViolation):
             events.claim_outbox(connection, tenant, "publisher-a", timedelta(seconds=30), limit=0)
+        with pytest.raises(ContractViolation):
+            events.claim_outbox(connection, tenant, "publisher-a", timedelta(seconds=30), limit=501)
+        with pytest.raises(ContractViolation):
+            events.claim_outbox(
+                connection, tenant, "publisher-a", timedelta(seconds=30), limit=True
+            )
         delivery = events.claim_outbox(connection, tenant, "publisher-a", timedelta(seconds=30))[0]
         with pytest.raises(ContractViolation):
             events.retry_outbox(

@@ -520,6 +520,10 @@ class CaseRepository:
         clauses = [
             "g.tenant_id=%s",
             "g.subject_id=%s",
+            # Discovery itself requires the Case read permission.  A grant
+            # for a narrower child resource (for example review:read) must
+            # not disclose the Case header through the work queue.
+            "g.permissions @> ARRAY['case:read']::text[]",
             "g.revoked_at IS NULL",
             "(g.expires_at IS NULL OR g.expires_at > clock_timestamp())",
         ]

@@ -19,8 +19,9 @@ A2-01 的第一块可靠事件能力使用 PostgreSQL，而不是提前引入 Ka
 同一个事务中分配下一个 `case_seq`。迁移 `014_event_sequences.sql` 的
 `aftercare_case_event_sequences` 行在分配时加锁；如果 Case 已存在，先按 Case→sequence
 顺序锁定 Case，再锁计数器，和审批、Review 的业务锁顺序一致。分配在事务回滚时也回滚，
-因此不会产生可见的提交序号空洞。旧版 `append_outbox(DomainEvent)` 仍接受显式序号，
-但会在同一计数器上推进高水位，避免与自动分配器冲突；新业务代码不应自行计算序号。
+因此不会产生可见的提交序号空洞。兼容路径 `append_outbox(DomainEvent)` 仍接受显式序号，
+但新事件必须正好是当前高水位的下一个位置；完全相同的历史事件可以幂等重放，跳号写入会
+被拒绝。新业务代码不应自行计算序号；真正的历史回填应走单独的审计导入路径。
 
 ### Approval and Review events
 
@@ -58,8 +59,8 @@ A2-01 的第一块可靠事件能力使用 PostgreSQL，而不是提前引入 Ka
 `ArtifactReference`；迁移 `014_event_sequences.sql` 的 payload 表按引用保存不可变的完整
 决策/请求快照，便于审计重放而不把正文直接塞进事件信封。`case_seq` 由 Case 行锁保护的
 高水位分配器自动递增；同一个事件 ID 的重放返回原事件，不会消耗新序号。历史调用仍可
-使用显式 `DomainEvent.case_seq` 的 `append_outbox`，但也会更新高水位，避免新旧写法制造
-重复序号。
+使用显式 `DomainEvent.case_seq` 的 `append_outbox`，但新事件只能写入下一个连续序号；这
+避免 projection 因永久 gap 而卡住。重复事件 ID 仍按原事件幂等返回。
 
 因此，消费者可以按事件类型驱动工作台、审计或通知投影，并用自己的 Inbox/application
 记录去重。事件的存在只说明可信状态变更已经提交，不代表外部供应商动作已经成功；外部

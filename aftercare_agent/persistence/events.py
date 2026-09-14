@@ -13,6 +13,8 @@ from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.events import DomainEvent, DomainEventDraft
 from aftercare_agent.domain.waits import InboxSignal, check_inbox_replay
 
+MAX_OUTBOX_BATCH = 500
+
 
 @dataclass(frozen=True)
 class OutboxDelivery:
@@ -162,6 +164,30 @@ class EventRepository:
 
     def append_outbox(self, connection: psycopg.Connection[Any], event: DomainEvent) -> bool:
         current = self._lock_case_sequence(connection, event.tenant_id, event.case_id)
+        # Resolve an idempotent replay before enforcing the next position. A
+        # retry of an old event necessarily has ``case_seq <= current`` and
+        # must remain a no-op rather than being rejected as a new gap.
+        existing_by_id = connection.execute(
+            "SELECT payload FROM aftercare_outbox WHERE tenant_id=%s AND event_id=%s FOR UPDATE",
+            (event.tenant_id, event.event_id),
+        ).fetchone()
+        if existing_by_id is not None:
+            try:
+                stored = DomainEvent.model_validate_json(
+                    json.dumps(existing_by_id[0], ensure_ascii=False)
+                )
+            except (TypeError, ValueError) as exc:
+                raise ContractViolation(
+                    ErrorCode.RETRYABLE, "stored outbox event is invalid"
+                ) from exc
+            if stored == event:
+                return False
+            raise ContractViolation(ErrorCode.CONFLICT, "outbox event identity conflicts")
+        if event.case_seq != current + 1:
+            raise ContractViolation(
+                ErrorCode.CONFLICT,
+                "outbox case sequence must be the next contiguous position",
+            )
         inserted = connection.execute(
             "INSERT INTO aftercare_outbox(tenant_id,case_id,event_id,case_seq,event_type,payload) "
             "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING RETURNING 1",
@@ -307,9 +333,10 @@ class EventRepository:
         reclaimed and increment ``delivery_attempts``, which fences an old
         in-flight acknowledgement even when owner strings happen to match.
         """
-        if not owner or not isinstance(limit, int) or limit < 1:
+        if not owner or type(limit) is not int or not 1 <= limit <= MAX_OUTBOX_BATCH:
             raise ContractViolation(
-                ErrorCode.INVALID_INPUT, "outbox owner and positive limit required"
+                ErrorCode.INVALID_INPUT,
+                f"outbox owner and limit between 1 and {MAX_OUTBOX_BATCH} required",
             )
         if lease <= timedelta(0):
             raise ContractViolation(ErrorCode.INVALID_INPUT, "outbox lease must be positive")

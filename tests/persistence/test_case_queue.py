@@ -71,6 +71,7 @@ def test_list_accessible_is_grant_scoped_and_hides_revoked(db: Database) -> None
     _grant(db, tenant, "subject-1", "case-00")
     _grant(db, tenant, "subject-1", "case-01", "case:read", "review:read")
     _grant(db, tenant, "subject-2", "case-01")
+    _grant(db, tenant, "subject-review-only", "case-02", "review:read")
     with db.transaction() as connection:
         revoked = CaseGrantRepository().grant(
             connection,
@@ -93,10 +94,14 @@ def test_list_accessible_is_grant_scoped_and_hides_revoked(db: Database) -> None
     with db.transaction() as connection:
         first = queue.list_accessible(connection, tenant_id=tenant, subject_id="subject-1")
         second = queue.list_accessible(connection, tenant_id=tenant, subject_id="subject-2")
+        review_only = queue.list_accessible(
+            connection, tenant_id=tenant, subject_id="subject-review-only"
+        )
         stranger = queue.list_accessible(connection, tenant_id=tenant, subject_id="subject-3")
 
     assert {entry.case_id for entry in first} == {"case-00", "case-01"}
     assert {entry.case_id for entry in second} == {"case-01"}
+    assert review_only == []
     assert stranger == []
     granted = {entry.case_id: entry.permissions for entry in first}
     assert granted["case-00"] == frozenset({"case:read"})

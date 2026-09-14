@@ -450,15 +450,15 @@ def create_app(
         except ContractViolation as exc:
             raise _error(exc) from exc
 
-    @app.get("/v1/cases/{case_id}/runs/{run_id}", response_model=RunRecord)
-    def get_run(case_id: str, run_id: str, identity: Auth) -> RunRecord:
+    @app.get("/v1/cases/{case_id}/runs/{run_id}", response_model=RunSummaryResponse)
+    def get_run(case_id: str, run_id: str, identity: Auth) -> RunSummaryResponse:
         try:
             with database.transaction() as connection:
                 scoped_case_id, _ = _authorized_case(connection, identity, case_id, "case:read")
                 run = RunRepository().get(connection, identity.tenant_id, run_id)
                 if run is None or run.case_id != scoped_case_id:
                     raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
-            return run
+            return _run_summary(run)
         except ContractViolation as exc:
             raise _error(exc) from exc
 

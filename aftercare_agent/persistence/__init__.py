@@ -15,7 +15,7 @@ from .approvals import ApprovalRepository
 from .assessments import InvestigationAssessmentRepository
 from .case_grants import CaseGrantRepository
 from .db import Database, migrate
-from .events import EventRepository, OutboxDelivery
+from .events import MAX_OUTBOX_BATCH, EventRepository, OutboxDelivery
 from .investigations import InvestigationObservationRepository
 from .projection import ProjectionIngestResult, ProjectionRepository
 from .repositories import (
@@ -30,6 +30,7 @@ from .waits import WaitRepository
 
 __all__ = [
     "MAX_PAGE_SIZE",
+    "MAX_OUTBOX_BATCH",
     "AdmissionRepository",
     "AdmissionResult",
     "ActionRepository",

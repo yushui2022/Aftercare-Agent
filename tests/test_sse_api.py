@@ -27,6 +27,10 @@ def client() -> Iterator[TestClient]:
     with database.transaction() as connection:
         migrate(connection)
         connection.execute("DELETE FROM aftercare_outbox WHERE tenant_id=%s", (tenant,))
+        connection.execute(
+            "DELETE FROM aftercare_case_event_sequences WHERE tenant_id=%s", (tenant,)
+        )
+        connection.execute("DELETE FROM aftercare_event_payloads WHERE tenant_id=%s", (tenant,))
         connection.execute("DELETE FROM aftercare_runs WHERE tenant_id=%s", (tenant,))
         connection.execute("DELETE FROM aftercare_cases WHERE tenant_id=%s", (tenant,))
         RunRepository().create_case(

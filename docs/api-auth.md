@@ -3,9 +3,13 @@
 当前提供一个最小 FastAPI HTTP 适配器：
 
 - `POST /v1/cases`：受理一个 `OpenCaseInput`，要求 `Idempotency-Key`。
+- `GET /v1/cases`：列出当前身份可访问的工单，按创建时间倒序，使用 keyset 游标分页。
+- `GET /v1/cases/{case_id}`：读取工单头与其 Run 投影。
 - `GET /v1/cases/{case_id}/runs/{run_id}`：按认证租户读取 Run。
+- `GET /v1/cases/{case_id}/reviews`：列出该工单范围内的人工 Review。
 - `GET /v1/cases/{case_id}/reviews/{review_id}`：读取工单范围内的人工 Review。
 - `POST /v1/cases/{case_id}/reviews/{review_id}/decision`：提交 Review 决定。
+- `GET /v1/cases/{case_id}/approvals`：列出该工单范围内的审批记录。
 - `GET /v1/cases/{case_id}/approvals/{approval_id}`：读取工单范围内的审批记录。
 - `POST /v1/cases/{case_id}/approvals/{approval_id}/decision`：提交审批决定。
 
@@ -61,6 +65,28 @@ Repository 的决定幂等键。相同主体、决定、理由和键的重放返
 合成身份模式会在显式 `AFTERCARE_ALLOW_SYNTHETIC_IDENTITY=1` 时授予本地测试所需的
 operator scope；这不是生产授权方案，也不能由请求 Header 自行声明权限。生产部署应将
 已验签的 OIDC claims 映射为相应权限后再接入同一组路由。
+
+## 工单发现与运营工作台（A3-03-a）
+
+此前控制面只能按已知 ID 读取，操作员无法"发现自己该处理的工单"。本轮补上发现能力：
+
+- `GET /v1/cases` 需要租户级 `case:read`。真实身份的分页恒由活动
+  `aftercare_case_grants` 行收紧：被撤销或过期的授权不会出现在结果里，Token 的
+  `case_ids` 只能进一步收窄（空集合直接返回空页）。显式开启的合成身份只看自己租户，
+  不跨租户。
+- 分页是 `(created_at, case_id)` keyset 游标：整页返回时给出 `next_created_at` /
+  `next_case_id`，不满一页表示到底；`limit` 上限 200，只给一半游标返回 `400`。
+- `GET /v1/cases/{case_id}` 返回工单头与 Run 投影。Run 投影只包含 `run_id`、`state`、
+  `input_version`、等待绑定与租约到期时间；不返回 `tenant_id`、`lease_owner`、
+  `fencing_token`。
+- `GET /v1/cases/{case_id}/reviews` 与 `.../approvals` 分别需要 `review:read` 与
+  `approval:read`，并复用同一 operator projection（不含证据/参数摘要、策略版本、等待绑定）。
+- 工单不存在或不属于调用方租户时统一返回 `403`，与单资源端点保持一致；合成身份也不再
+  把"未知工单"表现为空集合。
+
+`web/` 下的 React + TypeScript + Vite 工作台消费这些端点：列出工单、查看详情与事件，
+并以认证主体提交 Review/Approval 决定。它是开发者工作台，不含登录页、权限管理 UI 或
+生产认证；页面上的租户/操作员输入只是显式的合成身份测试入口。
 
 ## JWT/JWKS Bearer 验证（D-01-01/02）
 

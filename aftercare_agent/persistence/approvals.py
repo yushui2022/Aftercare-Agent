@@ -95,6 +95,23 @@ class ApprovalRepository:
         ).fetchone()
         return None if row is None else _record(row)
 
+    def list_for_case(
+        self,
+        conn: psycopg.Connection[Any],
+        tenant_id: str,
+        case_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[ApprovalRecord]:
+        """List one Case's approvals, newest first, without granting authority."""
+        rows = conn.execute(
+            "SELECT " + ",".join(_APPROVAL_FIELDS) + " FROM aftercare_approvals "
+            "WHERE tenant_id=%s AND case_id=%s "
+            "ORDER BY created_at DESC, approval_id DESC LIMIT %s",
+            (tenant_id, case_id, limit),
+        ).fetchall()
+        return [_record(row) for row in rows]
+
     @staticmethod
     def _db_now(conn: psycopg.Connection[Any]) -> datetime:
         row = conn.execute("SELECT clock_timestamp()").fetchone()

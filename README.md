@@ -41,6 +41,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [跨实例执行准入](docs/admission.md) | A2-03 全局/租户执行槽、数据库租约心跳和按 Run 重试预算 |
 | [本地 Compose](deploy/compose/README.md) | A1-04 开发环境：PostgreSQL + API，Worker 可选 profile；不含模型或真实动作 |
 | [合成 Aftercare 演示](deploy/compose/README.md#合成-aftercare-演示) | 一条命令运行受理、等待/唤醒、检查点恢复、证据评估和 fake 审批动作；只写合成数据 |
+| [运营工作台](web/README.md) | A3-03-a React+TypeScript 工作台：工单发现、Review/Approval 决定与事件时间线；开发者工具，不是生产管理面 |
 | [Agent 执行与恢复规则](AGENTS.md) | 恢复阅读顺序、状态维护和授权/安全边界 |
 | [工程总设计与 Mermaid 架构图](docs/system-design.md) | 下一步怎样建设：部署、Session/Run、并发、持久事件、沙箱、记忆与 API；区分已实现和目标设计 |
 | [完整技术文章](docs/architecture.md) | 从 Demo 到企业级：跨境电商售后 Agent 的并发、沙箱与故障恢复设计 |

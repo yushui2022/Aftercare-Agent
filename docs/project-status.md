@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权继续完善项目；在控制面 API 后补真实 JWT/JWKS Bearer 认证、PostgreSQL CaseGrant 资源授权、Case scope 默认收紧和 admission lease safety，仍按完整批次提交 |
-| 当前任务 | A2 纵向恢复切片已接入；A3/C/D 运行控制面与生产边界继续进行 |
+| 本轮请求范围 | 用户授权继续完善项目；本轮补齐操作员工单发现能力（可访问工单列表、工单详情、工单下 Review/Approval 列表）、最小运营工作台、工作台 SSE 实时订阅，并修复远端 CI 在 `main` 上自 run #37 起连续失败的 `Set up Python` 步骤；不改变授权、租约与外部动作语义，不调用真实 provider |
+| 当前任务 | A3-03-a 工单发现与工作台、A3-03-b 工作台 SSE 实时订阅、A1-04 远端 CI 解释器解析修复 |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地 |
-| 下一项代码候选 | D-01：真实 IdP/撤销演练；A3-03：Review 工作台；B-02-03：供应商回执核对；C-01：真实沙箱后端 |
-| 活跃实现任务 | 合成 Aftercare 纵向切片、控制面 Review/Approval API、JWT/JWKS Bearer、PostgreSQL CaseGrant 和 admission lease safety 已补齐；后续接入真实 provider、工作台和沙箱 |
-| 本轮外部行为 | 本轮新增适配器仅做离线解析，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
+| 下一项代码候选 | 推送后在 GitHub 确认远端 CI 出现绿色 run；D-01：真实 IdP/撤销演练；A3-04：完整业务评测；B-02-03：供应商回执核对；C-01：真实沙箱后端 |
+| 活跃实现任务 | 本轮交付操作员工单发现 API、`web/` 最小工作台、工作台 SSE 实时订阅与远端 CI 解释器解析修复；控制面 Review/Approval 决定 API、JWT/JWKS Bearer、PostgreSQL CaseGrant 和 admission lease safety 已在此前批次补齐 |
+| 本轮外部行为 | 本轮只新增只读查询端点与前端静态资源，不调用模型、真实业务动作或生产部署；提交推送状态以 Git 日志为准 |
 
 ## 2. 核验过的源码基线
 
@@ -49,7 +49,7 @@
 | A1-01 | DONE | 新增 PostgreSQL 迁移、受理幂等、Case/Session/Step/Attempt/Run/Checkpoint Repository；隔离 PostgreSQL 17 容器中 5 项集成测试通过 |
 | A1-02 | DONE | 新增 FastAPI 受理/读取与 Review/Approval operator 控制面、显式合成身份边界和公开响应投影；JWT/JWKS Bearer 与 CaseGrant 入口已接入，真实 IdP 演练仍待完成 |
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
-| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和合成 Aftercare CLI 已新增；长运行基础已移入 A2-02，仍缺远端 CI 和完整启动验收 |
+| A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和合成 Aftercare CLI 已新增；长运行基础已移入 A2-02。远端 CI 经核查在 `main` 上连续失败（可见记录 run #37–#43 全为 `failure`，失败步骤为 `uv python install 3.13.15`：uv 0.9.26 内置索引止于 3.13.11），已改为用 `UV_PYTHON_DOWNLOADS_JSON_URL` 指向固定提交的下载元数据；尚未推送、尚无绿色 run，Linux 完整启动验收仍待完成 |
 | A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 已有有界持久回放，live tail/工作台待补 |
 | A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
@@ -58,6 +58,8 @@
 | A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页和有界 PostgreSQL polling tail；高吞吐 live broker tail、React 工作台和生产认证仍待实现 |
+| A3-03-a | DONE | 新增操作员工单发现：可访问工单列表（活动 CaseGrant 收紧、`case_ids` 仅收窄、keyset 游标）、工单详情（Run 投影不含 tenant/lease/fence）、工单下 Review/Approval 列表，以及 `web/` 最小 React+TS+Vite 工作台（列表、详情、决定、事件时间线）；真实 PostgreSQL 全量 `362 passed`（含新增 11 项），前端 `tsc --noEmit` 与 `vite build` 通过，合成身份端到端冒烟通过；live broker tail、真实认证与生产压测仍待实现 |
+| A3-03-b | DONE | 工作台接入 SSE 实时订阅：`follow=true&limit=200&wait_seconds=60`，按 `case_seq` 游标续订串接有界读，`fetch`+`ReadableStream` 增量解析（不使用无法带 Header 的 `EventSource`），按 `case_seq` 去重并封顶 500 条，指数退避重连、`401/403` 终止不重试，界面显示 连接中/实时/重连中/已暂停 并可暂停改一次性回放；`web/src/sse.test.ts` 13 项、`tsc --noEmit`、`vite build` 通过，真实后端 `follow` 参数返回 `200 text/event-stream`、非法 `limit` 返回 `400`；订阅级授权、真实 IdP 与高吞吐 broker tail 仍未实现 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
 | D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口与 `015_case_grants.sql`/`CaseGrantRepository`：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销/introspection、真实 IdP 和生产演练仍待实现 |
 | D-01-03 | DONE | PostgreSQL CaseGrant 按 `(tenant_id,subject_id,case_id)` 持久化 scope/revision/有效期/撤销审计；AuthContext 非 synthetic 未绑定时 fail-closed，API 在业务短事务锁定 grant；创建者授权与受理原子提交，撤销/过期/跨主体及 token 收窄回归通过；真实 IdP、introspection、RLS 和管理面仍待完成 |
@@ -75,6 +77,12 @@ EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-
 
 ## 6. 验证台账
 
+
+- 2026-09-14 / 远端 CI 修复：核查 GitHub Actions 发现 `main` 上自 run #37 起连续失败（可见 7 次记录全为 `failure`，21–35 秒内结束）；用 GitHub API 定位到失败步骤是 `Set up Python`（命令 `uv python install 3.13.15`），其后的静态检查与测试步骤全部 `skipped`。根因：uv 0.9.26 内置 Python 下载索引最高只到 3.13.11（`uv python list --all-versions` 实测），而项目固定 3.13.15（2026-08-05 发布的 3.13 维护版），裸装必然找不到该补丁；本地此前是靠 `--python-downloads-json-url` 绕过，CI 没有这个参数。修复：在 `.github/workflows/ci.yml` 的 job 级 `env` 增加 `UV_PYTHON_DOWNLOADS_JSON_URL`，指向固定提交 `dbda4fbf…`（2026-09-09，含 3.13.15）的下载元数据，使 `uv python install` 与 `uv sync --locked` 都能解析该补丁。已排除的方案：在仓库根新增 `uv.toml`——uv 实测警告它会忽略 `pyproject.toml` 的 `[tool.uv]` 字段（含 `required-version`），会静默破坏构建约束。验证：默认索引下 3.13 最高 3.13.11、固定元数据下出现 `cpython-3.13.15-…`；YAML 经 PyYAML 解析确认 `env` 位于 job 级并同时覆盖 `Set up Python` 与 `Install locked dependencies`。本地等价检查（Ruff/format/严格 mypy 含 `evals`/真实 PostgreSQL 全量 `362 passed`）此前已通过，说明失败与业务代码无关。**未验证**：推送后的绿色 run（本轮未推送、未提交），因此 A1-04 仍不能标 DONE；本机访问 `raw.githubusercontent.com` 存在抖动（实测一次 `connection reset`、一次超时、重试后成功），CI 侧未复现。
+
+- 2026-09-13 / A3-03-b 工作台实时订阅：工作台新增 SSE 实时订阅（`web/src/sse.ts`：`SseDecoder` 增量帧解析、`parseCaseEvent`、`appendEvent` 去重封顶、`nextBackoffMs` 退避、`subscribeCaseEvents` 游标续订），请求参数与 `PostgresEventTail.validate` 上限一致（`limit=200`、`wait_seconds=60`），流正常结束后立即按最后 `case_seq` 续订，`401/403` 终止不重试；因 `EventSource` 无法附加自定义 Header，改用 `fetch` + `ReadableStream`，不把合成身份降级为 URL 凭据。新增 `web/src/sse.test.ts` 13 项（跨 chunk 分帧、CRLF、注释行、无 id 消息、非法游标/JSON 拒绝、乱序插入、去重与 500 上限、退避封顶）通过；`tsc --noEmit` 与 `vite build` 通过（产物 234 KB JS + 6.2 KB CSS）。对运行中的真实后端验证 `follow=true&limit=200&wait_seconds=60` 返回 `200 text/event-stream`，`limit=900` 返回 `400`。未验证：真实 OIDC 下的订阅授权、浏览器端交互回归、高吞吐 broker tail。
+
+- 2026-09-13 / A3-03-a 工单发现与工作台：新增 `CaseRepository.get_case`/`list_accessible`/`list_for_tenant`、`RunRepository.list_for_case`、`ReviewRepository.list_for_case`、`ApprovalRepository.list_for_case`，以及四个发现端点（`GET /v1/cases`、`GET /v1/cases/{case_id}`、`.../reviews`、`.../approvals`）；Run 投影剔除 tenant/lease/fence，工单不存在或跨租户统一 `403`。新增 `tests/persistence/test_case_queue.py`（6 项：授权收紧与撤销隐藏、过期隐藏、token `case_ids` 收窄、keyset 翻页覆盖、跨租户隔离、非法分页参数）与 `tests/test_operator_workqueue_integration.py`（5 项：列表/详情/子资源、内含字段不泄露、跨租户 `403`、禁用合成身份 `401`）。临时 PostgreSQL 17 全量回归 `362 passed`；Ruff、format、严格 mypy（94 文件）通过。前端 `web/`（React 19.3 + Vite 8 + TypeScript 7）`tsc --noEmit` 与 `vite build` 通过，产物 `dist/index.html` + 226 KB JS + 5.6 KB CSS；合成身份端到端冒烟走 Vite 代理返回 `200`，工单 Run 属性集合不含 `tenant_id`/`lease_owner`/`fencing_token`。未验证：真实 OIDC、live broker tail、生产压测；`web/` 未做浏览器交互与可访问性验收。
 
 - 2026-09-12 / A2-03 durable scheduler：新增 008 Run 状态同步触发器和队列回填；`run_next(tenant_id=None)` 使用持久 tenant cursor 轮转，跳过租户准入已满的队列，并按 Run 过期 lease 回收 IN_FLIGHT。临时 PostgreSQL 17 全量回归 `285 passed`；新增跨租户轮转、租户限额跳过和失联回收测试；Ruff、格式、严格 mypy、wheel 构建和 `git diff --check` 通过。测试容器已移除，未连接生产数据库。
 
@@ -252,6 +260,12 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 关键风险：本轮包依赖升级尚未重跑 EGM PostgreSQL 全量验收，A1 必须补足；新旧路线图的阶段名称必须一致；不能把 fencing 延后为性能优化；A 阶段通知不得真实外发；同进程不等于同事务；未提交图稿和其他仓库改动不属于本任务。
 
 ## 8. 最近交接记录
+
+- 2026-09-14 / 远端 CI 修复：定位到 `main` 上连续失败的根因是 `uv python install 3.13.15` 在 uv 0.9.26 内置索引（止于 3.13.11）中找不到该补丁，改为 CI job 级 `UV_PYTHON_DOWNLOADS_JSON_URL` 指向固定提交元数据，并同步 `docs/development.md`。本轮未提交、未推送，**没有绿色 run 证据**，远端 CI 仍不能视为已修复完成。下一步：提交并推送后在 GitHub 确认转绿，之后才考虑加 CI 徽章；LICENSE/SECURITY.md/Issue 模板等开源前置项仍未处理。
+
+- 2026-09-13 / A3-03-b 完成：工作台接入 SSE 实时订阅（游标续订、去重封顶、指数退避、`401/403` 终止），新增 13 项前端单测；`pnpm test`/`tsc --noEmit`/`vite build` 通过，真实后端 `follow` 参数验收通过。本轮未提交、未推送、未部署。前端新增开发依赖 `vitest@5`（仅测试，不进生产包）。下一项候选：D-01 真实 IdP/撤销演练、A3-04 完整业务评测、B-02-03 供应商回执核对、C-01 真实沙箱后端。
+
+- 2026-09-13 / A3-03-a 完成：补齐操作员工单发现 API（可访问工单列表、工单详情、Review/Approval 列表）与 `web/` 最小 React 工作台。临时 PostgreSQL 17 全量 `362 passed`、无数据库离线 `279 passed, 83 skipped`，Ruff/format/严格 mypy 与前端 `tsc --noEmit`/`vite build` 通过，合成身份经 Vite 代理端到端冒烟成功。本轮未提交、未推送、未部署、未连接生产数据库。会话内仍保留临时 PostgreSQL 容器 `aftercare-queue-pg`（宿主机 55440）、本地 API（127.0.0.1:8000）与 Vite 开发服务器（127.0.0.1:5173）用于预览，接手前需核验或清理。下一项候选：A3-03 高吞吐 live tail、D-01 真实 IdP/撤销演练、B-02-03 供应商回执核对、C-01 真实沙箱后端。
 
 - 2026-09-07 / 本地交付提交：用户明确授权固化 DOC-001/A0-01/A0-02；提交前 206 项回归、类型/格式与范围复核通过，34 个项目文件随本页一起保存。实际提交编号和工作区状态以 Git 日志核验；不推送，不包含 EGM 未提交材料，下一项仍为 A0-03。
 

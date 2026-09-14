@@ -128,4 +128,20 @@ buffer，返回 `buffer_gap`，不能在这里确认消息已被业务应用。�
 60 秒以内。该实现是 broker-neutral 的小规模参考，仍应先回放游标，再由 Kafka/NATS/
 Redis 等适配器接管高吞吐 live tail；它不是数据库 LISTEN/NOTIFY 或生产消息总线的替代品。
 当前 API 支持显式合成身份（仅开发测试）或配置静态 JWKS 的 Bearer 验证；CaseGrant
-资源授权已按短事务接入，订阅级授权、真实 IdP 演练和 React 工作台尚未实现。
+资源授权已按短事务接入。订阅级授权（按 topic 或消费者再授权）、真实 IdP 演练和高吞吐
+broker tail 仍未实现。
+
+### 工作台实时订阅（A3-03-b）
+
+`web/` 的 React 工作台按同一 `case_seq` 游标消费该端点，而不是自己发明进度：
+
+- 请求 `follow=true&limit=200&wait_seconds=60`，与 `PostgresEventTail.validate` 的上限一致；
+  后端按 60 秒有界返回，客户端在流正常结束后立刻用最后看到的 `case_seq` 作为 `after`
+  续订。因此"常驻"是若干次有界读的串联，不是一个永不关闭的连接。
+- 浏览器不能给 `EventSource` 附加自定义 Header，所以工作台用 `fetch` + `ReadableStream`
+  读取响应体并增量解析 SSE 帧（`SseDecoder`）。合成身份不会退化成 URL 查询参数里的凭据。
+- 时间线按 `case_seq` 去重并封顶 500 条：重连重放不会重复渲染，长会话不会无限增长内存。
+- 断线重连使用有上限的指数退避；`401`/`403` 视为终止错误，不做无意义重试。
+- 界面显示 连接中/实时/重连中/已暂停，并可暂停实时改为一次性回放。
+
+游标续传、去重和退避是纯函数，由 `web/src/sse.test.ts` 覆盖（13 项，`pnpm test`）。

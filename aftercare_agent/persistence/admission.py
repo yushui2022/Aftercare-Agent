@@ -60,6 +60,37 @@ class RetryReservation:
     replayed: bool = False
 
 
+# One page of operator work-queue reads.  Kept deliberately small so a
+# browsing operator cannot scan an unbounded tenant.
+MAX_PAGE_SIZE = 200
+
+
+@dataclass(frozen=True)
+class CaseListEntry:
+    """One Case as seen by a discovery query; never a write authority.
+
+    ``permissions`` is populated only for a grant-scoped read (the operator's
+    active CaseGrant).  A tenant-wide read leaves it ``None`` because a single
+    tenant-level identity has no per-Case permission set.
+    """
+
+    case_id: str
+    order_id: str
+    status: str
+    version: int
+    created_at: datetime
+    permissions: frozenset[str] | None = None
+
+
+def _page(limit: int, after_created_at: datetime | None, after_case_id: str | None) -> None:
+    if type(limit) is not int or not 1 <= limit <= MAX_PAGE_SIZE:
+        raise ContractViolation(
+            ErrorCode.INVALID_INPUT, f"limit must be an integer in [1, {MAX_PAGE_SIZE}]"
+        )
+    if (after_created_at is None) != (after_case_id is None):
+        raise ContractViolation(ErrorCode.INVALID_INPUT, "cursor requires both fields")
+
+
 class AdmissionRepository:
     """Create a case, session and run under one caller-owned transaction."""
 
@@ -426,3 +457,140 @@ class CaseRepository:
         if row is None:
             raise ContractViolation(ErrorCode.CONFLICT, "case version changed or case missing")
         return int(row[0])
+
+    @staticmethod
+    def _cursor_clause(
+        after_created_at: datetime | None, after_case_id: str | None, params: list[Any]
+    ) -> str:
+        """Keyset cursor for a DESC (created_at, case_id) ordering."""
+        if after_created_at is None:
+            return ""
+        params.extend([after_created_at, after_case_id])
+        return " AND (c.created_at, c.case_id) < (%s, %s)"
+
+    @staticmethod
+    def _status_clause(status: str | None, params: list[Any]) -> str:
+        if status is None:
+            return ""
+        if status not in ("OPEN", "IN_REVIEW", "CLOSED"):
+            raise ContractViolation(ErrorCode.INVALID_INPUT, "invalid case status")
+        params.append(status)
+        return " AND c.status = %s"
+
+    def get_case(
+        self, connection: psycopg.Connection[Any], tenant_id: str, case_id: str
+    ) -> CaseListEntry | None:
+        """Read one Case row for the operator projection; grants are separate."""
+        row = connection.execute(
+            "SELECT c.case_id,c.order_id,c.status,c.version,c.created_at "
+            "FROM aftercare_cases c WHERE c.tenant_id=%s AND c.case_id=%s",
+            (tenant_id, case_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return CaseListEntry(
+            case_id=str(row[0]),
+            order_id=str(row[1]),
+            status=str(row[2]),
+            version=int(row[3]),
+            created_at=cast(datetime, row[4]),
+        )
+
+    def list_accessible(
+        self,
+        connection: psycopg.Connection[Any],
+        *,
+        tenant_id: str,
+        subject_id: str,
+        case_ids: frozenset[str] | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        after_created_at: datetime | None = None,
+        after_case_id: str | None = None,
+    ) -> list[CaseListEntry]:
+        """List Cases the subject holds an active CaseGrant for.
+
+        The database grant is the authority: a revoked or expired row hides the
+        Case even though the token may still name its ``case_ids``.  ``case_ids``
+        is only an upper bound copied from the token, so this read can never
+        widen access beyond the database.
+        """
+        _page(limit, after_created_at, after_case_id)
+        params: list[Any] = [tenant_id, subject_id]
+        clauses = [
+            "g.tenant_id=%s",
+            "g.subject_id=%s",
+            "g.revoked_at IS NULL",
+            "(g.expires_at IS NULL OR g.expires_at > clock_timestamp())",
+        ]
+        if case_ids is not None:
+            if not case_ids:
+                return []
+            clauses.append("c.case_id = ANY(%s)")
+            params.append(sorted(case_ids))
+        status_clause = self._status_clause(status, params)
+        cursor_clause = self._cursor_clause(after_created_at, after_case_id, params)
+        params.append(limit)
+        rows = connection.execute(
+            "SELECT c.case_id,c.order_id,c.status,c.version,c.created_at,g.permissions "
+            "FROM aftercare_cases c JOIN aftercare_case_grants g "
+            "ON g.tenant_id=c.tenant_id AND g.case_id=c.case_id WHERE "
+            + " AND ".join(clauses)
+            + status_clause
+            + cursor_clause
+            + " ORDER BY c.created_at DESC, c.case_id DESC LIMIT %s",
+            tuple(params),
+        ).fetchall()
+        return [
+            CaseListEntry(
+                case_id=str(row[0]),
+                order_id=str(row[1]),
+                status=str(row[2]),
+                version=int(row[3]),
+                created_at=cast(datetime, row[4]),
+                permissions=frozenset(cast(list[str], row[5])),
+            )
+            for row in rows
+        ]
+
+    def list_for_tenant(
+        self,
+        connection: psycopg.Connection[Any],
+        *,
+        tenant_id: str,
+        status: str | None = None,
+        limit: int = 50,
+        after_created_at: datetime | None = None,
+        after_case_id: str | None = None,
+    ) -> list[CaseListEntry]:
+        """List every Case in one tenant.
+
+        Reserved for the explicitly-enabled synthetic/local principal.  A real
+        operator must use :meth:`list_accessible`, so a Case the subject was
+        never granted can never appear in their queue.
+        """
+        _page(limit, after_created_at, after_case_id)
+        params: list[Any] = [tenant_id]
+        clauses = ["c.tenant_id=%s"]
+        status_clause = self._status_clause(status, params)
+        cursor_clause = self._cursor_clause(after_created_at, after_case_id, params)
+        params.append(limit)
+        rows = connection.execute(
+            "SELECT c.case_id,c.order_id,c.status,c.version,c.created_at "
+            "FROM aftercare_cases c WHERE "
+            + " AND ".join(clauses)
+            + status_clause
+            + cursor_clause
+            + " ORDER BY c.created_at DESC, c.case_id DESC LIMIT %s",
+            tuple(params),
+        ).fetchall()
+        return [
+            CaseListEntry(
+                case_id=str(row[0]),
+                order_id=str(row[1]),
+                status=str(row[2]),
+                version=int(row[3]),
+                created_at=cast(datetime, row[4]),
+            )
+            for row in rows
+        ]

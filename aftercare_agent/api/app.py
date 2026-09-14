@@ -4,11 +4,11 @@ import json
 import os
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 import psycopg
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
@@ -24,9 +24,12 @@ from aftercare_agent.domain.runtime import (
     SessionRecord,
 )
 from aftercare_agent.persistence import (
+    MAX_PAGE_SIZE,
     AdmissionRepository,
     ApprovalRepository,
     CaseGrantRepository,
+    CaseListEntry,
+    CaseRepository,
     Database,
     EventRepository,
     ReviewRepository,
@@ -98,6 +101,82 @@ class ApprovalOperatorResponse(BaseModel):
     updated_at: datetime
 
 
+class CaseSummaryResponse(BaseModel):
+    """One discoverable Case; ``permissions`` is the effective operator scope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str
+    order_id: str
+    status: Literal["OPEN", "IN_REVIEW", "CLOSED"]
+    version: int
+    created_at: datetime
+    permissions: list[str]
+
+
+class RunSummaryResponse(BaseModel):
+    """Run progress for the operator; lease owner/fence stay internal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    state: Literal[
+        "READY",
+        "RUNNING",
+        "WAITING_INPUT",
+        "WAITING_APPROVAL",
+        "RETRY_AT",
+        "REVIEW",
+        "COMPLETED",
+        "CANCELLED",
+    ]
+    input_version: int
+    wait_id: str | None
+    wait_generation: int | None
+    available_at: datetime | None
+    lease_until: datetime | None
+
+
+class CaseListResponse(BaseModel):
+    """One page of the operator work queue, newest Case first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cases: list[CaseSummaryResponse]
+    next_created_at: datetime | None = None
+    next_case_id: str | None = None
+
+
+class CaseDetailResponse(BaseModel):
+    """Case header plus its Runs; still no evidence or authorization internals."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str
+    order_id: str
+    status: Literal["OPEN", "IN_REVIEW", "CLOSED"]
+    version: int
+    created_at: datetime
+    permissions: list[str]
+    runs: list[RunSummaryResponse]
+
+
+class ReviewListResponse(BaseModel):
+    """Case-scoped Review list for the operator work queue."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reviews: list[ReviewOperatorResponse]
+
+
+class ApprovalListResponse(BaseModel):
+    """Case-scoped Approval list for the operator work queue."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approvals: list[ApprovalOperatorResponse]
+
+
 def _identifier(value: str, field: str) -> str:
     try:
         return TypeAdapter(Identifier).validate_python(value)
@@ -142,6 +221,44 @@ def _approval_projection(record: ApprovalRecord) -> ApprovalOperatorResponse:
     )
 
 
+def _effective_case_permissions(entry: CaseListEntry, identity: AuthContext) -> frozenset[str]:
+    """Effective permissions for one Case, never wider than the identity holds.
+
+    A grant-scoped row is intersected with the token scopes, matching
+    ``AuthContext.bind_case_grant``.  A tenant-wide (synthetic/local) read has
+    no per-Case grant, so only the identity's own scopes are reported.
+    """
+    if entry.permissions is None:
+        return identity.permissions
+    return entry.permissions.intersection(identity.permissions)
+
+
+def _case_summary(entry: CaseListEntry, identity: AuthContext) -> CaseSummaryResponse:
+    return CaseSummaryResponse(
+        case_id=entry.case_id,
+        order_id=entry.order_id,
+        # The column is CHECK-constrained to these literals; the cast records
+        # that database guarantee at the response boundary.
+        status=cast(Literal["OPEN", "IN_REVIEW", "CLOSED"], entry.status),
+        version=entry.version,
+        created_at=entry.created_at,
+        permissions=sorted(_effective_case_permissions(entry, identity)),
+    )
+
+
+def _run_summary(run: RunRecord) -> RunSummaryResponse:
+    """Project a Run without leaking owner, fence or tenant internals."""
+    return RunSummaryResponse(
+        run_id=run.run_id,
+        state=run.state,
+        input_version=run.input_version,
+        wait_id=run.wait_id,
+        wait_generation=run.wait_generation,
+        available_at=run.available_at,
+        lease_until=run.lease_until,
+    )
+
+
 def _authorized_case(
     connection: psycopg.Connection[Any],
     identity: AuthContext,
@@ -169,6 +286,26 @@ def _authorized_case(
     scoped_identity = identity.bind_case_grant(grant)
     scoped_identity.require_case(scoped_case_id, permission)
     return scoped_case_id, scoped_identity
+
+
+def _authorized_case_row(
+    connection: psycopg.Connection[Any],
+    identity: AuthContext,
+    case_id: str,
+    permission: str,
+) -> tuple[CaseListEntry, AuthContext]:
+    """Authorize a Case and confirm it exists inside the caller's tenant.
+
+    A synthetic principal has no grant row to miss, so without this existence
+    check an unknown or other-tenant Case would look like an empty collection
+    instead of an access decision.  Real identities already fail closed inside
+    ``_authorized_case``; this keeps both paths indistinguishable.
+    """
+    scoped_case_id, scoped_identity = _authorized_case(connection, identity, case_id, permission)
+    entry = CaseRepository().get_case(connection, identity.tenant_id, scoped_case_id)
+    if entry is None:
+        raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
+    return entry, scoped_identity
 
 
 def _error(exc: ContractViolation) -> HTTPException:
@@ -322,6 +459,121 @@ def create_app(
                 if run is None or run.case_id != scoped_case_id:
                     raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
             return run
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get("/v1/cases", response_model=CaseListResponse)
+    def list_cases(
+        identity: Auth,
+        status_filter: Annotated[
+            Literal["OPEN", "IN_REVIEW", "CLOSED"] | None, Query(alias="status")
+        ] = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+        after_created_at: datetime | None = None,
+        after_case_id: str | None = None,
+    ) -> CaseListResponse:
+        """List the Cases this operator may actually open, newest first.
+
+        Discovery is the missing half of the control plane: without it an
+        operator must already know a Case id.  For a real identity the page is
+        always narrowed by an active database CaseGrant; the explicitly-enabled
+        synthetic local principal may browse its own tenant only.
+        """
+        try:
+            identity.require("case:read")
+            with database.transaction() as connection:
+                repository = CaseRepository()
+                if identity.synthetic:
+                    entries = repository.list_for_tenant(
+                        connection,
+                        tenant_id=identity.tenant_id,
+                        status=status_filter,
+                        limit=limit,
+                        after_created_at=after_created_at,
+                        after_case_id=after_case_id,
+                    )
+                else:
+                    entries = repository.list_accessible(
+                        connection,
+                        tenant_id=identity.tenant_id,
+                        subject_id=identity.subject_id,
+                        case_ids=identity.case_ids,
+                        status=status_filter,
+                        limit=limit,
+                        after_created_at=after_created_at,
+                        after_case_id=after_case_id,
+                    )
+            # A full page may have more rows behind it; expose the keyset cursor
+            # of the last row so the caller can page without offsets.
+            last = entries[-1] if len(entries) == limit and entries else None
+            return CaseListResponse(
+                cases=[_case_summary(entry, identity) for entry in entries],
+                next_created_at=None if last is None else last.created_at,
+                next_case_id=None if last is None else last.case_id,
+            )
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get("/v1/cases/{case_id}", response_model=CaseDetailResponse)
+    def get_case(case_id: str, identity: Auth) -> CaseDetailResponse:
+        """Read one Case header and its Runs inside the caller's Case scope."""
+        try:
+            with database.transaction() as connection:
+                entry, scoped_identity = _authorized_case_row(
+                    connection, identity, case_id, "case:read"
+                )
+                runs = RunRepository().list_for_case(connection, identity.tenant_id, entry.case_id)
+            return CaseDetailResponse(
+                case_id=entry.case_id,
+                order_id=entry.order_id,
+                status=cast(Literal["OPEN", "IN_REVIEW", "CLOSED"], entry.status),
+                version=entry.version,
+                created_at=entry.created_at,
+                permissions=sorted(scoped_identity.permissions),
+                runs=[_run_summary(run) for run in runs],
+            )
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get(
+        "/v1/cases/{case_id}/reviews",
+        response_model=ReviewListResponse,
+    )
+    def list_reviews(
+        case_id: str,
+        identity: Auth,
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+    ) -> ReviewListResponse:
+        """List a Case's Reviews so an operator can find pending decisions."""
+        try:
+            with database.transaction() as connection:
+                entry, _ = _authorized_case_row(connection, identity, case_id, "review:read")
+                records = ReviewRepository().list_for_case(
+                    connection, identity.tenant_id, entry.case_id, limit=limit
+                )
+            return ReviewListResponse(reviews=[_review_projection(record) for record in records])
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get(
+        "/v1/cases/{case_id}/approvals",
+        response_model=ApprovalListResponse,
+    )
+    def list_approvals(
+        case_id: str,
+        identity: Auth,
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+    ) -> ApprovalListResponse:
+        """List a Case's Approvals so an operator can find pending decisions."""
+        try:
+            with database.transaction() as connection:
+                entry, _ = _authorized_case_row(connection, identity, case_id, "approval:read")
+                records = ApprovalRepository().list_for_case(
+                    connection, identity.tenant_id, entry.case_id, limit=limit
+                )
+            return ApprovalListResponse(
+                approvals=[_approval_projection(record) for record in records]
+            )
         except ContractViolation as exc:
             raise _error(exc) from exc
 

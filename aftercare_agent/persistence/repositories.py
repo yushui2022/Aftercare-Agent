@@ -78,6 +78,17 @@ class RunRepository:
         ).fetchone()
         return None if row is None else _run(row)
 
+    def list_for_case(
+        self, connection: psycopg.Connection[Any], tenant: str, case_id: str
+    ) -> list[RunRecord]:
+        """List every Run of one Case for the operator projection."""
+        rows = connection.execute(
+            "SELECT " + ",".join(_RUN_FIELDS) + " FROM aftercare_runs "
+            "WHERE tenant_id=%s AND case_id=%s ORDER BY run_id",
+            (tenant, case_id),
+        ).fetchall()
+        return [_run(row) for row in rows]
+
     def claim(
         self,
         connection: psycopg.Connection[Any],

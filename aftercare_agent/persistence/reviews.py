@@ -70,6 +70,23 @@ class ReviewRepository:
         ).fetchone()
         return None if row is None else _record(row)
 
+    def list_for_case(
+        self,
+        conn: psycopg.Connection[Any],
+        tenant_id: str,
+        case_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[ReviewRecord]:
+        """List one Case's reviews, newest first, without granting authority."""
+        rows = conn.execute(
+            "SELECT " + ",".join(_FIELDS) + " FROM aftercare_reviews "
+            "WHERE tenant_id=%s AND case_id=%s "
+            "ORDER BY created_at DESC, review_id DESC LIMIT %s",
+            (tenant_id, case_id, limit),
+        ).fetchall()
+        return [_record(row) for row in rows]
+
     def request(
         self, conn: psycopg.Connection[Any], request: ReviewRequest
     ) -> tuple[ReviewRecord, bool]:

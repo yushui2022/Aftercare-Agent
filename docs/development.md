@@ -28,11 +28,19 @@ uv python install 3.13.15 --no-bin --no-registry
 uv sync --locked
 ```
 
-旧版 uv 可能尚不知道较新的 Python 补丁。本次 0.9.26 的内置目录无法找到 3.13.15，使用其官方元数据入口成功安装；若遇到相同错误，可将上面的解释器安装命令替换为：
+uv 打包的 Python 下载索引滞后于 CPython 发布节奏：0.9.26 的内置索引最高只到 3.13.11，
+而本项目固定 3.13.15，因此裸 `uv python install 3.13.15` 会报找不到该补丁版本。把解释器
+安装命令替换为显式元数据源即可：
 
 ```powershell
-uv python install 3.13.15 --no-bin --no-registry --python-downloads-json-url https://raw.githubusercontent.com/astral-sh/uv/main/crates/uv-python/download-metadata.json
+uv python install 3.13.15 --no-bin --no-registry --python-downloads-json-url https://raw.githubusercontent.com/astral-sh/uv/dbda4fbf33602f64b32a5b6873d730c5afb838fa/crates/uv-python/download-metadata.json
 ```
+
+该 URL 固定到具体提交而不是 `main`：元数据文件本身决定下载地址，不应随时间漂移。CI 用
+环境变量形式 `UV_PYTHON_DOWNLOADS_JSON_URL` 指向同一份固定元数据（见
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)），因此 CI 与本地解析到的是同一
+解释器版本；改这里时两处要一起改。该文件由上游约每周同步一次，本项目固定补丁版本，
+不需要跟随更新。
 
 不要因此降级到电脑上任意一个 Python，也不要向其他软件的系统环境安装项目依赖。上述命令不向 Windows 注册解释器或创建公共 Python 命令；项目 .venv 位于本仓库。首次下载需要网络，安装后回归本身不访问模型或业务网络。
 

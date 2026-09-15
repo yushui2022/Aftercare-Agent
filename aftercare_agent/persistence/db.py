@@ -21,7 +21,7 @@ class Database:
 
     @contextmanager
     def connection(self) -> Iterator[psycopg.Connection[Any]]:
-        with psycopg.connect(self.dsn) as connection:
+        with self.open() as connection:
             yield connection
 
     @contextmanager
@@ -29,6 +29,17 @@ class Database:
         with self.connection() as connection:
             with connection.transaction():
                 yield connection
+
+    def open(self) -> psycopg.Connection[Any]:
+        """Open a connection the caller owns and closes.
+
+        ``connection()`` borrows one connection per unit of work and gives it
+        back.  A holder that has to outlive many short transactions -- the
+        Worker lease heartbeat is the only one today -- instead takes
+        ownership here and is responsible for closing it.  Both paths go
+        through this method so a future pool has a single seam to change.
+        """
+        return psycopg.connect(self.dsn)
 
 
 def migrate(connection: psycopg.Connection[Any]) -> None:

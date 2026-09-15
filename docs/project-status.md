@@ -8,18 +8,18 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户设定目标：按路线图持续把项目推向企业级，并在本轮明确授权提交/推送到 GitHub。本轮领取 D-01 的工单访问管理工作台（把上一轮刚开放的授权管理面接进 web/ 并在真实浏览器验证）；不调用真实 IdP、不连接生产数据库、不做外部业务动作 |
-| 当前任务 | D-01-06（web/ 单工单访问管理工作台：授予/替换/撤销 + 审计事件回显） |
-| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成；D-01-04 撤销判定与 D-01-05 授权管理面已落地 |；D-01-06 工作台访问管理已落地
-| 下一项代码候选 | D-01：面向 grant:read 的跨工单发现与租户级授权总览、真实 IdP 演练与权限映射、RLS；A3-04：Harness 等待与审批分支纳入评测；B-02-03：供应商回执核对；C-02：真实沙箱后端 |
-| 活跃实现任务 | 本轮新增 `web/src/grants.ts`（服务端可授予闭集的镜像、委派上限、有效期与 revision 校验）与 `web/src/components/GrantPanel.tsx`（列出/授予/替换/撤销），`App.tsx` 接线并在服务端拒绝时隐藏面板；顺带修掉工作台实时时间线的既有缺陷：`incoming.reduce(appendEvent, current)` 会把数组下标当成 `appendEvent` 的 `cap` 参数，新事件到达时时间线被静默清空，现改为 `appendEvents()` 折叠并加回归测试；跨工单发现、RLS 与真实 IdP 演练仍未实现 |
-| 本轮外部行为 | 本轮只新增工作台访问管理面与其前端回归，另修复时间线折叠缺陷；不调用真实 IdP 或模型、不做真实业务动作或生产部署。真实浏览器（Playwright + Chromium）对真实 API 与真实 PostgreSQL 走完"授予→撤销→替换"全流程 8 项断言通过；远端 CI 只覆盖 Python 门禁，前端结论来自本机 |
+| 本轮请求范围 | 用户设定目标：按路线图持续把项目推向企业级，并在本轮明确授权提交/推送到 GitHub。本轮先处理上一轮推送后变红的 `main`：`tests/persistence/test_worker.py::test_worker_heartbeat_keeps_long_slice_lease_alive` 在 CI 上失败，本机复现为 20 次里失败 11 次；不调用真实 IdP、不连接生产数据库、不做外部业务动作 |
+| 当前任务 | A2-02 的心跳续期延迟预算（心跳线程独占一条连接、首个续期立即执行、按绝对截止时间排程），以及随之修正的测试预算与文档 |
+| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地并完成续期延迟预算修正；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成；D-01-04 撤销判定、D-01-05 授权管理面与 D-01-06 工作台访问管理已落地 |
+| 下一项代码候选 | D-04：按本轮的建连测量评估连接池（含 `PostgresEventTail` 每轮建连）；D-01：面向 grant:read 的跨工单发现与租户级授权总览、真实 IdP 演练与权限映射、RLS；A3-04：Harness 等待与审批分支纳入评测；B-02-03：供应商回执核对；C-02：真实沙箱后端 |
+| 活跃实现任务 | 本轮改 `aftercare_agent/runtime/worker.py`（`LeaseHeartbeat` 由心跳线程独占一条连接并跨 tick 复用、首个续期不再等待一个间隔、按绝对截止时间排程，异常仍 fail-closed）、`aftercare_agent/persistence/db.py`（新增 `Database.open()` 作为“调用方自己持有并关闭”的接缝，`connection()` 改走同一处）、`tests/test_worker_contract.py`（假 Database 只保留 `open()`，新增 2 项回归）与 `tests/persistence/test_worker.py`（把 200 ms 租约改为 1 s 并把理由写进用例 docstring）；无效连接不重连、`grant:read` 跨工单发现与连接池仍未实现 |
+| 本轮外部行为 | 本轮只改 Worker 心跳的续期延迟预算与其测试、文档；不调用真实 IdP 或模型、不做真实业务动作或生产部署。修复前该用例本机 20 次失败 11 次，修复后 20 次全部通过；真实 PostgreSQL 全量 504 项通过。连接池、Broker 与压测仍未做 |
 
 ## 2. 核验过的源码基线
 
 | 仓库 | 已核验源码 HEAD | 用途 |
 |---|---|---|
-| Aftercare-Agent | 36397a02650922308bab4bbbac1eb9ba1f652c34 | 本轮 D-01-06 工作台访问管理切片的提交前基线（`main`，D-01-05 已推送并通过 CI）；交付提交编号以 Git 日志为准 |
+| Aftercare-Agent | 01ed4f65ef26bb0a0cfaf0a13922c16defc03a68 | 本轮 A2-02 心跳续期延迟预算修正的提交前基线（`main`，D-01-06 已推送，但 CI run 34955596978 因心跳用例失败而变红）；交付提交编号以 Git 日志为准 |
 | Evidence-Gated-Memory | 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd | 源码 0.6.0、嵌入式应用层与 PostgreSQL；已固定在 Aftercare 依赖中 |
 
 这是本轮改动开始时核验的源码基线。历史验证条目保留原日期和当时边界；本轮交付后的 HEAD 和远端状态以 Git 日志为准。
@@ -51,7 +51,7 @@
 | A1-03 | DONE | 新增数据库无关 FakePlanner/Harness；固定只读工具链、预算消耗、检查点 JSON round-trip 与跨 scope 拒绝通过 |
 | A1-04 | IN PROGRESS | 最小 Worker/CLI、`SKIP LOCKED` READY Run 领取、`deploy/Dockerfile`、开发 Compose 和合成 Aftercare CLI 已新增；长运行基础已移入 A2-02。CI 解释器解析已修复，GitHub Actions run #44（提交 `b0ddffe`）已成功；Linux 完整启动、生产部署与重启矩阵仍待完成 |
 | A2-01 | IN PROGRESS | 新增 Outbox、Inbox、消费者应用记录、Wait/wakeup、gap buffer 与 `ProjectionRepository`；真实 PostgreSQL 下事件/投影相关测试通过；SSE 回放与有界 polling tail 已接入工作台，高吞吐 live broker 仍待补 |
-| A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；完整重启矩阵和远端 CI 仍待补齐 |
+| A2-02 | IN PROGRESS | `LeaseHeartbeat`、可停止 `run_daemon()`、Outbox publisher 租约/重试与故障注入已实现；锁超时、失联接管和旧 Worker fencing 已在真实 PostgreSQL 验证；心跳续期延迟预算已修正——心跳线程用新接缝 `Database.open()` 独占一条连接并跨 tick 复用、首个续期立即执行、按绝对截止时间排程，续期不再为每次 tick 付建连开销，异常仍 fail-closed；完整重启矩阵和远端 CI 仍待补齐 |
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；审批门禁已补入但支付聚合、额度预留和真实供应商对账仍待实现 |
 | B-02 | IN PROGRESS | B-02-01/02 已实现 `ApprovalRepository`、010/011 迁移、参数/策略/身份/有效期绑定、重复决定幂等、`RESERVED` 派发 fail-closed 和绑定 Wait 的 Inbox 原子唤醒；Review 013 已实现 `REVIEW→READY/CANCELLED` 决定边界；已补齐 `approval.*`/`review.*` Outbox 事件、Case 序号分配、不可变门控快照和显式 operator API；支付聚合和供应商回执核对仍待实现 |
@@ -73,15 +73,21 @@
 
 ## 5. 工作区与提交边界
 
-本轮提交范围为 D-01-06 工作台访问管理切片：`web/src/grants.ts`（新增，服务端闭集与委派上限的镜像、有效期/主体/revision 校验、授权状态派生、`datetime-local` 与 UTC 互转）、`web/src/components/GrantPanel.tsx`（新增，列出/授予/替换/撤销，含闭集复选框与"无法授出"提示）、`web/src/App.tsx`（接线并在服务端拒绝时静默隐藏面板）、`web/src/types.ts`（`CaseGrant`/`CaseGrantListResponse`）、`web/src/api.ts`（三个管理端点）、`web/src/styles.css`（授权面板样式）、`web/index.html` + `web/public/favicon.svg`（消除每次加载的 favicon 404），以及时间线折叠缺陷修复（`web/src/sse.ts` 新增 `appendEvents()`、`App.tsx` 改用它）；新增 `web/src/grants.test.ts` 并在 `api.test.ts`/`sse.test.ts` 补齐回归；文档同步 `web/README.md`、`docs/api-auth.md`、`docs/engineering-plan.md`。未包含 .venv、node_modules、dist、缓存、临时数据或 EGM 仓库改动。
+本轮提交范围为 A2-02 心跳续期延迟预算修正：`aftercare_agent/runtime/worker.py`（`LeaseHeartbeat` 由心跳线程独占一条连接并跨 tick 复用、首个续期不再等待一个间隔、按绝对截止时间排程、线程退出前关闭连接，异常路径仍 fail-closed 且不重连）、`aftercare_agent/persistence/db.py`（新增 `Database.open()`，`connection()` 与心跳共用同一处构造点，为 D-04 连接池留一个接缝）、`tests/test_worker_contract.py`（假 Database 只保留 `open()`，让“每 tick 借一条连接”的回归直接失败；新增 2 项回归：首个间隔未到就续期、多次续期复用同一条连接且退出时关闭）、`tests/persistence/test_worker.py`（长切片用例改为 1 s 租约 / 100 ms 间隔 / 1.5 s 切片，理由写进用例 docstring）；文档同步 `docs/harness.md`、`docs/tech-stack.md`、`docs/engineering-plan.md`。未包含 .venv、node_modules、dist、缓存、临时数据或 EGM 仓库改动。
 
 EGM 仓库仍有 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮沿用该授权推送 D-01-06。D-01-05 的 `f7818d5` 与台账 `36397a0` 已在 `origin/main`，CI run [34953807687](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34953807687)、[34953948583](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34953948583) 均为 `success`。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮沿用该授权推送 A2-02 修正。D-01-06 的交付提交 `01ed4f6` 已在 `origin/main`，但其 CI run [34955596978](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34955596978) 为 `failure`（`1 failed, 501 passed`），失败项是心跳用例，与该提交只改 web/docs 的范围无关；本轮先修心跳再推送，推送后的 run 编号与结果在下一轮补记。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
+
+- 2026-09-15 / A2-02 心跳续期延迟预算（根因测量）：起点是 CI run 34955596978 失败的心跳用例。本机在独立临时 PostgreSQL 16.13 上采样 25 次：`psycopg.connect` p50 **115.2 ms**（min 86.5 ms、max 215.3 ms），而同一次 tick 里真正的续期事务（`RunRepository.renew` 的 UPDATE + 提交）p50 **0.8 ms**（max 1.4 ms）。原实现每次 tick 都走 `Database.transaction()`，即每次续期都先付一次建连；在 200 ms 租约 + 30 ms 间隔下，单次 tick 只剩约 133 ms 预算，因此本机连续单跑 20 次失败 **11 次**、CI 上失败一次。结论：这不是负载抖动，而是把建连开销放进了租约的截止预算。
+
+- 2026-09-15 / A2-02 修复与回归：`LeaseHeartbeat` 改为心跳线程独占一条连接（由新接缝 `Database.open()` 创建、跨 tick 复用、在 `_run` 的 finally 里关闭，线程外不共享）、首个续期在进入循环时立即执行、按绝对截止时间（`monotonic` 累加间隔）排程而非“睡满间隔再计”，异常路径仍立即 stop 并 fail-closed（不做重连，连接断开与租约被抢占同样处理）。`tests/test_worker_contract.py` 的假 Database 只保留 `open()`，使“每 tick 借一条连接”的回归直接失败；新增 2 项回归（首个间隔未到就续期、多次续期只开一条连接且退出时关闭）。`tests/persistence/test_worker.py` 的长切片用例改为 1 s 租约 / 100 ms 间隔 / 1.5 s 切片，并把建连测量写进 docstring 说明为何不能更紧。本机验证：修复前该用例单跑 20 次失败 11 次，修复后同样 20 次 **0 失败**；离线全量新增 2 项后 `407 passed, 97 skipped`；重建后的干净临时 PostgreSQL 16.13 上全量 **`504 passed`（71.69 s）**；`ruff format --check .`（112 文件）、`ruff check .` 与严格 `mypy aftercare_agent tests evals`（112 文件）通过。未运行：远端 CI（推送后补记）、前端门禁（本轮未改 `web/`）。
+
+- 2026-09-15 / 同源但本轮未修的观察（SSE tail 建连预算）：全量真实 PostgreSQL 的一轮运行中出现过 1 次 `tests/test_sse_api.py::test_postgres_tail_observes_an_event_committed_after_it_starts` 失败（`assert [] == [2]`，当轮整套 99.74 s，明显受机器负载影响）。对照实验：stash 掉本轮改动后在干净基线连跑 8 次 8 过，恢复改动后再连跑 8 次同样 8 过，因此不是本轮回归。机制与心跳同源——`PostgresEventTail.stream()` 每轮轮询调用一次 `database.transaction()`，即每轮付一次建连（本机 p50 115 ms），用例的 300 ms 尾部窗口在慢建连主机上可能只来得及轮询一次。**本轮不改该用例也不改 tail 代码**：没有可稳定复现的失败，放宽阈值属于未经验证的改动；正确修法是 D-04 的连接池，已连同“本机全量 71.69 s / CI Linux 12.4 s”的差异写入计划 D-04 行。
 
 
 - 2026-09-15 / D-01-06 工作台访问管理（前端）：`pnpm test` 38 项通过（新增 `web/src/grants.test.ts`、`api.test.ts` 与 `sse.test.ts` 的对应回归）、`tsc --noEmit` 与 `vite build`（243 KB JS / 6.97 KB CSS）通过。真实浏览器端到端：Playwright + Chromium 驱动 Vite 开发服务器，对真实 FastAPI 与独立临时 PostgreSQL 16.13 完成 8 项断言——工单可发现、访问管理面板渲染、创建者授权显示为生效中、表单授予 `review:read`+`approval:read`、SSE 时间线收到 `operator-9:granted:1`、撤销后徽标变为已撤销、时间线收到 `operator-9:revoked:2`、"替换 / 重新授权"用预填 revision 把已撤销行恢复为生效中（截图 `G:\DevCache\Temp\aftercare-agent\grants-ui.png`，未提交）。
@@ -286,7 +292,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 D 生产准入：验签（D-01-01/02）、数据库 CaseGrant（D-01-03）、撤销判定（D-01-04）、授权管理面（D-01-05）与工作台单工单访问管理（D-01-06）已实现，D-01 剩下真实 IdP 演练与权限映射、RLS，以及面向 `grant:read` 的跨工单发现与租户级授权总览；同时把有界 SSE tail 纳入生产连接池/broker 评估、固定调查 EGM schema/真实模型接线并选择真实沙箱后端。完整业务 Harness 和生产连接器仍未实现。
+当前推进 D 生产准入，并按本轮测量把 D-04 连接池提到候选首位：验签（D-01-01/02）、数据库 CaseGrant（D-01-03）、撤销判定（D-01-04）、授权管理面（D-01-05）与工作台单工单访问管理（D-01-06）已实现，D-01 剩下真实 IdP 演练与权限映射、RLS，以及面向 `grant:read` 的跨工单发现与租户级授权总览；A2-02 的心跳续期延迟预算已修正。D-04 现在不再只是“按瓶颈评估”的占位：`Database.transaction()` 每个工作单元建一次连接（本机实测 p50 115 ms），同一套件在本机 71.69 s、在 CI Linux 12.4 s，`PostgresEventTail` 每轮轮询同样付一次建连，300 ms 尾部窗口在慢建连主机上会漏事件——这些都可复现。仍未实现：固定调查 EGM schema、真实模型接线、真实沙箱后端、完整业务 Harness 与生产连接器。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 
@@ -294,6 +300,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 8. 最近交接记录
 
+- 2026-09-15 / A2-02 心跳续期延迟预算修正（待推送）：`main` 在 `01ed4f6` 之后变红，失败项是 `test_worker_heartbeat_keeps_long_slice_lease_alive`，而该提交只改了 `web/` 与文档。本轮先量化再动手：`psycopg.connect` p50 115.2 ms / max 215.3 ms，而续期事务 p50 0.8 ms；200 ms 租约 + 30 ms 间隔下单 tick 只剩约 133 ms 预算，本机连续单跑 20 次失败 11 次——根因是把建连开销放进了租约的截止预算，不是负载抖动，也不是测试写法细节。修复：心跳线程独占一条连接（新接缝 `Database.open()`，跨 tick 复用、线程退出前关闭、线程外不共享）、首个续期立即执行、按绝对截止时间排程；异常仍立即 stop 并 fail-closed（不重连，连接断开与租约被抢占同样处理）。测试侧把假 Database 收紧为只认 `open()` 并新增 2 项回归，长切片用例改为 1 s 租约 / 100 ms 间隔 / 1.5 s 切片，理由写进 docstring。修复后该用例 20/20 通过，重建后的干净临时 PostgreSQL 全量 `504 passed`。**已知边界：`PostgresEventTail` 每轮轮询仍付一次建连，300 ms 尾部窗口在慢建连主机上会漏事件（本轮观察到 1 次、隔离对照两次各 8/8 通过，故不改），正确修法是 D-04 连接池，已写入计划 D-04 行。** 下一步：推送并核对 CI，然后按第 7 节推进（首选 D-04）。本轮未部署、未做真实业务动作。
 - 2026-09-15 / D-01-06 完成（待推送）：把上一轮的授权管理面接进 `web/` 工作台——新增 `web/src/grants.ts`（服务端可授予闭集的镜像、委派上限、有效期与 revision 校验）与 `GrantPanel.tsx`（列出/授予/替换/撤销，含"当前身份没有 X，无法授出"提示），`App.tsx` 在服务端拒绝时静默隐藏面板（真实身份的 Case 投影里永远不含 `grant:read`，不能用投影判断能否管理）；顺带修复工作台实时时间线被新事件清空的既有缺陷（`reduce` 把下标当 `cap`）。前端 38 项单测 + 构建通过，并用 Playwright 对真实 API + 真实 PostgreSQL 走完授予→撤销→替换全流程（8 项断言）。**已知边界：工单队列只列出已有授权的工单，真实访问管理员暂时只能移交自己参与处理的工单；跨工单发现需要服务端新入口，列为下一项候选。** 下一步：推送并核对 CI，然后按第 7 节推进。本轮未部署、未做真实业务动作。
 - 2026-09-15 / D-01-05 完成并推送：开放 Case 授权管理面（`POST /v1/cases/{case_id}/grants` 与 `.../grants/{subject_id}/revoke` 需租户级 `grant:admin`，`GET .../grants` 需 `grant:read`；可授予权限闭集排除 `case:create`/`grant:*`，不能授出自己没有的权限，替换/撤销需 `expected_revision`，每次变更同事务写 `case_grant.granted`/`case_grant.revoked` 与完整快照），新增 25 项离线回归与 10 项 PostgreSQL 回归；新增 [ADR-0004](decisions/0004-case-grant-administration.md) 显式替代 ADR-0003 中“本轮不开放管理 HTTP”那一句。本机首次用独立临时 PostgreSQL 16 集群（端口 55450，不碰既有 5432）跑通完整套件：`501 passed, 1 failed`，唯一失败是既有的心跳负载抖动，第 6 节给出干净基线复现证据；跑法已写入 `docs/development.md`。提交 `f7818d5` 已推送到 `origin/main`，CI run [34953807687](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34953807687) 为 `success`（`postgres:17` 上 `502 passed`）。下一步按第 7 节推进真实 IdP 演练/权限映射与 RLS。本轮未部署、未做真实业务动作。
 - 2026-09-15 / D-01-04 完成并推送：新增 RFC 7662 撤销判定（`auth/introspection.py`、`auth/guard.py`、`TokenVerifier` Protocol、`create_app`/`create_default_app` 接线与关机钩子）与 72 项离线回归；提交 `cd6ba9b`、`e3a7586` 已推送到 `origin/main`，CI run [34951354092](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34951354092) 为 `success`，真实 PostgreSQL 17 上 `467 passed, 52 warnings`。本轮未部署、未发布包、未连接生产数据库、未调用真实 IdP。**本机 Docker 守护进程仍未就绪，本轮本机没有执行过任何集成测试（87 项全部跳过）**，数据库侧结论完全来自 CI；下一位接手者若在本机改动认证/数据库边界，必须预期"本机全绿但 CI 可能失败"。下一项候选：D-01 真实 IdP 演练/RLS/权限管理面、A3-04 把 Harness 等待与审批分支纳入评测、B-02-03 供应商回执核对、C-02 真实沙箱后端。

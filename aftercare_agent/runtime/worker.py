@@ -10,7 +10,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock, Thread
-from typing import Literal
+from time import monotonic
+from typing import Any, Literal
+
+import psycopg
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.protocol import Checkpoint
@@ -62,13 +65,22 @@ class WorkerLoopResult:
 
 
 class LeaseHeartbeat:
-    """Renew one claim on a separate connection until the slice finishes.
+    """Renew one claim on the heartbeat's own connection until the slice ends.
 
     Heartbeats do not grant execution rights and do not hide a lost lease.  A
     database error or fencing rejection stops the heartbeat; the caller then
     refuses to save the slice and lets the normal fenced write report the
-    authoritative error.  A fresh connection per tick avoids sharing a
-    psycopg connection across threads.
+    authoritative error.
+
+    The renewing thread opens one connection for its whole life and closes it
+    before returning, so the connection is never shared across threads while
+    a renewal still costs one round trip instead of a fresh TCP and
+    authentication handshake.  That matters because the renewal has to land
+    inside a window derived from the lease: a handshake timed from the same
+    budget made short leases unrenewable on hosts where connecting is slow.
+    A connection that fails is not retried for the same reason a lost lease
+    is not: the slice must not keep going on a liveness signal nobody can
+    still prove.
     """
 
     def __init__(
@@ -97,6 +109,7 @@ class LeaseHeartbeat:
         self._lock = Lock()
         self._failure: Exception | None = None
         self._thread: Thread | None = None
+        self._connection: psycopg.Connection[Any] | None = None
 
     @property
     def failure(self) -> Exception | None:
@@ -119,18 +132,54 @@ class LeaseHeartbeat:
             thread.join()
 
     def _run(self) -> None:
+        try:
+            self._renew_until_stopped()
+        finally:
+            self._close()
+
+    def _renew_until_stopped(self) -> None:
         seconds = self._interval.total_seconds()
-        while not self._stop.wait(seconds):
+        # Renew once before the first wait.  The lease the claim already
+        # holds is the tightest window this thread ever has to hit, and it is
+        # the only one that has to absorb opening the connection; sleeping
+        # through an interval first would hand a third of that window to a
+        # timer for nothing.
+        deadline = monotonic()
+        while True:
+            if self._stop.wait(max(deadline - monotonic(), 0.0)):
+                return
             try:
-                with self._database.transaction() as connection:
-                    RunRepository().renew(connection, self._claim, self._lease)
-                    if self._slot is not None:
-                        AdmissionRepository().renew_slot(connection, self._claim, self._lease)
+                self._renew()
             except Exception as exc:
                 with self._lock:
                     self._failure = exc
                 self._stop.set()
                 return
+            # Schedule from where this tick started, not from where it ended,
+            # so a slow round trip cannot push every later renewal further
+            # behind the lease it exists to keep alive.
+            deadline += seconds
+
+    def _renew(self) -> None:
+        connection = self._connection
+        if connection is None:
+            connection = self._connection = self._database.open()
+        with connection.transaction():
+            RunRepository().renew(connection, self._claim, self._lease)
+            if self._slot is not None:
+                AdmissionRepository().renew_slot(connection, self._claim, self._lease)
+
+    def _close(self) -> None:
+        connection, self._connection = self._connection, None
+        if connection is None:
+            return
+        try:
+            connection.close()
+        except Exception:
+            # The slice's own fenced write decides the outcome, so a failure
+            # while giving back a connection that is about to disappear must
+            # not be reported as a lost lease.
+            pass
 
 
 def _validate_duration(name: str, value: timedelta) -> None:

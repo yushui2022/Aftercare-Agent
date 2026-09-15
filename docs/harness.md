@@ -53,7 +53,7 @@
 
 `run_daemon()` 每次只领取一个 READY Run；没有任务时按 `idle_sleep` 退避，收到进程的停止事件或达到测试用 `max_iterations` 后返回计数结果。数据库仍是调度权威，进程内循环和计数器不会替代租约。
 
-Harness 在事务外执行时，`LeaseHeartbeat` 用独立数据库连接按租约约三分之一的间隔调用 `RunRepository.renew()`。心跳只延长当前 `owner/fencing_token` 的租约，不授予新权限；心跳报错后，切片拒绝保存，最终 checkpoint 事务仍会再次执行 fencing 校验。旧 Worker 的外部调用无法被 PostgreSQL 中断，所以连接器仍必须使用幂等键并在结果未知时走核对流程。
+Harness 在事务外执行时，`LeaseHeartbeat` 由心跳线程独占一条数据库连接（在该线程内创建、线程退出前关闭，不跨线程共享），按租约约三分之一的间隔调用 `RunRepository.renew()`；首次续期在切片开始时立即执行，因为领取到的首个租约窗口还要容纳建立连接的开销，先睡满一个间隔等于把三分之一预算交给定时器。租约窗口必须覆盖的是「心跳间隔 + 一次往返」，不是「心跳间隔 + 一次建连」：本机实测 PostgreSQL 建连 p50 115 ms / 最大 215 ms，而续期事务 p50 0.8 ms，把建连放进毫秒级租约的预算里会让心跳在切片完全没有真正丢租约的情况下报 `lease heartbeat failed`。心跳只延长当前 `owner/fencing_token` 的租约，不授予新权限；心跳报错后，切片拒绝保存，最终 checkpoint 事务仍会再次执行 fencing 校验。连接断开与租约被抢占一样 fail-closed（心跳不靠重连让切片继续跑），旧 Worker 的外部调用无法被 PostgreSQL 中断，所以连接器仍必须使用幂等键并在结果未知时走核对流程。
 
 本地常驻入口使用：
 

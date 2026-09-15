@@ -245,6 +245,15 @@ def test_shared_worker_skips_tenant_at_its_admission_limit(queue_db: Database) -
 def test_worker_heartbeat_keeps_long_slice_lease_alive(
     db: Database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A slice may run well past one lease as long as it keeps renewing.
+
+    The budget is deliberately no tighter than this.  The first renewal has to
+    absorb opening its connection, and a measured Windows handshake sits at
+    115 ms p50 / 215 ms max against 0.8 ms for the renewal itself.  A 200 ms
+    lease left that handshake racing the deadline it had to beat, so the case
+    failed on roughly half of its runs on a healthy machine even though the
+    Worker was behaving correctly.
+    """
     tenant, case_id, run_id = "worker-heartbeat", "worker-case", "worker-run"
     _seed(db, tenant, case_id, run_id)
     original = worker_module.run_fake_harness
@@ -258,7 +267,7 @@ def test_worker_heartbeat_keeps_long_slice_lease_alive(
         now: datetime,
         max_steps: int,
     ) -> HarnessResult:
-        time.sleep(0.5)
+        time.sleep(1.5)
         return original(
             tenant_id=tenant_id,
             case_id=case_id,
@@ -275,8 +284,8 @@ def test_worker_heartbeat_keeps_long_slice_lease_alive(
         run_id=run_id,
         owner="heartbeat-worker",
         now=NOW,
-        lease=timedelta(milliseconds=200),
-        heartbeat_interval=timedelta(milliseconds=30),
+        lease=timedelta(seconds=1),
+        heartbeat_interval=timedelta(milliseconds=100),
     )
     assert result.completed
 

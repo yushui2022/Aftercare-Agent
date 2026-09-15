@@ -1,0 +1,47 @@
+{
+  "findings": [
+    {
+      "check": "restored migrations",
+      "detail": "identical to the manifest",
+      "ok": true
+    },
+    {
+      "check": "restored tables",
+      "detail": "31 table(s) restored in full",
+      "ok": true
+    },
+    {
+      "check": "restored row counts",
+      "detail": "every table holds the 31 recorded counts",
+      "ok": true
+    },
+    {
+      "check": "upgrade reaches this build",
+      "detail": "the restored copy is at migration 16",
+      "ok": true
+    },
+    {
+      "check": "upgrade keeps the rows",
+      "detail": "all 31 table(s) kept their row counts",
+      "ok": true
+    },
+    {
+      "check": "scratch copy",
+      "detail": "dropped after the drill",
+      "ok": true
+    }
+  ],
+  "finished_at": "2026-09-15T12:07:37.918047+00:00",
+  "migrations_applied": [],
+  "name": "aftercare-20260915T120729Z",
+  "ok": true,
+  "restore_seconds": 0.703,
+  "rows_changed_by_upgrade": [],
+  "rto_seconds": 1.012,
+  "scratch_database": "aftercare_drill_20260915T120735",
+  "snapshot_age_seconds": 5.758,
+  "started_at": "2026-09-15T12:07:35.309811+00:00",
+  "taken_at": "2026-09-15T12:07:29.551463+00:00",
+  "upgrade_seconds": 0.151,
+  "verify_seconds": 0.158
+}

@@ -43,7 +43,7 @@
 
 ## D：生产准入、容量和有依据的扩展
 
-依据启用功能完成真实认证/渠道审查、安全检查、备份恢复、保留删除、RPO/RTO、压测、成本与人工接管。真实接入的授权和数据检查必须在调用前完成，不能延后到最终上线日。
+依据启用功能完成真实认证/渠道审查、安全检查、备份恢复、保留删除、RPO/RTO、压测、成本与人工接管。备份、恢复演练、保留删除与恢复点之后的外部动作核对已由 `aftercare-backup` 交付并留下本机实测（[ADR-0008](docs/decisions/0008-backup-and-restore-drills.md)、[运维文档](docs/operations/backup-restore.md)）；WAL 归档/时间点恢复、异地副本、备份加密与按部署目标的 RPO/RTO 结论仍待完成。真实接入的授权和数据检查必须在调用前完成，不能延后到最终上线日。
 
 Kafka、NATS JetStream、Redis Streams、ACP、Letta/TencentDB Agent Memory、额外模型路由仍是候选能力。只有确认解决了实际问题，并说明迁移、运维成本与验收方式后才引入。
 

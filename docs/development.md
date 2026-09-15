@@ -99,6 +99,7 @@ uv run --locked pytest -q
 - 集成测试与本地进程默认走连接池：每进程 min 1 / max 8 条连接、借用超时 5 s，可用 `AFTERCARE_DB_POOL_MIN_SIZE`、`AFTERCARE_DB_POOL_MAX_SIZE`、`AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS` 覆盖；池在首次借用或 API `startup()` 时打开，构造 `Database` 不产生线程与连接。`Database.direct(dsn)` 明确走“每个工作单元一条连接”，只用于对照与一次性脚本；决策、代价与不变量见 [ADR-0006](decisions/0006-bounded-connection-pool.md)。
 - `tests/persistence/test_worker.py::test_worker_heartbeat_keeps_long_slice_lease_alive` 的预算不能再收紧：用例现在是 1 s 租约 / 100 ms 间隔 / 1.5 s 切片，而它存在的理由是 200 ms 租约会让心跳的建连去和它要保的截止时间赛跑（本机建连 p50 115 ms / 最大 215 ms，而续期事务 p50 0.8 ms）。D-04 之后心跳从连接池借连接，稳态下不再付建连，但池刚建立、连接被判坏或池被占满时仍可能付一次，因此预算保持不变。
 - 池指标与容量定标（[ADR-0007](decisions/0007-pool-metrics-and-capacity.md)）：每个进程默认每 10 s 采一次 `Database.stats()`，以一行 JSON 写进 `aftercare_agent.metrics` logger；`AFTERCARE_POOL_METRICS=0` 关闭，`AFTERCARE_POOL_METRICS_INTERVAL_SECONDS` 改间隔。要判断 `max_size`/`min_size` 该不该调，用 `aftercare-capacity` 扫一遍：`--p95-budget-ms` 是判据，退出码 0/1 可直接用在 CI 里，`--service-time-ms` 决定工作单元占槽多久，`--min-size` 决定突发要不要付握手。方法与读法见[容量报告](capacity/README.md)。
+- 备份与恢复演练（[ADR-0008](decisions/0008-backup-and-restore-drills.md)）：`aftercare-backup create --directory <dir>` 在同一次 `REPEATABLE READ` 快照里取 schema/行数并让 `pg_dump --snapshot` 导出，`verify` 离线核对清单与 dump，`drill` 把 dump 恢复到新建临时库后逐表比对行数再删除副本，`retention` 先出计划再由 `--apply` 执行，`reconcile` 列出 `UNKNOWN` 与恢复点之后被更新的 Action。客户端 `pg_dump`/`pg_restore` 的 major 不能低于服务端，否则工具在写文件前就失败；本机要用 `D:\postgresql\16\bin` 时把它加到 PATH，或用 `AFTERCARE_PG_DUMP`/`AFTERCARE_PG_RESTORE` 指路径。上列集成测试需要这两个二进制，缺了会带原因跳过。用法与实测见[运维文档](operations/backup-restore.md)。
 
 ## 4. 构建 sdist，再由 sdist 构建 wheel
 
@@ -162,4 +163,4 @@ EGM 目前以 Git 来源安装，因此来源测试要求 direct_url.json 中存
 
 ## 6. 仍然没有的入口
 
-真实业务连接器、模型和沙箱仍未交付。A1-04/A2 已提供仅供本地开发的 [Compose smoke 环境](../deploy/compose/README.md)、常驻轮询、租约心跳和 Outbox publisher；A3-03 已提供有界 SSE 回放/tail 和 `web/` 工作台，但不含真实身份登录，也不能代替生产部署、安全审计、依赖漏洞扫描和性能验收。`aftercare-capacity` 给的是单机池容量方法，不是跨环境容量结论。现有 SQLite 回归也不能代替真实 PostgreSQL 租约、事务和故障恢复测试。
+真实业务连接器、模型和沙箱仍未交付。A1-04/A2 已提供仅供本地开发的 [Compose smoke 环境](../deploy/compose/README.md)、常驻轮询、租约心跳和 Outbox publisher；A3-03 已提供有界 SSE 回放/tail 和 `web/` 工作台，但不含真实身份登录，也不能代替生产部署、安全审计、依赖漏洞扫描和性能验收。`aftercare-capacity` 给的是单机池容量方法，不是跨环境容量结论。`aftercare-backup` 给的是备份、演练与核对的口径和工具，不含 WAL 归档/时间点恢复、异地副本、备份加密或按部署目标给出的 RPO/RTO 结论。现有 SQLite 回归也不能代替真实 PostgreSQL 租约、事务和故障恢复测试。

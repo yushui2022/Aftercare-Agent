@@ -287,6 +287,25 @@ class Database:
         connection.close()
 
 
+def known_migrations() -> dict[int, str]:
+    """Every migration shipped in this package, as version -> SHA-256.
+
+    ``migrate()`` pins an applied version to this digest, and the backup tool
+    compares a manifest against the same map: the schema has one definition of
+    what it contains, and a backup that disagrees with it is a finding rather
+    than a second opinion.
+    """
+    return {
+        int(path.name.split("_", 1)[0]): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(_MIGRATIONS.glob("*.sql"))
+    }
+
+
+def latest_schema_version() -> int:
+    """The highest migration version this build can apply."""
+    return max(known_migrations())
+
+
 def migrate(connection: psycopg.Connection[Any]) -> None:
     # Transaction-scoped advisory lock serializes API/Worker startup migrations
     # without holding an application table lock after this call returns.
@@ -300,11 +319,8 @@ def migrate(connection: psycopg.Connection[Any]) -> None:
         "ALTER TABLE aftercare_schema_migrations ADD COLUMN IF NOT EXISTS checksum char(64)"
     )
     paths = sorted(_MIGRATIONS.glob("*.sql"))
-    checksums = {
-        int(path.name.split("_", 1)[0]): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in paths
-    }
-    known = {int(path.name.split("_", 1)[0]) for path in paths}
+    checksums = known_migrations()
+    known = set(checksums)
     applied = {
         int(row[0])
         for row in connection.execute("SELECT version FROM aftercare_schema_migrations").fetchall()

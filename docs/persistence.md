@@ -31,7 +31,8 @@ $env:DATABASE_URL = "postgresql://..."
 
 ## 当前未完成
 
-这不是完整运行时：真实业务 Harness、Action Ledger、生产认证、供应商连接器、沙箱和
-真实 EGM 调查 schema 仍待实施。Wait/Inbox/Outbox、发布租约、常驻 Worker、基础 fencing
-和调查观察账本已有真实 PostgreSQL 验收；当前 SQL 仍不包含生产 RLS、备份恢复、HA 或
-保留删除策略。
+这不是完整运行时：真实业务 Harness、生产认证、供应商连接器、沙箱和真实 EGM 调查 schema
+仍待实施。Wait/Inbox/Outbox、发布租约、常驻 Worker、基础 fencing、调查观察账本和 Action
+Ledger 已有真实 PostgreSQL 验收；备份、恢复演练、保留删除与恢复后核对已由
+[`aftercare-backup`](operations/backup-restore.md) 提供（[ADR-0008](decisions/0008-backup-and-restore-drills.md)），
+当前 SQL 仍不包含生产 RLS、HA、WAL 归档/时间点恢复或备份加密。

@@ -22,6 +22,7 @@ dependencies = [
 Repository = "https://github.com/yushui2022/Aftercare-Agent"
 
 [project.scripts]
+aftercare-backup = "aftercare_agent.ops.backup:main"
 aftercare-capacity = "aftercare_agent.capacity:main"
 aftercare-demo = "aftercare_agent.demo:main"
 aftercare-worker = "aftercare_agent.runtime.worker_cli:main"

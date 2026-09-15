@@ -26,6 +26,12 @@ from aftercare_agent.auth import (
     TokenVerifier,
     synthetic_context,
 )
+from aftercare_agent.auth.grants import (
+    GRANT_ADMIN_PERMISSION,
+    GRANT_READ_PERMISSION,
+    CaseGrantRecord,
+    authorize_case_grant,
+)
 from aftercare_agent.domain.approvals import ApprovalRecord
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, Identifier
 from aftercare_agent.domain.events import DomainEvent
@@ -191,6 +197,56 @@ class ApprovalListResponse(BaseModel):
     approvals: list[ApprovalOperatorResponse]
 
 
+class CaseGrantInput(BaseModel):
+    """One delegation; tenant, Case and actor always come from the context.
+
+    Identifiers and revisions stay strict so a JSON string can never pass for a
+    subject or a revision, but ``expires_at`` is the one field a JSON body must
+    send as an RFC 3339 string.  The timezone requirement stays a handler check
+    because a naive local timestamp is an input error rather than a parse error.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    subject_id: Identifier
+    permissions: list[Identifier] = Field(min_length=1, max_length=16)
+    expires_at: datetime | None = Field(default=None, strict=False)
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class CaseGrantRevokeInput(BaseModel):
+    """Revocation carries the revision the caller believes is current."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    expected_revision: int = Field(ge=1)
+
+
+class CaseGrantResponse(BaseModel):
+    """Public grant projection; the tenant stays a server-side scope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: str
+    subject_id: str
+    permissions: list[str]
+    revision: int
+    granted_by: str
+    granted_at: datetime
+    expires_at: datetime | None
+    revoked_at: datetime | None
+    revoked_by: str | None
+    updated_at: datetime
+
+
+class CaseGrantListResponse(BaseModel):
+    """Case-scoped grant list for the access-administration view."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    grants: list[CaseGrantResponse]
+
+
 def _identifier(value: str, field: str) -> str:
     try:
         return TypeAdapter(Identifier).validate_python(value)
@@ -231,6 +287,27 @@ def _approval_projection(record: ApprovalRecord) -> ApprovalOperatorResponse:
         expires_at=record.expires_at,
         created_at=record.created_at,
         decided_at=record.decided_at,
+        updated_at=record.updated_at,
+    )
+
+
+def _grant_projection(record: CaseGrantRecord) -> CaseGrantResponse:
+    """Project one grant without widening what an operator may read.
+
+    The tenant is omitted because it is already the caller's scope, and the
+    audit columns (who granted or revoked, and when) are included because an
+    access administration view is exactly where that must be visible.
+    """
+    return CaseGrantResponse(
+        case_id=record.case_id,
+        subject_id=record.subject_id,
+        permissions=sorted(record.permissions),
+        revision=record.revision,
+        granted_by=record.granted_by,
+        granted_at=record.granted_at,
+        expires_at=record.expires_at,
+        revoked_at=record.revoked_at,
+        revoked_by=record.revoked_by,
         updated_at=record.updated_at,
     )
 
@@ -326,6 +403,28 @@ def _authorize_stream_event(database: Database, identity: AuthContext, case_id: 
     """Re-check a live stream grant in a short transaction (thread target)."""
     with database.transaction() as connection:
         _authorized_case(connection, identity, case_id, "case:read")
+
+
+def _administered_case(
+    connection: psycopg.Connection[Any],
+    identity: AuthContext,
+    case_id: str,
+    permission: str,
+) -> str:
+    """Authorize a tenant-level grant-administration operation.
+
+    Unlike the Case-scoped routes this does not resolve a CaseGrant: the actor
+    is a tenant administrator, so the check is the tenant-level scope plus the
+    Case actually existing inside the actor's tenant.  What that administrator
+    may delegate is bounded separately by ``authorize_case_grant``, and the
+    bound is what keeps this route from becoming an escalation path.
+    """
+    scoped_case_id = _identifier(case_id, "case_id")
+    identity.require(permission)
+    if CaseRepository().get_case(connection, identity.tenant_id, scoped_case_id) is None:
+        # Unknown Cases and other tenants' Cases stay indistinguishable.
+        raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
+    return scoped_case_id
 
 
 def _format_sse_event(event: DomainEvent) -> str:
@@ -718,6 +817,92 @@ def create_app(
                     decision_reason=body.decision_reason,
                 )
                 return _approval_projection(result)
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get("/v1/cases/{case_id}/grants", response_model=CaseGrantListResponse)
+    def list_case_grants(
+        case_id: str,
+        identity: Auth,
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+    ) -> CaseGrantListResponse:
+        """List a Case's grants so access can be audited and handed over."""
+        try:
+            with database.transaction() as connection:
+                scoped_case_id = _administered_case(
+                    connection, identity, case_id, GRANT_READ_PERMISSION
+                )
+                records = CaseGrantRepository().list_for_case(
+                    connection, identity.tenant_id, scoped_case_id, limit=limit
+                )
+            return CaseGrantListResponse(grants=[_grant_projection(record) for record in records])
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.post("/v1/cases/{case_id}/grants", response_model=CaseGrantResponse)
+    def put_case_grant(case_id: str, body: CaseGrantInput, identity: Auth) -> CaseGrantResponse:
+        """Grant or replace one subject's access to a Case.
+
+        Optimistic concurrency replaces an idempotency key: replacing an
+        existing grant requires ``expected_revision`` from a prior read, so a
+        blind retry after a timeout cannot silently apply twice.  A retried
+        first grant finds the row and answers ``409`` for the same reason.
+        """
+        try:
+            requested = frozenset(body.permissions)
+            with database.transaction() as connection:
+                scoped_case_id = _administered_case(
+                    connection, identity, case_id, GRANT_ADMIN_PERMISSION
+                )
+                if body.expires_at is not None:
+                    if body.expires_at.tzinfo is None:
+                        raise ContractViolation(
+                            ErrorCode.INVALID_INPUT, "expires_at must be timezone-aware"
+                        )
+                    expired = connection.execute(
+                        "SELECT clock_timestamp() >= %s", (body.expires_at,)
+                    ).fetchone()
+                    if expired is not None and expired[0]:
+                        raise ContractViolation(
+                            ErrorCode.INVALID_INPUT, "expires_at must be in the future"
+                        )
+                granted = authorize_case_grant(
+                    actor_permissions=identity.permissions, requested=requested
+                )
+                record = CaseGrantRepository().grant(
+                    connection,
+                    tenant_id=identity.tenant_id,
+                    subject_id=body.subject_id,
+                    case_id=scoped_case_id,
+                    permissions=sorted(granted),
+                    granted_by=identity.subject_id,
+                    expires_at=body.expires_at,
+                    expected_revision=body.expected_revision,
+                )
+                return _grant_projection(record)
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.post("/v1/cases/{case_id}/grants/{subject_id}/revoke", response_model=CaseGrantResponse)
+    def revoke_case_grant(
+        case_id: str, subject_id: str, body: CaseGrantRevokeInput, identity: Auth
+    ) -> CaseGrantResponse:
+        """Revoke one subject's access; the row stays for audit and revision checks."""
+        try:
+            scoped_subject_id = _identifier(subject_id, "subject_id")
+            with database.transaction() as connection:
+                scoped_case_id = _administered_case(
+                    connection, identity, case_id, GRANT_ADMIN_PERMISSION
+                )
+                record = CaseGrantRepository().revoke(
+                    connection,
+                    tenant_id=identity.tenant_id,
+                    subject_id=scoped_subject_id,
+                    case_id=scoped_case_id,
+                    revoked_by=identity.subject_id,
+                    expected_revision=body.expected_revision,
+                )
+                return _grant_projection(record)
         except ContractViolation as exc:
             raise _error(exc) from exc
 

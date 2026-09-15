@@ -8,18 +8,18 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户设定目标：按路线图持续把项目推向企业级，并在本轮明确授权提交/推送到 GitHub。本轮领取 D-01 的撤销/introspection 切片；不调用真实 IdP、不连接生产数据库、不做外部业务动作 |
-| 当前任务 | D-01-04（RFC 7662 撤销判定：introspection 边界 + 验签后接线与 fail-closed 回归） |
-| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成 |
-| 下一项代码候选 | D-01：真实 IdP 演练、RLS、权限管理面；A3-04：Harness 等待与审批分支纳入评测；B-02-03：供应商回执核对；C-02：真实沙箱后端；随后补生产准入与容量验证 |
-| 活跃实现任务 | 本轮新增 `auth/introspection.py`（`IntrospectionConfig`/`HttpTokenIntrospector`/`CachedIntrospector`/`parse_verdict`）与 `auth/guard.py`（`TokenAccessGuard`），`create_default_app()` 按环境变量接线并在关机时关闭自有 httpx 客户端；真实 IdP 演练、RLS 与权限管理面仍未实现 |
-| 本轮外部行为 | 本轮只新增撤销判定与其离线测试；不调用真实 IdP 或模型、不做真实业务动作或生产部署；本机 Docker 守护进程未运行，需 PostgreSQL 的验证以 CI 为准 |
+| 本轮请求范围 | 用户设定目标：按路线图持续把项目推向企业级，并在本轮明确授权提交/推送到 GitHub。本轮领取 D-01 的 Case 授权管理面切片（移交/授权/撤销）；不调用真实 IdP、不连接生产数据库、不做外部业务动作 |
+| 当前任务 | D-01-05（Case 授权管理面：租户级 grant scope + 可授予闭集/委派上限 + 同事务审计事件） |
+| 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成；D-01-04 撤销判定与 D-01-05 授权管理面已落地 |
+| 下一项代码候选 | D-01：真实 IdP 演练与权限映射、RLS；A3-04：Harness 等待与审批分支纳入评测；B-02-03：供应商回执核对；C-02：真实沙箱后端；随后补生产准入与容量验证 |
+| 活跃实现任务 | 本轮新增 `auth/grants.py` 的可授予闭集 `GRANTABLE_CASE_PERMISSIONS` 与 `authorize_case_grant()`、`persistence/grant_events.py`（授权审计事件），`persistence/case_grants.py` 增加 `list_for_case()` 并在 grant/revoke 同事务追写事件，`api/app.py` 新增三个管理路由（`_administered_case()` 按租户级 scope 判定，不解析调用者自己的 grant）；真实 IdP 演练、RLS 与管理 UI 仍未实现 |
+| 本轮外部行为 | 本轮只新增授权管理面与其离线/PostgreSQL 回归；不调用真实 IdP 或模型、不做真实业务动作或生产部署。本机首次用独立临时 PostgreSQL 16 集群（G:\DevCache\Temp\aftercare-pg，端口 55450，不影响既有 5432 服务）跑通完整套件，不再只依赖 CI；远端 CI 结果仍以推送后的 run 为准 |
 
 ## 2. 核验过的源码基线
 
 | 仓库 | 已核验源码 HEAD | 用途 |
 |---|---|---|
-| Aftercare-Agent | b0ddffe95e487f5520bb3d2f29f781b3fb72417f | 本轮异步 tail/工作台可靠性改动的提交前基线；交付提交编号以 Git 日志为准 |
+| Aftercare-Agent | f5c673ab7c17a77a9f5608d846f407def1b17b2a | 本轮 D-01-05 授权管理面切片的提交前基线（D-01-04 已推送并可复现）；交付提交编号以 Git 日志为准 |
 | Evidence-Gated-Memory | 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd | 源码 0.6.0、嵌入式应用层与 PostgreSQL；已固定在 Aftercare 依赖中 |
 
 这是本轮改动开始时核验的源码基线。历史验证条目保留原日期和当时边界；本轮交付后的 HEAD 和远端状态以 Git 日志为准。
@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合、真实供应商连接器、沙箱接线、生产调度体系和高吞吐 live broker tail。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、合成 Aftercare 纵向切片（含订单/物流/买家观察与来源引用评估）、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒、跨实例 admission 最小闭环、显式合成身份或静态 JWKS Bearer 的 Review/Approval 控制面 API、CaseGrant，以及操作员工单发现 API、React 工作台和 case-scoped SSE replay/tail；仍不是完整执行服务。真实 IdP 演练与权限映射、RLS、权限管理面、生产认证验收、浏览器可访问性和高吞吐 broker 仍未完成。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合、真实供应商连接器、沙箱接线、生产调度体系和高吞吐 live broker tail。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、合成 Aftercare 纵向切片（含订单/物流/买家观察与来源引用评估）、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒、跨实例 admission 最小闭环、显式合成身份或静态 JWKS Bearer 的 Review/Approval 控制面 API、CaseGrant 及其授权管理 HTTP（移交/授权/撤销，见 ADR-0004），以及操作员工单发现 API、React 工作台和 case-scoped SSE replay/tail；仍不是完整执行服务。真实 IdP 演练与权限映射、RLS、授权管理 UI、生产认证验收、浏览器可访问性和高吞吐 broker 仍未完成。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；PostgreSQL 观察账本与重载已实现，但真实调查 EGM schema 与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -64,24 +64,26 @@
 | A3-04 | IN PROGRESS | 新增离线闭环评测 `evals/loop.py`：脚本化 Responses client → 工具白名单/整数预算/`parse_investigation_proposal()` → 确定性评估，逐案报告 disposition、引用来源、未知引用、token 与合成成本，并给出稳定 digest 和可恢复的 Harness 步进；12 案件全部通过（1 个有来源建议、6 个转复核或补材料、5 个结构化/边界拒绝）；真实模型效果与账单、Harness 的等待/审批分支和生产压测仍未完成 |
 | A1-05 | IN PROGRESS | 新增 SessionMessage append-only transcript 引用表/Repository（tenant/case/session 隔离、连续序号、message_id 幂等、游标读取）与 provider-neutral `SandboxProvider` 生命周期契约；已按 2026-09-15 回填进行计划（原只存在于本台账）；真实 artifact store、Kubernetes/E2B 后端仍待实现，transcript→模型输入映射归 A3-01 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
-| D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口、`015_case_grants.sql`/`CaseGrantRepository` 与 D-01-04 的撤销判定：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销判定在验签后 fail-closed（见 D-01-04）；真实 IdP 演练、RLS 和权限管理面仍待实现 |
+| D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口、`015_case_grants.sql`/`CaseGrantRepository`、D-01-04 的撤销判定与 D-01-05 的授权管理面：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销判定在验签后 fail-closed；管理面用租户级 `grant:read`/`grant:admin`、可授予闭集、委派上限、乐观并发与同事务审计事件；真实 IdP 演练、RLS 与管理 UI 仍待实现 |
 | D-01-03 | DONE | PostgreSQL CaseGrant 按 `(tenant_id,subject_id,case_id)` 持久化 scope/revision/有效期/撤销审计；AuthContext 非 synthetic 未绑定时 fail-closed，API 在业务短事务锁定 grant；创建者授权与受理原子提交，撤销/过期/跨主体及 token 收窄回归通过；真实 IdP、introspection、RLS 和管理面仍待完成 |
 | D-01-04 | DONE | 新增 `auth/introspection.py` 与 `auth/guard.py`：RFC 7662 判定（静态 HTTPS endpoint、凭据仅存注入的 httpx 客户端、`active` 布尔校验、sub/tenant/exp 与已验证 Token 一致性、有界 TTL 缓存且不缓存已过期判定、传输/解析/超大响应 fail-closed），`TokenAccessGuard` 在验签之后用同一时钟读数执行两步检查且失败统一为 `401 unauthenticated`、不回退合成身份，`auth.guard.TokenVerifier` Protocol 固定验签接缝，`create_default_app()` 按 `AFTERCARE_OIDC_INTROSPECTION_*` 接线并在关机时关闭自有客户端；新增 `tests/test_token_revocation.py` 72 项离线回归；真实 IdP 端点、凭据轮换、RLS 与管理面仍属 D-01 其余部分 |
+| D-01-05 | DONE | 新增 Case 授权管理面：`GET/POST /v1/cases/{case_id}/grants` 与 `POST /v1/cases/{case_id}/grants/{subject_id}/revoke`，租户级 `grant:read`/`grant:admin`，可授予权限闭集（排除 `case:create` 与 `grant:*`），不能授出自己没有的权限，替换/撤销需 `expected_revision`（重放 `409`），每次变更同事务写入 `case_grant.granted`/`case_grant.revoked` 与完整快照；离线 25 项 + 真实 PostgreSQL 10 项回归通过（整机满载时的心跳用例抖动与本项无关，见第 6 节）；管理 UI、RLS 与真实 IdP 演练属 D-01 其余部分 |
 | C-03 | IN PROGRESS | 新增 provider-neutral Tracer、InMemoryTracer、可选 OTel bridge，并为 Outbox publish 埋点；离线回归通过；Exporter、采样/留存和生产监控尚未配置 |
 
 ## 5. 工作区与提交边界
 
-本轮提交范围为 D-01-04 撤销/introspection 切片：新增 `auth/introspection.py`、`auth/guard.py`、`tests/test_token_revocation.py`（首轮 70 项 + 时钟一致性 2 项），`auth/oidc.py` 把 `_bearer_token` 公开为 `bearer_token`（单一解析入口），`auth/__init__.py` 导出新契约，`api/app.py` 增加 `create_app(..., introspector=...)` 与 `create_default_app()` 的环境变量接线和关机钩子，并同步 `docs/engineering-plan.md`、`docs/api-auth.md`、`docs/tech-stack.md`。推送后 CI 暴露的验签接缝回归（新增 `TokenVerifier` Protocol、测试替身按真实签名接收 `now`、guard 两步检查共用同一时钟读数）在同一轮内修复，未新开分支。未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本轮提交范围为 D-01-05 授权管理面切片：`auth/grants.py` 新增可授予闭集 `GRANTABLE_CASE_PERMISSIONS`、`grant:read`/`grant:admin` 与 `authorize_case_grant()`；`persistence/grant_events.py`（新）按 `gate_events.py` 的模式追加 `case_grant.granted`/`case_grant.revoked` 事件与不可变快照；`persistence/case_grants.py` 的 `grant()`/`revoke()` 在返回前同事务追写事件并新增只读 `list_for_case()`；`domain/events.py` 扩展两个 `EventType`；`api/app.py` 新增三个管理路由、`_administered_case()` 与请求/响应模型；`auth/context.py` 给合成身份补上管理 scope；新增 `tests/test_grant_policy.py`（25 项离线）与 `tests/test_operator_grants_integration.py`（10 项需 PostgreSQL）；并同步 `docs/api-auth.md`、`docs/engineering-plan.md`、`docs/tech-stack.md`、`docs/events.md`、`docs/development.md`、`README.md`、`ROADMAP.md` 与新增 `docs/decisions/0004-case-grant-administration.md`。未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 仓库仍有 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮沿用该授权推送 D-01-04，提交 `cd6ba9b`（撤销判定）与 `e3a7586`（CI 回归修复）已在 `origin/main`，GitHub Actions run [34951354092](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34951354092)（`ci`）为 `success`。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮沿用该授权推送 D-01-05，D-01-04 的提交 `cd6ba9b`（撤销判定）与 `e3a7586`（CI 回归修复）已在 `origin/main`，GitHub Actions run [34951354092](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34951354092)（`ci`）为 `success`。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
 
 
+- 2026-09-15 / D-01-05 授权管理面（本机真实 PostgreSQL）：离线全量 `405 passed, 97 skipped`；在独立临时 PostgreSQL 16.13 集群（`G:\DevCache\Temp\aftercare-pg\data`，端口 55450，与既有 5432 服务实例完全隔离，用 `D:\postgresql\16\bin` 的 `initdb`/`pg_ctl` 新建）上全量 `501 passed, 1 failed`，其中新增的 `tests/test_operator_grants_integration.py` 10 项全部通过。唯一失败是 `tests/persistence/test_worker.py::test_worker_heartbeat_keeps_long_slice_lease_alive`：该用例给 200 ms 租约、30 ms 心跳间隔并让 harness 睡 500 ms，整机满载时心跳线程被调度延迟就报 `lease heartbeat failed`；单独运行两次均通过，把本切片全部改动 stash 后在干净基线上复现同一失败（`1 failed, 466 passed`，与 CI 的 467 项一致），因此判定为既有的负载相关抖动，不是本切片回归。本轮还修掉两处只有真实 PostgreSQL 才能暴露的问题：`CaseGrantInput` 的模型级 `strict=True` 会拒绝 RFC 3339 字符串形式的 `expires_at`（返回 422 而不是设计中的 `400`），改为该字段 `strict=False`、时区规则仍由处理器按数据库 `clock_timestamp()` 判定；`test_access_changes_appear_in_the_case_stream` 原本假设事件流从授权事件开始，实际事件流携带该 Case 既有历史，改为断言历史前缀不变、其后恰好追加两个授权事件且 `case_seq` 连续。`ruff format --check .`、`ruff check .` 与严格 `mypy aftercare_agent tests evals`（112 文件）通过。未运行：真实 IdP、RLS、浏览器端与远端 CI（推送后补记）。
 - 2026-09-15 / D-01-04 远端 CI 回归与修复（提交 `cd6ba9b`）：推送后 GitHub Actions run [34950559478](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34950559478) 的 `Static checks` 通过，但 `Test with PostgreSQL` 失败（`2 failed, 463 passed`），两项都是 `tests/test_api_integration.py` 的 `_StubBearerVerifier.verify() got an unexpected keyword argument 'now'`。本机 87 项集成测试因 Docker 守护进程未就绪全部跳过，只有 CI 能暴露该问题。根因不是测试写法，而是接缝缺少类型：`create_app(oidc_verifier=...)` 接受具体类 `JwtJwksVerifier`，测试替身只能靠 `cast` 绕过类型检查，签名漂移在编译期不可见。修复：新增 `auth.guard.TokenVerifier` Protocol（`verify(authorization, *, now=None) -> AuthContext`），`TokenAccessGuard` 与 `create_app` 改为面向该 Protocol，`_StubBearerVerifier` 去掉 `cast` 并按真实签名接收 `now`。实证该修复有效：把替身签名改回缺少 `now` 后 mypy 报 `Following member(s) of "_StubBearerVerifier" have conflicts`，即同类缺陷现在会在 `Static checks` 阶段被拦住。同时把 guard 的验签与撤销判定收敛到同一个时钟读数，并新增 2 项回归锁定（显式 `now` 与自动时钟两种情况都要求两步看到同一时刻）。修复后本机离线全量 `380 passed, 87 skipped`，`ruff format --check`（109 文件）、`ruff check` 与严格 mypy（109 文件）通过；修复提交 `e3a7586` 的远端结果见下一条。
 
 
@@ -279,14 +281,15 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 D 生产准入：验签（D-01-01/02）、数据库 CaseGrant（D-01-03）与撤销判定（D-01-04）已实现，下一步是真实 IdP 演练、RLS 与权限管理面；同时把有界 SSE tail 纳入生产连接池/broker 评估、固定调查 EGM schema/真实模型接线并选择真实沙箱后端。完整业务 Harness 和生产连接器仍未实现。
+当前推进 D 生产准入：验签（D-01-01/02）、数据库 CaseGrant（D-01-03）、撤销判定（D-01-04）与授权管理面（D-01-05）已实现，D-01 剩下的只有真实 IdP 演练与权限映射、RLS 和管理 UI；同时把有界 SSE tail 纳入生产连接池/broker 评估、固定调查 EGM schema/真实模型接线并选择真实沙箱后端。完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 
-关键风险：本轮包依赖升级尚未重跑 EGM PostgreSQL 全量验收，A1 必须补足；新旧路线图的阶段名称必须一致；不能把 fencing 延后为性能优化；A 阶段通知不得真实外发；同进程不等于同事务；未提交图稿和其他仓库改动不属于本任务。
+关键风险：本轮包依赖升级尚未重跑 EGM PostgreSQL 全量验收，A1 必须补足；新旧路线图的阶段名称必须一致；不能把 fencing 延后为性能优化；A 阶段通知不得真实外发；同进程不等于同事务；未提交图稿和其他仓库改动不属于本任务；`grant:admin` 在真实 IdP 里必须只发给管理角色，否则等于交出 ACL 写入权。
 
 ## 8. 最近交接记录
 
+- 2026-09-15 / D-01-05 完成（待推送）：开放 Case 授权管理面（`POST /v1/cases/{case_id}/grants` 与 `.../grants/{subject_id}/revoke` 需租户级 `grant:admin`，`GET .../grants` 需 `grant:read`；可授予权限闭集排除 `case:create`/`grant:*`，不能授出自己没有的权限，替换/撤销需 `expected_revision`，每次变更同事务写 `case_grant.granted`/`case_grant.revoked` 与完整快照），新增 25 项离线回归与 10 项 PostgreSQL 回归；新增 [ADR-0004](decisions/0004-case-grant-administration.md) 显式替代 ADR-0003 中“本轮不开放管理 HTTP”那一句。本机首次用独立临时 PostgreSQL 16 集群（端口 55450，不碰既有 5432）跑通完整套件：`501 passed, 1 failed`，唯一失败是既有的心跳负载抖动，第 6 节给出干净基线复现证据；跑法已写入 `docs/development.md`。下一步：推送并核对 CI，再按第 7 节推进真实 IdP 演练/RLS。本轮未部署、未做真实业务动作。
 - 2026-09-15 / D-01-04 完成并推送：新增 RFC 7662 撤销判定（`auth/introspection.py`、`auth/guard.py`、`TokenVerifier` Protocol、`create_app`/`create_default_app` 接线与关机钩子）与 72 项离线回归；提交 `cd6ba9b`、`e3a7586` 已推送到 `origin/main`，CI run [34951354092](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34951354092) 为 `success`，真实 PostgreSQL 17 上 `467 passed, 52 warnings`。本轮未部署、未发布包、未连接生产数据库、未调用真实 IdP。**本机 Docker 守护进程仍未就绪，本轮本机没有执行过任何集成测试（87 项全部跳过）**，数据库侧结论完全来自 CI；下一位接手者若在本机改动认证/数据库边界，必须预期"本机全绿但 CI 可能失败"。下一项候选：D-01 真实 IdP 演练/RLS/权限管理面、A3-04 把 Harness 等待与审批分支纳入评测、B-02-03 供应商回执核对、C-02 真实沙箱后端。
 
 - 2026-09-14 / 远端 CI 修复：定位到 `main` 上连续失败的根因是 `uv python install 3.13.15` 在 uv 0.9.26 内置索引（止于 3.13.11）中找不到该补丁，改为 CI job 级 `UV_PYTHON_DOWNLOADS_JSON_URL` 指向固定提交元数据，并同步 `docs/development.md`。本轮未提交、未推送，**没有绿色 run 证据**，远端 CI 仍不能视为已修复完成。下一步：提交并推送后在 GitHub 确认转绿，之后才考虑加 CI 徽章；LICENSE/SECURITY.md/Issue 模板等开源前置项仍未处理。

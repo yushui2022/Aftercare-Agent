@@ -54,6 +54,14 @@ A2-01 的第一块可靠事件能力使用 PostgreSQL，而不是提前引入 Ka
 | `approval.expired` | 过期回收器首次结算请求 | 绑定审批 Run 时必有 `run_id` |
 | `review.requested` | 首次登记人工 Review | 必有 `run_id` |
 | `review.decided` | 首次人工继续或取消 | 必有 `run_id` |
+| `case_grant.granted` | 首次授予或替换某主体对 Case 的授权 | 无 `run_id`：授权变更不属于任何 Run |
+| `case_grant.revoked` | 撤销某主体对该 Case 的授权 | 无 `run_id`：同上 |
+
+`case_grant.*` 由 Case 授权管理面写入（见
+[ADR-0004](decisions/0004-case-grant-administration.md)），与其他事件一样在业务事务内
+提交并保存完整快照，payload 记录被授予的主体、权限集合和 revision，可用于“谁在什么时候
+拿到了哪些访问权”的审计投影。授权事件不参与业务判定：某个主体此刻是否仍有访问权，始终
+由每个业务路由按当前 `CaseGrant` 行在自己的短事务里决定。
 
 这些事件和对应的审批/Review 行在同一个 PostgreSQL 事务中写入。事件 payload 仍然只是
 `ArtifactReference`；迁移 `014_event_sequences.sql` 的 payload 表按引用保存不可变的完整

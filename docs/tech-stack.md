@@ -81,7 +81,10 @@ Python/Pydantic 定义 HTTP 边界，导出版本化 OpenAPI；前端从已检�
 `auth.guard` 在同一验签之后追加可选 RFC 7662 撤销判定（`AFTERCARE_OIDC_INTROSPECTION_URL`
 与 `_CLIENT_ID`/`_CLIENT_SECRET`），凭据只存注入的 httpx 客户端、判别结果有界缓存且统一
 fail-closed。这仍不等于企业授权：数据库 CaseGrant、真实 IdP 权限映射、密钥轮换演练和
-生产部署验收属于 D-01 后续。
+生产部署验收属于 D-01 后续。CaseGrant 的权威仍是每个业务事务内的短锁判定；授权管理
+HTTP 由租户级 `grant:read`/`grant:admin` 承载，可授予权限是排除 `case:create` 与
+`grant:*` 的闭集，且不能授出管理员自己没有的权限（见
+[ADR-0004](decisions/0004-case-grant-administration.md)）。
 
 Responses 适配器保存完整工具请求、call_id 和恢复所需协议项，再执行经过校验的本地工具；应用自管业务状态。供应商提供会话关联不等于已经提供我们的持久业务运行时。该约束来自本项目设计，并与 [OpenAI Function Calling](https://developers.openai.com/api/docs/guides/function-calling)、[Conversation State](https://developers.openai.com/api/docs/guides/conversation-state) 的能力边界一致。
 

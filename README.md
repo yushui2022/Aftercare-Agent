@@ -31,7 +31,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [调查证据契约 v1](docs/contracts/investigation-v1.md) | 订单/物流/买家陈述、可信来源、证据新鲜度、引用和人审边界；EGM 调查 schema 仍待固定 |
 | [A0-03 合成案件与确定性评测](docs/evals.md) | 12 个合成售后案件、固定预期和离线评测；不调用模型或真实业务系统 |
 | [PostgreSQL 持久化骨架](docs/persistence.md) | 迁移、租约/fencing、调度队列、检查点和调查观察账本；完整运行时仍未完成 |
-| [API 与认证边界](docs/api-auth.md) | FastAPI 受理、Run/事件读取、Review/Approval 控制面、JWT/JWKS Bearer 与 PostgreSQL CaseGrant；真实 IdP/RLS/权限管理仍待完成 |
+| [API 与认证边界](docs/api-auth.md) | FastAPI 受理、Run/事件读取、Review/Approval 控制面、JWT/JWKS Bearer、PostgreSQL CaseGrant、RFC 7662 撤销判定与 Case 授权管理面；真实 IdP 演练/RLS/管理 UI 仍待完成 |
 | [SSE 事件回放](docs/events.md) | A3-03 case-scoped SSE replay、`Last-Event-ID` 续传、持久事件游标与有界 PostgreSQL tail |
 | [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
 | [Human Review 边界](docs/reviews.md) | `HUMAN_REVIEW` 的持久请求、人工决定、恢复和取消语义 |
@@ -51,6 +51,8 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [沙箱控制面契约](docs/sandbox.md) | C-01 Fake Provider、分配幂等、fencing、产物预算和销毁确认 |
 | [可观测性边界](docs/observability.md) | C-03 OTel-friendly tracing、Outbox 发布 span、脱敏与审计边界 |
 | [嵌入式架构决策](docs/decisions/0002-embedded-egm.md) | 代码独立不等于服务独立；模块、存储、业务权威各自的边界 |
+| [Case 授权决策](docs/decisions/0003-case-grant-authorization.md) | Token 身份与 Case 资源授权分离；CaseGrant 是访问权威，每次使用都在短事务内判定 |
+| [授权管理面决策](docs/decisions/0004-case-grant-administration.md) | 开放 Case 授权管理 HTTP：租户级 grant scope、可授予闭集与委派上限 |
 | [EGM 接入决策](docs/decisions/0001-evidence-gated-memory.md) | 有条件采用 Evidence-Gated-Memory，明确证据门控与业务权威的边界 |
 | [EGM 代码评估与验证](docs/research/evidence-gated-memory.md) | 固定提交的源码核查、65 项测试与三个合成边界探针 |
 | [EGM 0.5.0 服务接入](docs/integrations/egm-service.md) | 修复后的契约、认证、事务幂等、并发与离线集成验收；本地源码尚未发布 |

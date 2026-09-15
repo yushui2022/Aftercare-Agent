@@ -28,6 +28,8 @@ type EventType = Literal[
     "approval.expired",
     "review.requested",
     "review.decided",
+    "case_grant.granted",
+    "case_grant.revoked",
 ]
 
 

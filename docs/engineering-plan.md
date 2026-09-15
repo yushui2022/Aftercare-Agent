@@ -148,8 +148,9 @@ B-02 按以下可验证切片推进，避免把“审批台账”误当成完整
 | D-01 | 真实认证/授权、密钥、渠道/数据审查、人工接管与生产变更规则 | 仅授权人员和任务可执行对应动作；测试身份禁用；明确可用范围与操作留痕 |
 | D-01-01 | auth/oidc.py：provider-neutral JWT/JWKS 验签与 claims 映射；静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 kid 单次冷却刷新 | A1-02 | 验签失败、过期/未生效、超长寿命、错误 iss/aud、`none`/HMAC 混淆、非签名用途 key 一律 fail-closed；claims 映射出的 AuthContext 不可由请求体覆盖 |
 | D-01-02 | api/：`Authorization: Bearer` 认证入口；Bearer 优先于合成身份且验签失败不回退 | D-01-01 | 携带 Bearer 时合成 Header 被忽略；配置真实 verifier 后合成身份强制关闭；缺认证 `401` 且带 `WWW-Authenticate` |
-| D-01-03 | auth/、persistence/、api/：PostgreSQL CaseGrant 资源授权切片；token case_ids 仅作收窄，撤销/过期在短事务内 fail-closed | A1-02、A1-01 | `(tenant_id,subject_id,case_id)` grant 迁移与 revision；API 同事务锁定活动授权；创建者与受理原子授予；撤销/过期及跨主体回归通过；不开放授权管理 HTTP |
+| D-01-03 | auth/、persistence/、api/：PostgreSQL CaseGrant 资源授权切片；token case_ids 仅作收窄，撤销/过期在短事务内 fail-closed | A1-02、A1-01 | `(tenant_id,subject_id,case_id)` grant 迁移与 revision；API 同事务锁定活动授权；创建者与受理原子授予；撤销/过期及跨主体回归通过；授权管理 HTTP 由 D-01-05 开放 |
 | D-01-04 | auth/introspection.py、auth/guard.py、api/：RFC 7662 撤销判定；静态 HTTPS endpoint、凭据只存注入客户端、有界 TTL 缓存、验签后按 active/sub/tenant 一致性 fail-closed | D-01-01、D-01-02 | endpoint 非 HTTPS 或凭据缺失时拒绝启动；`active=false`、sub/tenant 不一致、已过期判定、传输/解析/超大响应失败均返回 `UNAUTHENTICATED` 且不回退到合成身份；缓存不存 token 本身、有界且不缓存已过期判定 |
+| D-01-05 | auth/grants.py、persistence/、api/：Case 授权管理面；租户级 grant scope、可授予闭集与委派上限、乐观并发替换/撤销、同事务审计事件 | D-01-03、D-01-04 | 管理员能把他人工单移交给另一主体并由其真实决策 Review；撤销后重新 `403`；重放或过期 revision 返回 `409`；非管理员 `403` 且无写入；闭集外权限 `400` 且不落库；不能授出自己没有的权限；每次变更在同一事务写入 `case_grant.granted`/`case_grant.revoked` 与完整快照 |
 | D-02 | PostgreSQL/对象备份恢复、保留删除、RPO/RTO、版本升级 | 实际恢复演练、恢复点之后外部动作核对；不是只检查备份任务显示成功 |
 | D-03 | 稳态/突发/集中唤醒压测、成本、资源限额和扩容 | 公布版本、工作负载、失败率、延迟/队列年龄和资源成本，不拿样例参数当 SLA |
 | D-04 | 按瓶颈评估 Broker、暖池、ACP、长期记忆或额外供应商 | 每个新增组件有需要、方案、代价、迁移和验收，未启用项明确保留为候选 |

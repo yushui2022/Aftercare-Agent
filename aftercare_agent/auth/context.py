@@ -86,6 +86,12 @@ def synthetic_context(*, enabled: bool, tenant_id: str, subject_id: str) -> Auth
                 "review:decide",
                 "approval:read",
                 "approval:decide",
+                # Grant administration is a tenant-level operator scope, so the
+                # local identity can exercise the administration surface end to
+                # end.  It stays test-only: a configured verifier disables
+                # synthetic identities entirely.
+                "grant:read",
+                "grant:admin",
             }
         ),
         synthetic=True,

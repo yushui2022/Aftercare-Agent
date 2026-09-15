@@ -11,7 +11,7 @@
 
 依赖声明见 [pyproject.toml](../pyproject.toml)，精确解析结果见 [uv.lock](../uv.lock)。不需要并排克隆 EGM；默认安装不能引用相邻工作区的未提交内容。普通 pip 安装单独的 wheel 不会自动使用 uv.lock，不能据此声称传递依赖完全相同。
 
-运行测试不需要模型 API Key、退款凭证、数据库服务或 Docker。测试使用合成回执和临时 SQLite；EGM PostgreSQL 模块可导入不等于已经测试 PostgreSQL 的事务与并发。
+运行测试不需要模型 API Key、退款凭证、数据库服务或 Docker：默认离线子集使用合成回执和临时 SQLite，需要 PostgreSQL 的集成测试会安全跳过（跳过不是验收，本机跑法见 §3）。EGM PostgreSQL 模块可导入不等于已经测试 PostgreSQL 的事务与并发。
 
 ## 2. 本机 Windows 安装
 
@@ -66,6 +66,39 @@ uv run --locked pytest -q
 - [适配器回归](../tests/test_evidence_adapter.py)：成功/失败回执、固定声明、角色与租户隔离、重放及响应信封。
 - [安装包契约](../tests/test_package_contract.py)：固定 Git 来源、包元数据、py.typed、内置 aftercare schema 和 PostgreSQL 迁移资源；不连接数据库。
 - tests/contracts：运行对象、身份/幂等、租约前置条件、等待候选、事件顺序、检查点/工具参数和调查证据正反例；这些是纯规则，不证明事务原子性或多进程恢复。契约定义见[运行时](contracts/runtime-v1.md)与[调查证据](contracts/investigation-v1.md)。
+
+### 本机临时 PostgreSQL（集成测试）
+
+没有 `DATABASE_URL` 时，所有需要 PostgreSQL 的集成测试会安全跳过，跳过不等于验收。在
+Windows 开发机上不必先起 Docker：如果本机装有 PostgreSQL（本机为 `D:\postgresql\16\bin`），
+可以用它自带的工具建一个**独立的临时集群**，不影响既有服务实例。本机 5432 由 Windows
+服务 `postgresql-x64-16` 持有，其 `pg_hba.conf` 全部是 `scram-sha-256` 且没有可用凭据，
+不要去改它的认证配置，也不要复用它的数据目录。
+
+```powershell
+$root = 'G:\DevCache\Temp\aftercare-pg'   # 临时集群放 G 盘
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+Set-Content -Path "$root\pw.txt" -Value 'aftercarelocal' -NoNewline -Encoding ascii
+& 'D:\postgresql\16\bin\initdb.exe' -D "$root\data" -U aftercare --pwfile="$root\pw.txt" -A scram-sha-256 -E UTF8 --locale=C
+Remove-Item "$root\pw.txt"
+& 'D:\postgresql\16\bin\pg_ctl.exe' -D "$root\data" -o "-p 55450 -c listen_addresses=127.0.0.1" -l "$root\server.log" start
+$env:PGPASSWORD = 'aftercarelocal'
+& 'D:\postgresql\16\bin\createdb.exe' -h 127.0.0.1 -p 55450 -U aftercare aftercare
+$env:DATABASE_URL = 'postgresql://aftercare:aftercarelocal@127.0.0.1:55450/aftercare'
+uv run --locked pytest -q
+```
+
+- 端口用 55450 这类高位端口，避开既有实例的 5432。`pg_ctl start` 在 PowerShell 里可能
+  迟迟不返回；用 `psql` 或 `$root\server.log` 确认 `database system is ready` 后再继续，
+  不要因为等不到返回就重复启动第二个实例。
+- 集成测试假设库是干净的：同一套件连跑第二次会出现跨用例污染（实测第二次 19 项失败）。
+  每轮全量前重建库：`dropdb`/`createdb` 同一连接参数重跑一次即可。
+- 完整验证后停掉临时实例（`pg_ctl -D "$root\data" stop`），需要清理时再删除 `$root`。
+- 本机是 PostgreSQL 16.13，CI 是 `postgres:17`，两者不是同一版本；本机通过不等于 CI
+  通过，远端结果才是权威。
+- 整机满载时 `tests/persistence/test_worker.py::test_worker_heartbeat_keeps_long_slice_lease_alive`
+  可能失败：该用例给 200 ms 租约、30 ms 心跳间隔，线程被调度延迟就会报
+  `lease heartbeat failed`。单独运行稳定通过，判定为负载相关抖动，不是功能回归。
 
 ## 4. 构建 sdist，再由 sdist 构建 wheel
 

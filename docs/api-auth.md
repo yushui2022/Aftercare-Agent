@@ -116,9 +116,9 @@ JWKS URL 必须是静态 HTTPS 配置，不能由 Token 的 `iss` 或 Header 控
 审计。每个 Case 路由在自己的短事务中锁定活动行；没有行、已撤销或已过期均返回 `403`。
 Token 的 `case_ids` 只能进一步收窄数据库结果，Token scope 与数据库权限取交集，不能凭
 声明新增权限。新建 Case 时创建者的 `case:read` grant 与受理事务一起写入；幂等重放不会
-为另一主体自动补授权。当前仍没有权限管理 UI、RLS、实时授权事件或真实 IdP 演练
-（Token 撤销/introspection 见下一节）；长寿命 Token、把全租户权限映射给普通用户都不应
-直接用于生产。
+为另一主体自动补授权。授权管理 HTTP 已由 D-01-05 一节补齐，第一次有了把工单移交给他人的
+受审计入口；管理 UI、RLS、实时授权事件和真实 IdP 演练仍然没有（Token 撤销/introspection
+见下一节）。长寿命 Token、把全租户权限映射给普通用户都不应直接用于生产。
 需要人工控制面时，仍须在权限映射和 CaseGrant 中显式授予 `review:*`/`approval:*` scope。
 运行依赖为 `PyJWT[crypto]` 与 `httpx`，密钥轮换、JWKS 可用性、授权映射和生产审计留痕
 仍需 D-01 后续验收。
@@ -151,3 +151,41 @@ $env:AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET = "<provider secret>"
 数据库）。仍未验证：真实 IdP 的 introspection 端点与凭据轮换、IdP 侧限流和超时行为、
 RLS、权限管理 UI 与生产演练。撤销判定不替代 CaseGrant：它回答"Token 是否仍然活跃"，
 不回答"这个主体能不能操作这个 Case"。
+
+## Case 授权管理面（D-01-05）
+
+此前 `CaseGrantRepository.grant()/revoke()` 只有一个调用点：受理新 Case 时给创建者授
+`case:read`。于是租户内没有任何人能改动授权，最普通的运营动作——把一件工单移交给另一个
+操作员或主管——无法完成。本轮开放管理面（决策见
+[ADR-0004](decisions/0004-case-grant-administration.md)）：
+
+| 路由 | 所需权限 | 行为 |
+| --- | --- | --- |
+| `GET /v1/cases/{case_id}/grants` | 租户级 `grant:read` | 列出该 Case 的全部授权行（含已撤销），按 `subject_id` 升序，`limit` 上限 200 |
+| `POST /v1/cases/{case_id}/grants` | 租户级 `grant:admin` | 授予或替换一个主体的授权 |
+| `POST /v1/cases/{case_id}/grants/{subject_id}/revoke` | 租户级 `grant:admin` | 撤销授权；行保留用于审计与 revision 校验 |
+
+```json
+{"subject_id": "operator-7", "permissions": ["case:read", "review:decide"],
+ "expires_at": "2026-09-16T00:00:00+00:00", "expected_revision": 1}
+```
+
+管理权是租户级角色，管理面**不**解析调用者自己的 `CaseGrant`：若管理动作也要求先持有该
+Case 的 grant，第一条授权永远发不出去。防止它变成提权通道的是另外两条不变量：
+
+- 闭集：可授予权限只有 `case:read`、`review:read`、`review:decide`、`approval:read`、
+  `approval:decide`。`case:create` 与 `grant:*` 故意不在其中——一张 Case 行不能放大成
+  租户级权限；闭集之外的字符串返回 `400` 且不落库。
+- 委派上限：不能授出调用者自己没有的权限，越界返回 `403`，因此管理面无法自我提权。需要
+  授出 `approval:decide` 的管理员必须自己先持有该 scope，角色分配属于 IdP 而不是本 API。
+
+请求体禁止 `tenant_id`、`case_id`、`granted_by`、`revoked_by`、`revision`；租户、Case 和
+执行人取自认证上下文，响应投影也不返回租户。未知 Case 与其他租户的 Case 都返回 `403`，
+与既有单资源端点一致。`expires_at` 必须带时区且晚于数据库 `clock_timestamp()`，否则返回
+`400`。替换与撤销都必须携带读到的 `expected_revision`；重放或用过期 revision 返回 `409`，
+避免一次超时重试把同一行静默改写第二次。
+
+每次变更在同一个事务内追加 `case_grant.granted` / `case_grant.revoked` 事件和完整快照，
+因此授权历史可以直接按 Case 事件流审计；这两类事件没有 `run_id`，授权变更不是 Run 推进的
+一部分。管理面改变的是权威状态而不是调用者的即时权限：`CaseGrant` 仍是“使用时”的权威，
+撤销不会中断已经在途的请求。仍未完成：管理 UI、RLS、真实 IdP 权限映射与演练。

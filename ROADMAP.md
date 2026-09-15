@@ -35,7 +35,7 @@
 
 ## B：受控外部业务动作
 
-实现 Action Ledger、审批绑定、稳定幂等键、支付聚合约束、额度预留、派发和 UNKNOWN 核对，随后接已授权供应商测试环境。当前已完成审批门禁、绑定 Wait 的 Inbox 原子唤醒、显式合成身份下的 operator 审批决定 API、provider-neutral JWT/JWKS Bearer 验签入口和最小 PostgreSQL CaseGrant；真实 IdP 权限映射、撤销/introspection、支付聚合和供应商对账仍待实现。通知外发同样需要可靠动作语义。依赖 A2 执行基础，完整业务闭环验收依赖 A3。
+实现 Action Ledger、审批绑定、稳定幂等键、支付聚合约束、额度预留、派发和 UNKNOWN 核对，随后接已授权供应商测试环境。当前已完成审批门禁、绑定 Wait 的 Inbox 原子唤醒、显式合成身份下的 operator 审批决定 API、provider-neutral JWT/JWKS Bearer 验签入口、最小 PostgreSQL CaseGrant、RFC 7662 撤销判定和 Case 授权管理 HTTP（[ADR-0004](docs/decisions/0004-case-grant-administration.md)）；真实 IdP 权限映射与演练、RLS、支付聚合和供应商对账仍待实现。通知外发同样需要可靠动作语义。依赖 A2 执行基础，完整业务闭环验收依赖 A3。
 
 ## C：按需沙箱与试点部署
 

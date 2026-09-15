@@ -1,6 +1,7 @@
 # ADR-0003：将 Token 身份与 Case 资源授权分离
 
-状态：接受，D-01-03 实施中。真实 IdP、权限管理后台和 RLS 仍不在本 ADR 范围内。
+状态：接受，D-01-03 已实施。真实 IdP 演练和 RLS 仍不在本 ADR 范围内；授权管理 HTTP
+由 [ADR-0004](0004-case-grant-administration.md) 开放，并替代本文决策第 2 条的后半句。
 
 ## 背景
 
@@ -14,7 +15,8 @@ JWT/JWKS 验证只能证明“谁签发了这个主体”和 token 携带的粗�
    验证。请求体、路径和模型输出不能修改这些字段。
 2. PostgreSQL 的 `CaseGrant` 是 Case 访问的权威来源，按
    `(tenant_id, subject_id, case_id)` 保存授予的 scope、有效期、撤销时间和 revision。
-   只有可信服务端 Repository 能写入授权；本轮不开放管理 HTTP。
+   只有可信服务端代码能写入授权；暴露给客户端的写入口受租户级 `grant:admin` 和
+   ADR-0004 的闭集/委派上限约束，不能让一张 Case 行放大成租户级权限。
 3. 每个带 Case 的业务操作在自己的短事务中锁定并检查当前 grant。有效 grant 的权限与
    token scope 取交集；token 中的 `case_ids` 只能是额外的上界，不能绕过数据库 grant。
    没有 grant、已撤销或已过期均 fail closed。授权检查和业务读取/写入不能拆成“先检查、
@@ -28,4 +30,5 @@ JWT/JWKS 验证只能证明“谁签发了这个主体”和 token 携带的粗�
 这会增加一张授权表和每次 Case 操作的一次短查询，但撤销、最小权限和跨主体隔离有了
 可审计的权威状态。JWT 无需携带大 Case 列表；后续可加入版本化缓存或 RLS，但不能把
 缓存命中当作永久授权。当前实现仍未提供权限管理 UI、实时撤销/introspection、真实
-IdP 演练或生产 RLS，不能据此宣称生产就绪。
+IdP 演练或生产 RLS，不能据此宣称生产就绪（撤销/introspection 见 D-01-04，授权管理
+HTTP 见 ADR-0004）。

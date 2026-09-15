@@ -10,6 +10,8 @@ from pydantic import TypeAdapter, ValidationError
 from aftercare_agent.auth.grants import CaseGrantRecord
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, Identifier
 
+from .grant_events import append_case_grant_event
+
 _IDENTIFIER: TypeAdapter[str] = TypeAdapter(Identifier)
 
 
@@ -40,8 +42,12 @@ class CaseGrantRepository:
     ``resolve`` takes a row lock for the duration of the caller's transaction.
     API code therefore resolves and uses a grant in the same transaction, so a
     concurrent revoke cannot pass authorization and then affect the operation.
-    Grant/revoke are trusted control-plane operations; there is intentionally no
-    public HTTP route for them in this slice.
+
+    Grant/revoke are trusted control-plane operations.  They are reachable only
+    through the tenant-administrator routes (see ADR-0004), never from a
+    request body's own claims, and every change appends an immutable
+    ``case_grant.*`` event in the same transaction so the ACL has an audit
+    trail that cannot be skipped.
     """
 
     def _record(self, row: tuple[object, ...]) -> CaseGrantRecord:
@@ -152,7 +158,9 @@ class CaseGrantRepository:
             ).fetchone()
             if inserted is None:
                 raise ContractViolation(ErrorCode.RETRYABLE, "Case grant insert outcome is unknown")
-            return self._record(inserted)
+            created = self._record(inserted)
+            append_case_grant_event(connection, created, kind="case_grant.granted")
+            return created
         current = self._record(row)
         if expected_revision is None or expected_revision != current.revision:
             raise ContractViolation(ErrorCode.CONFLICT, "Case grant revision mismatch")
@@ -167,7 +175,9 @@ class CaseGrantRepository:
         ).fetchone()
         if updated is None:
             raise ContractViolation(ErrorCode.CONFLICT, "Case grant revision mismatch")
-        return self._record(updated)
+        replaced = self._record(updated)
+        append_case_grant_event(connection, replaced, kind="case_grant.granted")
+        return replaced
 
     def revoke(
         self,
@@ -202,4 +212,32 @@ class CaseGrantRepository:
         ).fetchone()
         if updated is None:
             raise ContractViolation(ErrorCode.CONFLICT, "Case grant revision mismatch")
-        return self._record(updated)
+        revoked = self._record(updated)
+        append_case_grant_event(connection, revoked, kind="case_grant.revoked")
+        return revoked
+
+    def list_for_case(
+        self,
+        connection: psycopg.Connection[Any],
+        tenant_id: str,
+        case_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[CaseGrantRecord]:
+        """List one Case's grants, active and historical, for its administrators.
+
+        This is a read of the authorization table, not an authorization
+        decision: callers must have already established the tenant-level grant
+        administration scope.  No row is locked, so an administration view can
+        never hold a grant lock open while a request is in flight.
+        """
+        tenant = _identifier(tenant_id, "tenant_id")
+        case = _identifier(case_id, "case_id")
+        rows = connection.execute(
+            "SELECT tenant_id,subject_id,case_id,permissions,revision,granted_by,"
+            "granted_at,expires_at,revoked_at,revoked_by,updated_at "
+            "FROM aftercare_case_grants WHERE tenant_id=%s AND case_id=%s "
+            "ORDER BY subject_id ASC LIMIT %s",
+            (tenant, case, limit),
+        ).fetchall()
+        return [self._record(row) for row in rows]

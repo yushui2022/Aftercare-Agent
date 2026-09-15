@@ -75,14 +75,17 @@
 
 EGM 仓库仍有 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮沿用该授权推送 D-01-04。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮沿用该授权推送 D-01-04，提交 `cd6ba9b`（撤销判定）与 `e3a7586`（CI 回归修复）已在 `origin/main`，GitHub Actions run [34951354092](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34951354092)（`ci`）为 `success`。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
 
 
-- 2026-09-15 / D-01-04 远端 CI 回归与修复（提交 `cd6ba9b`）：推送后 GitHub Actions run [34950559478](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34950559478) 的 `Static checks` 通过，但 `Test with PostgreSQL` 失败（`2 failed, 463 passed`），两项都是 `tests/test_api_integration.py` 的 `_StubBearerVerifier.verify() got an unexpected keyword argument 'now'`。本机 87 项集成测试因 Docker 守护进程未就绪全部跳过，只有 CI 能暴露该问题。根因不是测试写法，而是接缝缺少类型：`create_app(oidc_verifier=...)` 接受具体类 `JwtJwksVerifier`，测试替身只能靠 `cast` 绕过类型检查，签名漂移在编译期不可见。修复：新增 `auth.guard.TokenVerifier` Protocol（`verify(authorization, *, now=None) -> AuthContext`），`TokenAccessGuard` 与 `create_app` 改为面向该 Protocol，`_StubBearerVerifier` 去掉 `cast` 并按真实签名接收 `now`。实证该修复有效：把替身签名改回缺少 `now` 后 mypy 报 `Following member(s) of "_StubBearerVerifier" have conflicts`，即同类缺陷现在会在 `Static checks` 阶段被拦住。同时把 guard 的验签与撤销判定收敛到同一个时钟读数，并新增 2 项回归锁定（显式 `now` 与自动时钟两种情况都要求两步看到同一时刻）。修复后本机离线全量 `380 passed, 87 skipped`，`ruff format --check`（109 文件）、`ruff check` 与严格 mypy（109 文件）通过；修复提交的远端结果见后续条目。
+- 2026-09-15 / D-01-04 远端 CI 回归与修复（提交 `cd6ba9b`）：推送后 GitHub Actions run [34950559478](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34950559478) 的 `Static checks` 通过，但 `Test with PostgreSQL` 失败（`2 failed, 463 passed`），两项都是 `tests/test_api_integration.py` 的 `_StubBearerVerifier.verify() got an unexpected keyword argument 'now'`。本机 87 项集成测试因 Docker 守护进程未就绪全部跳过，只有 CI 能暴露该问题。根因不是测试写法，而是接缝缺少类型：`create_app(oidc_verifier=...)` 接受具体类 `JwtJwksVerifier`，测试替身只能靠 `cast` 绕过类型检查，签名漂移在编译期不可见。修复：新增 `auth.guard.TokenVerifier` Protocol（`verify(authorization, *, now=None) -> AuthContext`），`TokenAccessGuard` 与 `create_app` 改为面向该 Protocol，`_StubBearerVerifier` 去掉 `cast` 并按真实签名接收 `now`。实证该修复有效：把替身签名改回缺少 `now` 后 mypy 报 `Following member(s) of "_StubBearerVerifier" have conflicts`，即同类缺陷现在会在 `Static checks` 阶段被拦住。同时把 guard 的验签与撤销判定收敛到同一个时钟读数，并新增 2 项回归锁定（显式 `now` 与自动时钟两种情况都要求两步看到同一时刻）。修复后本机离线全量 `380 passed, 87 skipped`，`ruff format --check`（109 文件）、`ruff check` 与严格 mypy（109 文件）通过；修复提交 `e3a7586` 的远端结果见下一条。
+
+
+- 2026-09-15 / D-01-04 远端 CI 验收（提交 `e3a7586`）：GitHub Actions run [34951354092](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34951354092) 的 `Static checks` 与 `Test with PostgreSQL` 全部通过，真实 PostgreSQL 17 上报告 `467 passed, 52 warnings`，正好等于本机 380 项离线测试加上本机因 Docker 未就绪而跳过的 87 项集成测试，因此撤销切片修复后的全量范围已有远端证据。该结果只对应提交 `e3a7586`，不代表后续改动；唯一注解仍是 actions/checkout 与 setup-uv 的 Node 20 弃用提示，不影响结果。
 
 
 - 2026-09-15 / D-01-04 撤销与 introspection 边界：新增 `auth/introspection.py`（`IntrospectionConfig` 静态策略、`IntrospectionVerdict`、`token_fingerprint`、`parse_verdict`、`HttpTokenIntrospector`、`CachedIntrospector`）和 `auth/guard.py`（`TokenAccessGuard`），并在 `create_app(..., introspector=...)` 与 `create_default_app()` 的 `AFTERCARE_OIDC_INTROSPECTION_URL`/`_CLIENT_ID`/`_CLIENT_SECRET` 上接线。关键行为：判定与凭据分离（凭据只存在于注入的 `httpx.Client`，不进契约模型或 `repr`，Token 不写日志）；`active` 缺失或非布尔值即拒绝，`sub`/`tenant_id`/`exp` 若存在必须类型正确且与已验证 Token 一致；缓存以 SHA-256 指纹为键、有界、只缓存 TTL 内的判定、已过期判定不缓存，失败不缓存；验签之后的任何失败（`active=false`、sub/tenant 不一致、判定过期、传输/解析/超大响应错误、未预期异常）统一 fail-closed 为 `401 unauthenticated`，不回退合成身份。新增 `tests/test_token_revocation.py`（含 API 层撤销拒绝与"不降级为合成身份"）。本机离线全量 `380 passed, 87 skipped`（含首轮 70 项与后续 2 项时钟一致性回归）；`ruff format --check`（109 文件）、`ruff check` 与严格 mypy（`aftercare_agent tests evals`，109 文件）通过。**本轮没有调用任何真实 IdP，也没有运行需要 PostgreSQL 的集成测试**：本机 Docker 守护进程仍未就绪，87 项集成测试跳过；该切片在认证边界内结束，不触达数据库。真实 IdP introspection 端点、凭据轮换、IdP 限流/超时行为和 RLS 仍未验证。
@@ -283,6 +286,8 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 关键风险：本轮包依赖升级尚未重跑 EGM PostgreSQL 全量验收，A1 必须补足；新旧路线图的阶段名称必须一致；不能把 fencing 延后为性能优化；A 阶段通知不得真实外发；同进程不等于同事务；未提交图稿和其他仓库改动不属于本任务。
 
 ## 8. 最近交接记录
+
+- 2026-09-15 / D-01-04 完成并推送：新增 RFC 7662 撤销判定（`auth/introspection.py`、`auth/guard.py`、`TokenVerifier` Protocol、`create_app`/`create_default_app` 接线与关机钩子）与 72 项离线回归；提交 `cd6ba9b`、`e3a7586` 已推送到 `origin/main`，CI run [34951354092](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34951354092) 为 `success`，真实 PostgreSQL 17 上 `467 passed, 52 warnings`。本轮未部署、未发布包、未连接生产数据库、未调用真实 IdP。**本机 Docker 守护进程仍未就绪，本轮本机没有执行过任何集成测试（87 项全部跳过）**，数据库侧结论完全来自 CI；下一位接手者若在本机改动认证/数据库边界，必须预期"本机全绿但 CI 可能失败"。下一项候选：D-01 真实 IdP 演练/RLS/权限管理面、A3-04 把 Harness 等待与审批分支纳入评测、B-02-03 供应商回执核对、C-02 真实沙箱后端。
 
 - 2026-09-14 / 远端 CI 修复：定位到 `main` 上连续失败的根因是 `uv python install 3.13.15` 在 uv 0.9.26 内置索引（止于 3.13.11）中找不到该补丁，改为 CI job 级 `UV_PYTHON_DOWNLOADS_JSON_URL` 指向固定提交元数据，并同步 `docs/development.md`。本轮未提交、未推送，**没有绿色 run 证据**，远端 CI 仍不能视为已修复完成。下一步：提交并推送后在 GitHub 确认转绿，之后才考虑加 CI 徽章；LICENSE/SECURITY.md/Issue 模板等开源前置项仍未处理。
 

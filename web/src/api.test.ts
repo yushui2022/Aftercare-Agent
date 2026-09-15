@@ -52,4 +52,52 @@ describe("operator API client", () => {
       decision_reason: "ok",
     });
   });
+
+  it("reads one case's access rows through the bounded list route", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ grants: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listCaseGrants(identity, "case/1", 25);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/cases/case%2F1/grants?limit=25");
+    expect(new Headers(init.headers).get("X-Synthetic-Subject")).toBe("operator-1");
+  });
+
+  it("sends the revision the operator read instead of an idempotency key", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ revision: 2 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.grantCaseAccess(identity, "case-1", {
+      subject_id: "operator-7",
+      permissions: ["case:read"],
+      expires_at: "2026-09-16T00:00:00.000Z",
+      expected_revision: 2,
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/cases/case-1/grants");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("Content-Type")).toBe("application/json");
+    // Optimistic concurrency replaces the idempotency key on this route.
+    expect(new Headers(init.headers).get("Idempotency-Key")).toBeNull();
+    expect(JSON.parse(String(init.body))).toEqual({
+      subject_id: "operator-7",
+      permissions: ["case:read"],
+      expires_at: "2026-09-16T00:00:00.000Z",
+      expected_revision: 2,
+    });
+  });
+
+  it("revokes through the subject path segment", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ revision: 4 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.revokeCaseAccess(identity, "case-1", "operator-7", { expected_revision: 3 });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/cases/case-1/grants/operator-7/revoke");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ expected_revision: 3 });
+  });
 });

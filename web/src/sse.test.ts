@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { SseDecoder, appendEvent, nextBackoffMs, parseCaseEvent } from "./sse";
+import { SseDecoder, appendEvent, appendEvents, nextBackoffMs, parseCaseEvent } from "./sse";
 import type { CaseEvent } from "./types";
 
 function event(seq: number, type = "review.requested"): CaseEvent {
@@ -113,6 +113,35 @@ describe("appendEvent", () => {
       current = appendEvent(current, event(seq), 3);
     }
     expect(current.map((item) => item.case_seq)).toEqual([4, 5, 6]);
+  });
+});
+
+describe("appendEvents", () => {
+  it("keeps every event of a delivered batch", () => {
+    const merged = appendEvents([], [event(1), event(2)]);
+
+    expect(merged.map((item) => item.case_seq)).toEqual([1, 2]);
+  });
+
+  it("keeps a single new event instead of collapsing the timeline", () => {
+    // Regression: `reduce(appendEvent, current)` passed the element index as
+    // appendEvent's `cap`, so a one-event batch reduced to `[]` and the live
+    // timeline silently emptied itself as soon as a new event arrived.
+    const merged = appendEvents([event(1)], [event(2)]);
+
+    expect(merged.map((item) => item.case_seq)).toEqual([1, 2]);
+  });
+
+  it("merges a redelivered batch without duplicating or reordering", () => {
+    const merged = appendEvents([event(1), event(3)], [event(3), event(2)]);
+
+    expect(merged.map((item) => item.case_seq)).toEqual([1, 2, 3]);
+  });
+
+  it("applies the cap across the whole batch", () => {
+    const merged = appendEvents([event(1), event(2)], [event(3), event(4)], 3);
+
+    expect(merged.map((item) => item.case_seq)).toEqual([2, 3, 4]);
   });
 });
 

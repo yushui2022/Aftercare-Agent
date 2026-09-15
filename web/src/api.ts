@@ -1,10 +1,13 @@
 import { identityHeaders, request, toError, type Identity } from "./http";
+import type { GrantBody, RevokeBody } from "./grants";
 import { SseDecoder, parseCaseEvent } from "./sse";
 import type {
   Approval,
   ApprovalListResponse,
   CaseDetail,
   CaseEvent,
+  CaseGrant,
+  CaseGrantListResponse,
   CaseListResponse,
   CaseStatus,
   Review,
@@ -116,6 +119,48 @@ export const api = {
       identity,
       `/v1/cases/${encodeURIComponent(caseId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
       decisionInit({ decision, decision_reason: reason === "" ? null : reason }, idempotencyKey),
+    );
+  },
+
+  /** Access rows for one Case, including revoked history, for the admin view. */
+  listCaseGrants(identity: Identity, caseId: string, limit = 50): Promise<CaseGrantListResponse> {
+    return request<CaseGrantListResponse>(
+      identity,
+      `/v1/cases/${encodeURIComponent(caseId)}/grants?limit=${String(limit)}`,
+    );
+  },
+
+  /**
+   * Grant or replace one subject's access to a Case.
+   *
+   * Optimistic concurrency takes the place of an idempotency key here: a first
+   * grant omits `expected_revision`, and a replacement must carry the revision
+   * the operator actually read, so a blind retry after a timeout answers
+   * `409` instead of applying twice.
+   */
+  grantCaseAccess(identity: Identity, caseId: string, body: GrantBody): Promise<CaseGrant> {
+    return request<CaseGrant>(identity, `/v1/cases/${encodeURIComponent(caseId)}/grants`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** Revoke one subject; the row stays for audit and revision checks. */
+  revokeCaseAccess(
+    identity: Identity,
+    caseId: string,
+    subjectId: string,
+    body: RevokeBody,
+  ): Promise<CaseGrant> {
+    return request<CaseGrant>(
+      identity,
+      `/v1/cases/${encodeURIComponent(caseId)}/grants/${encodeURIComponent(subjectId)}/revoke`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
     );
   },
 };

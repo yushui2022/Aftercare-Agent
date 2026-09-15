@@ -494,6 +494,73 @@ th {
   font-size: 13px;
 }
 
+.badge.grant-active {
+  background: #e7f6ee;
+  color: var(--positive);
+}
+
+.badge.grant-expired {
+  background: #fff4e0;
+  color: var(--warn);
+}
+
+.badge.grant-revoked {
+  background: #f3e8e8;
+  color: var(--negative);
+}
+
+.grant-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.grant-form > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.grant-perms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.grant-perms legend {
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.permission-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.grant-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.grant-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--negative);
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;

@@ -109,6 +109,26 @@ export function appendEvent(events: CaseEvent[], event: CaseEvent, cap = 500): C
   return next.length > cap ? next.slice(next.length - cap) : next;
 }
 
+/**
+ * Fold one delivered batch into the timeline.
+ *
+ * Use this instead of `incoming.reduce(appendEvent, current)`: `reduce` passes
+ * the element index as its third argument, which `appendEvent` reads as `cap`.
+ * A one-event batch therefore reduced to `[]` and silently emptied the live
+ * timeline, and a longer batch lost its first events.
+ */
+export function appendEvents(
+  events: CaseEvent[],
+  incoming: readonly CaseEvent[],
+  cap = 500,
+): CaseEvent[] {
+  let next = events;
+  for (const event of incoming) {
+    next = appendEvent(next, event, cap);
+  }
+  return next;
+}
+
 /** Deterministic capped exponential backoff, in milliseconds. */
 export function nextBackoffMs(attempt: number, baseMs = 1000, maxMs = 15000): number {
   const exponent = Math.max(0, attempt - 1);

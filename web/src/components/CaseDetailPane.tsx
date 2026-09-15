@@ -1,9 +1,18 @@
 import { useState } from "react";
 
+import type { GrantBody, RevokeBody } from "../grants";
 import { APPROVAL_STATE_LABEL, CASE_STATUS_LABEL, RUN_STATE_LABEL, formatTime } from "../labels";
 import type { StreamStatus } from "../sse";
-import type { Approval, CaseDetail, CaseEvent, Review, ReviewDecision } from "../types";
+import type {
+  Approval,
+  CaseDetail,
+  CaseEvent,
+  CaseGrant,
+  Review,
+  ReviewDecision,
+} from "../types";
 import { EventTimeline } from "./EventTimeline";
+import { GrantPanel } from "./GrantPanel";
 
 const STREAM_LABEL: Record<StreamStatus, string> = {
   connecting: "连接中",
@@ -66,6 +75,11 @@ interface Props {
   live: boolean;
   busy: boolean;
   pendingDecisionIds: ReadonlySet<string>;
+  /** null when the identity may not read grants, so no request is sent. */
+  grants: CaseGrant[] | null;
+  pendingGrantSubjects: ReadonlySet<string>;
+  onGrant: (body: GrantBody) => Promise<boolean>;
+  onRevoke: (subjectId: string, body: RevokeBody) => Promise<boolean>;
   onToggleLive: () => void;
   onReviewDecision: (reviewId: string, decision: ReviewDecision, reason: string) => void;
   onApprovalDecision: (
@@ -84,6 +98,10 @@ export function CaseDetailPane({
   live,
   busy,
   pendingDecisionIds,
+  grants,
+  pendingGrantSubjects,
+  onGrant,
+  onRevoke,
   onToggleLive,
   onReviewDecision,
   onApprovalDecision,
@@ -247,6 +265,17 @@ export function CaseDetailPane({
           </ul>
         )}
       </div>
+
+      {grants === null ? null : (
+        <GrantPanel
+          grants={grants}
+          actorPermissions={detail.permissions}
+          busy={busy}
+          pendingSubjects={pendingGrantSubjects}
+          onGrant={onGrant}
+          onRevoke={onRevoke}
+        />
+      )}
 
       <div className="panel">
         <div className="panel-head">

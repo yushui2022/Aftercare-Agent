@@ -86,6 +86,30 @@ export interface ApprovalListResponse {
   approvals: Approval[];
 }
 
+/**
+ * One Case access grant as the administration projection returns it.
+ *
+ * The tenant stays a server-side scope and is never sent, so the workbench
+ * cannot show or choose it.  `revision` is the optimistic-concurrency token
+ * for the next replace or revoke.
+ */
+export interface CaseGrant {
+  case_id: string;
+  subject_id: string;
+  permissions: string[];
+  revision: number;
+  granted_by: string;
+  granted_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  updated_at: string;
+}
+
+export interface CaseGrantListResponse {
+  grants: CaseGrant[];
+}
+
 export interface CaseEvent {
   case_seq: number;
   event_type: string;

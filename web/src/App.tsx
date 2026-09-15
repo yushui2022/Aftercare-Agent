@@ -4,11 +4,13 @@ import { ApiError, api, type Identity } from "./api";
 import { CaseDetailPane } from "./components/CaseDetailPane";
 import { CaseList } from "./components/CaseList";
 import { IdentityBar } from "./components/IdentityBar";
-import { appendEvent, subscribeCaseEvents, type StreamStatus } from "./sse";
+import type { GrantBody, RevokeBody } from "./grants";
+import { appendEvents, subscribeCaseEvents, type StreamStatus } from "./sse";
 import type {
   Approval,
   CaseDetail,
   CaseEvent,
+  CaseGrant,
   CaseStatus,
   CaseSummary,
   Review,
@@ -21,6 +23,8 @@ interface Workspace {
   detail: CaseDetail;
   reviews: Review[];
   approvals: Approval[];
+  /** null when this identity may not read access rows. */
+  grants: CaseGrant[] | null;
 }
 
 function describe(cause: unknown): string {
@@ -48,6 +52,9 @@ export default function App() {
   } | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [pendingDecisionIds, setPendingDecisionIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [pendingGrantSubjects, setPendingGrantSubjects] = useState<Set<string>>(
     () => new Set(),
   );
   const listGeneration = useRef(0);
@@ -146,30 +153,49 @@ export default function App() {
     }
     let cancelled = false;
     setDetailBusy(true);
-    Promise.all([
-      api.getCase(identity, selectedId),
-      api.listReviews(identity, selectedId),
-      api.listApprovals(identity, selectedId),
-    ])
-      .then(([detail, reviews, approvals]) => {
+    void (async () => {
+      try {
+        const [detail, reviews, approvals] = await Promise.all([
+          api.getCase(identity, selectedId),
+          api.listReviews(identity, selectedId),
+          api.listApprovals(identity, selectedId),
+        ]);
+        // Access rows are a tenant-level view.  The Case projection cannot
+        // answer whether this identity may read them - a real bearer identity
+        // sees only the intersection with its grant, which never contains
+        // `grant:read` - so the server decides and a refusal just hides the
+        // panel instead of showing an error the operator cannot act on.
+        const grants = await api.listCaseGrants(identity, selectedId).then(
+          (response) => response.grants,
+          (cause: unknown) => {
+            if (cause instanceof ApiError && cause.isFatal) {
+              return null;
+            }
+            throw cause;
+          },
+        );
         if (cancelled) {
           return;
         }
-        setWorkspace({ detail, reviews: reviews.reviews, approvals: approvals.approvals });
+        setWorkspace({
+          detail,
+          reviews: reviews.reviews,
+          approvals: approvals.approvals,
+          grants,
+        });
         setError(null);
-      })
-      .catch((cause: unknown) => {
+      } catch (cause: unknown) {
         if (cancelled) {
           return;
         }
         setWorkspace(null);
         setError(describe(cause));
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) {
           setDetailBusy(false);
         }
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -204,7 +230,7 @@ export default function App() {
     }
     return subscribeCaseEvents(identity, selectedId, {
       onEvents: (incoming) => {
-        setEvents((current) => incoming.reduce(appendEvent, current));
+        setEvents((current) => appendEvents(current, incoming));
       },
       onStatus: (status, detail) => {
         setStreamStatus(status);
@@ -275,6 +301,49 @@ export default function App() {
 
   const busy = listBusy || listMoreBusy || detailBusy;
 
+  const handleGrant = useCallback(
+    async (body: GrantBody): Promise<boolean> => {
+      if (selectedId === null) {
+        return false;
+      }
+      setError(null);
+      try {
+        await api.grantCaseAccess(identity, selectedId, body);
+      } catch (cause: unknown) {
+        setError(describe(cause));
+        return false;
+      }
+      reload();
+      return true;
+    },
+    [identity, selectedId, reload],
+  );
+
+  const handleRevoke = useCallback(
+    async (subjectId: string, body: RevokeBody): Promise<boolean> => {
+      if (selectedId === null) {
+        return false;
+      }
+      setError(null);
+      setPendingGrantSubjects((current) => new Set(current).add(subjectId));
+      try {
+        await api.revokeCaseAccess(identity, selectedId, subjectId, body);
+      } catch (cause: unknown) {
+        setError(describe(cause));
+        return false;
+      } finally {
+        setPendingGrantSubjects((current) => {
+          const next = new Set(current);
+          next.delete(subjectId);
+          return next;
+        });
+      }
+      reload();
+      return true;
+    },
+    [identity, selectedId, reload],
+  );
+
   return (
     <div className="app">
       <IdentityBar
@@ -313,11 +382,15 @@ export default function App() {
             detail={workspace.detail}
             reviews={workspace.reviews}
             approvals={workspace.approvals}
+            grants={workspace.grants}
             events={events}
             streamStatus={streamStatus}
             live={live}
             busy={busy}
             pendingDecisionIds={pendingDecisionIds}
+            pendingGrantSubjects={pendingGrantSubjects}
+            onGrant={handleGrant}
+            onRevoke={handleRevoke}
             onToggleLive={() => {
               setLive((current) => !current);
             }}

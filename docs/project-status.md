@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户设定目标：按路线图持续把项目推向企业级。本轮领取 A3-04 的离线部分（闭环评测）与它暴露出的模型边界缺口；不调用真实 provider、不做外部业务动作 |
-| 当前任务 | A3-04（离线闭环评测：模型边界 + 调研提案解析 + 引用完整性 + 合成成本报告） |
+| 本轮请求范围 | 用户设定目标：按路线图持续把项目推向企业级，并在本轮明确授权提交/推送到 GitHub。本轮领取 D-01 的撤销/introspection 切片；不调用真实 IdP、不连接生产数据库、不做外部业务动作 |
+| 当前任务 | D-01-04（RFC 7662 撤销判定：introspection 边界 + 验签后接线与 fail-closed 回归） |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成 |
-| 下一项代码候选 | D-01：真实 IdP/撤销演练；A3-04：完整业务评测；B-02-03：供应商回执核对；C-01：真实沙箱后端；随后补生产准入与容量验证 |
-| 活跃实现任务 | 本轮新增 `evals/loop.py` 闭环评测与 `parse_investigation_proposal()` 模型边界解析，并重构 `evals/runner.py` 复用期望匹配；真实模型效果/账单、Harness 的 PostgreSQL 等待与审批分支仍未纳入该评测 |
-| 本轮外部行为 | 本轮只新增离线评测与域层解析函数；不调用模型、真实业务动作或生产部署；本机 Docker 守护进程未运行，需 PostgreSQL 的验证以 CI 为准 |
+| 下一项代码候选 | D-01：真实 IdP 演练、RLS、权限管理面；A3-04：Harness 等待与审批分支纳入评测；B-02-03：供应商回执核对；C-02：真实沙箱后端；随后补生产准入与容量验证 |
+| 活跃实现任务 | 本轮新增 `auth/introspection.py`（`IntrospectionConfig`/`HttpTokenIntrospector`/`CachedIntrospector`/`parse_verdict`）与 `auth/guard.py`（`TokenAccessGuard`），`create_default_app()` 按环境变量接线并在关机时关闭自有 httpx 客户端；真实 IdP 演练、RLS 与权限管理面仍未实现 |
+| 本轮外部行为 | 本轮只新增撤销判定与其离线测试；不调用真实 IdP 或模型、不做真实业务动作或生产部署；本机 Docker 守护进程未运行，需 PostgreSQL 的验证以 CI 为准 |
 
 ## 2. 核验过的源码基线
 
@@ -30,7 +30,7 @@
 
 已存在：aftercare_agent/evidence.py 及其回归；EGM 的公共应用层、PostgreSQL 后端与 join；架构、ADR 和接入资料。工作区新增可安装的 Aftercare 0.1.0a0：pyproject.toml、uv.lock、.python-version、py.typed，以及 tests/test_package_contract.py 和[开发指南](development.md)。A0-03 新增 `evals/` 合成案件目录、固定期望、确定性 runner、12 案件回归和[评测说明](evals.md)。
 
-尚未存在：完整业务 Harness、支付聚合、真实供应商连接器、沙箱接线、生产调度体系和高吞吐 live broker tail。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、合成 Aftercare 纵向切片（含订单/物流/买家观察与来源引用评估）、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒、跨实例 admission 最小闭环、显式合成身份或静态 JWKS Bearer 的 Review/Approval 控制面 API、CaseGrant，以及操作员工单发现 API、React 工作台和 case-scoped SSE replay/tail；仍不是完整执行服务。真实撤销/introspection、IdP 权限映射、RLS、生产认证验收、浏览器可访问性和高吞吐 broker 仍未完成。不要输出不存在的完整服务启动命令。
+尚未存在：完整业务 Harness、支付聚合、真实供应商连接器、沙箱接线、生产调度体系和高吞吐 live broker tail。调查 EGM 适配器和 PostgreSQL 观察账本已建立代码边界，但真实 EGM 调查 schema 尚未固定。当前已有 Fake Harness、合成 Aftercare 纵向切片（含订单/物流/买家观察与来源引用评估）、一次性/常驻 Worker、Wait/Inbox/Outbox publisher、gap buffer、Action Ledger、审批台账/派发门禁、审批 Wait 原子唤醒、跨实例 admission 最小闭环、显式合成身份或静态 JWKS Bearer 的 Review/Approval 控制面 API、CaseGrant，以及操作员工单发现 API、React 工作台和 case-scoped SSE replay/tail；仍不是完整执行服务。真实 IdP 演练与权限映射、RLS、权限管理面、生产认证验收、浏览器可访问性和高吞吐 broker 仍未完成。不要输出不存在的完整服务启动命令。
 
 当前 evidence.py 负责固定退款完成声明的证据验证；`investigation/egm.py` 负责受限调查观察写入与确定性评估。domain 已有运行时、协议、等待、事件与订单/物流/买家材料的独立纯契约；PostgreSQL 观察账本与重载已实现，但真实调查 EGM schema 与实际来源认证仍未实现，不能视为“EGM 已有所以调查已接通”。
 
@@ -64,21 +64,25 @@
 | A3-04 | IN PROGRESS | 新增离线闭环评测 `evals/loop.py`：脚本化 Responses client → 工具白名单/整数预算/`parse_investigation_proposal()` → 确定性评估，逐案报告 disposition、引用来源、未知引用、token 与合成成本，并给出稳定 digest 和可恢复的 Harness 步进；12 案件全部通过（1 个有来源建议、6 个转复核或补材料、5 个结构化/边界拒绝）；真实模型效果与账单、Harness 的等待/审批分支和生产压测仍未完成 |
 | A1-05 | IN PROGRESS | 新增 SessionMessage append-only transcript 引用表/Repository（tenant/case/session 隔离、连续序号、message_id 幂等、游标读取）与 provider-neutral `SandboxProvider` 生命周期契约；已按 2026-09-15 回填进行计划（原只存在于本台账）；真实 artifact store、Kubernetes/E2B 后端仍待实现，transcript→模型输入映射归 A3-01 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
-| D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口与 `015_case_grants.sql`/`CaseGrantRepository`：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销/introspection、真实 IdP 和生产演练仍待实现 |
+| D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口、`015_case_grants.sql`/`CaseGrantRepository` 与 D-01-04 的撤销判定：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销判定在验签后 fail-closed（见 D-01-04）；真实 IdP 演练、RLS 和权限管理面仍待实现 |
 | D-01-03 | DONE | PostgreSQL CaseGrant 按 `(tenant_id,subject_id,case_id)` 持久化 scope/revision/有效期/撤销审计；AuthContext 非 synthetic 未绑定时 fail-closed，API 在业务短事务锁定 grant；创建者授权与受理原子提交，撤销/过期/跨主体及 token 收窄回归通过；真实 IdP、introspection、RLS 和管理面仍待完成 |
+| D-01-04 | DONE | 新增 `auth/introspection.py` 与 `auth/guard.py`：RFC 7662 判定（静态 HTTPS endpoint、凭据仅存注入的 httpx 客户端、`active` 布尔校验、sub/tenant/exp 与已验证 Token 一致性、有界 TTL 缓存且不缓存已过期判定、传输/解析/超大响应 fail-closed），`TokenAccessGuard` 在验签之后执行且失败统一为 `401 unauthenticated`、不回退合成身份，`create_default_app()` 按 `AFTERCARE_OIDC_INTROSPECTION_*` 接线并在关机关闭自有客户端；新增 `tests/test_token_revocation.py` 70 项离线回归；真实 IdP 端点、凭据轮换、RLS 与管理面仍属 D-01 其余部分 |
 | C-03 | IN PROGRESS | 新增 provider-neutral Tracer、InMemoryTracer、可选 OTel bridge，并为 Outbox publish 埋点；离线回归通过；Exporter、采样/留存和生产监控尚未配置 |
 
 ## 5. 工作区与提交边界
 
-本轮提交范围为 A3-01 transcript→Responses input 映射与在途切片修复：`ResponsesInputItem`/`ResponsesInput` 输入项、`ResponsesRequest.input` 扩展、`build_responses_input()`、两处 Ruff 修复、5 项回归，以及 A1-05 回填执行计划和配套文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本轮提交范围为 D-01-04 撤销/introspection 切片：新增 `auth/introspection.py`、`auth/guard.py`、`tests/test_token_revocation.py` 70 项离线回归，`auth/oidc.py` 把 `_bearer_token` 公开为 `bearer_token`（单一解析入口），`auth/__init__.py` 导出新契约，`api/app.py` 增加 `create_app(..., introspector=...)` 与 `create_default_app()` 的环境变量接线和关机钩子，并同步 `docs/engineering-plan.md`、`docs/api-auth.md`、`docs/tech-stack.md`；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
 EGM 仓库仍有 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮以提交 `e1a210a` 推送到 `origin/main`，GitHub Actions run [34947008994](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34947008994)（`ci`）已完成且为 `success`。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮沿用该授权推送 D-01-04。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
+
+
+- 2026-09-15 / D-01-04 撤销与 introspection 边界：新增 `auth/introspection.py`（`IntrospectionConfig` 静态策略、`IntrospectionVerdict`、`token_fingerprint`、`parse_verdict`、`HttpTokenIntrospector`、`CachedIntrospector`）和 `auth/guard.py`（`TokenAccessGuard`），并在 `create_app(..., introspector=...)` 与 `create_default_app()` 的 `AFTERCARE_OIDC_INTROSPECTION_URL`/`_CLIENT_ID`/`_CLIENT_SECRET` 上接线。关键行为：判定与凭据分离（凭据只存在于注入的 `httpx.Client`，不进契约模型或 `repr`，Token 不写日志）；`active` 缺失或非布尔值即拒绝，`sub`/`tenant_id`/`exp` 若存在必须类型正确且与已验证 Token 一致；缓存以 SHA-256 指纹为键、有界、只缓存 TTL 内的判定、已过期判定不缓存，失败不缓存；验签之后的任何失败（`active=false`、sub/tenant 不一致、判定过期、传输/解析/超大响应错误、未预期异常）统一 fail-closed 为 `401 unauthenticated`，不回退合成身份。新增 `tests/test_token_revocation.py` 70 项（含 API 层撤销拒绝与"不降级为合成身份"）。本机离线全量 `378 passed, 87 skipped`；`ruff format --check`（109 文件）、`ruff check` 与严格 mypy（`aftercare_agent tests evals`，109 文件）通过。**本轮没有调用任何真实 IdP，也没有运行需要 PostgreSQL 的集成测试**：本机 Docker 守护进程仍未就绪，87 项集成测试跳过；该切片在认证边界内结束，不触达数据库，因此 CI 上的 PostgreSQL 结果不改变本条目结论，但远端全量结果另记。真实 IdP introspection 端点、凭据轮换、IdP 限流/超时行为和 RLS 仍未验证。
 
 
 - 2026-09-15 / A3-04 远端 CI 验收（提交 `044824b`）：GitHub Actions run [34948559550](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34948559550) 全部步骤通过，`Test with PostgreSQL` 报告 `395 passed, 38 warnings`。本机因 Docker 引擎始终未就绪而无法运行的 87 项集成测试在真实 PostgreSQL 17 上通过，新增的 16 项闭环评测与模型边界测试在本地与 CI 结果一致。该数字只对应提交 `044824b`，不代表后续改动。
@@ -269,7 +273,7 @@ G 盘开始时约 454 GB 空闲；项目 .venv/dist、G:\DevCache\uv 和 G:\DevC
 
 ## 7. 下一步与未决项
 
-当前推进 A3/C/D 运行控制面：先完成 CaseGrant/撤销与真实 IdP 演练，再将有界 SSE tail 接入工作台，固定调查 EGM schema/真实模型接线并选择真实沙箱后端；JWT/JWKS 验签切片已实现，但完整业务 Harness 和生产连接器仍未实现。
+当前推进 D 生产准入：验签（D-01-01/02）、数据库 CaseGrant（D-01-03）与撤销判定（D-01-04）已实现，下一步是真实 IdP 演练、RLS 与权限管理面；同时把有界 SSE tail 纳入生产连接池/broker 评估、固定调查 EGM schema/真实模型接线并选择真实沙箱后端。完整业务 Harness 和生产连接器仍未实现。
 
 尚待决定但不阻塞离线骨架：真实模型 ID/预算、商家渠道和身份提供者、沙箱/对象存储后端与地域、RPO/RTO 和生产负载目标。每项的决策阶段已列在技术栈和执行计划中。无业务凭证不阻塞 Fake 流程；真实接入缺授权时必须停止该分支。
 

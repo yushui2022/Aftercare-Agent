@@ -26,8 +26,8 @@ Node 24 在本次核查的官方计划中属于 LTS；前端落地时再次检�
 | 类型与数据校验 | Python 类型注解、Pydantic 2；公共接口不传播无约束 Any | A0-01 / A0-02 |
 | Web 服务 | FastAPI + Uvicorn | A1-02 |
 | 数据库 | psycopg 3 + psycopg_pool，同步短事务函数 | A1-01 |
-| 外部 HTTP | httpx；统一超时、重试与错误分类；JWKS 拉取使用固定 HTTPS URL | D-01 / A3-01 / B-03 |
-| 身份验证 | PyJWT + cryptography；provider-neutral JWKS 验签适配器 | D-01；具体 IdP 与 CaseGrant 服务待选 |
+| 外部 HTTP | httpx；统一超时、重试与错误分类；JWKS 与 introspection 使用固定 HTTPS URL | D-01 / A3-01 / B-03 |
+| 身份验证 | PyJWT + cryptography；provider-neutral JWKS 验签适配器与 RFC 7662 撤销判定 | D-01；具体 IdP 与 CaseGrant 服务待选 |
 | 模型接口 | FakeModelAdapter 先行；官方 OpenAI Python SDK 的 Responses 适配器随后 | A1-03 / A3-01 |
 | 质量检查 | Ruff、mypy、pytest、pytest-asyncio；依任务加入测试依赖 | A0-01 |
 | 观测 | 起步结构化日志与关联 ID；随后 OpenTelemetry SDK/Collector | A1-03 / C-03 |
@@ -77,8 +77,11 @@ Python/Pydantic 定义 HTTP 边界，导出版本化 OpenAPI；前端从已检�
 认证实现边界：`auth.oidc` 现在包含 provider-neutral 的 `JwtJwksVerifier`，API 可在显式
 配置 `AFTERCARE_OIDC_ISSUER`、`AFTERCARE_OIDC_AUDIENCE`、`AFTERCARE_OIDC_JWKS_URL`
 后验签 Bearer。PyJWT + cryptography 负责签名验证，httpx 仅访问静态 HTTPS JWKS；密钥短期
-缓存、未知 `kid` 一次刷新和缓存失效 fail-closed 已有离线测试。它仍不等于企业授权：CaseGrant
-数据库、撤销/introspection、真实 IdP 权限映射、密钥轮换演练和生产部署验收属于 D-01 后续。
+缓存、未知 `kid` 一次刷新和缓存失效 fail-closed 已有离线测试。`auth.introspection` 与
+`auth.guard` 在同一验签之后追加可选 RFC 7662 撤销判定（`AFTERCARE_OIDC_INTROSPECTION_URL`
+与 `_CLIENT_ID`/`_CLIENT_SECRET`），凭据只存注入的 httpx 客户端、判别结果有界缓存且统一
+fail-closed。这仍不等于企业授权：数据库 CaseGrant、真实 IdP 权限映射、密钥轮换演练和
+生产部署验收属于 D-01 后续。
 
 Responses 适配器保存完整工具请求、call_id 和恢复所需协议项，再执行经过校验的本地工具；应用自管业务状态。供应商提供会话关联不等于已经提供我们的持久业务运行时。该约束来自本项目设计，并与 [OpenAI Function Calling](https://developers.openai.com/api/docs/guides/function-calling)、[Conversation State](https://developers.openai.com/api/docs/guides/conversation-state) 的能力边界一致。
 

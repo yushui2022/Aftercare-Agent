@@ -4,6 +4,8 @@
 
 2026-09-15 补记：A1-05 在实现中新增但未登记到本计划，现按原有 ID 回填，依赖与验收一并写清，不改动既有编号。其后续工作按归属拆分，不并入本任务：transcript→模型输入映射归 A3-01，真实沙箱后端归 C-01/C-02。
 
+2026-09-15 补记：台账与 [api-auth.md](api-auth.md) 一直引用 D-01-01/02，但本计划只登记过 D-01-03，现按实际交付内容补齐两行，不新增编号。D-01-01/02 是验签与认证入口，D-01-03 是数据库资源授权，D-01-04 是在其之上补齐的撤销判定。
+
 ## 1. 工程目标与首版范围
 
 首个端到端版本只处理“订单未收到，但物流可能显示签收”的调查：受理 → 查模拟订单/物流 → 形成待核实事实 → 生成补充资料草稿 → 持久等待 → Worker 被停止 → 收到模拟回复 → 另一 Worker 恢复 → 输出有来源的建议。
@@ -144,7 +146,10 @@ B-02 按以下可验证切片推进，避免把“审批台账”误当成完整
 | ID | 目标 | 验收 |
 |---|---|---|
 | D-01 | 真实认证/授权、密钥、渠道/数据审查、人工接管与生产变更规则 | 仅授权人员和任务可执行对应动作；测试身份禁用；明确可用范围与操作留痕 |
+| D-01-01 | auth/oidc.py：provider-neutral JWT/JWKS 验签与 claims 映射；静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 kid 单次冷却刷新 | A1-02 | 验签失败、过期/未生效、超长寿命、错误 iss/aud、`none`/HMAC 混淆、非签名用途 key 一律 fail-closed；claims 映射出的 AuthContext 不可由请求体覆盖 |
+| D-01-02 | api/：`Authorization: Bearer` 认证入口；Bearer 优先于合成身份且验签失败不回退 | D-01-01 | 携带 Bearer 时合成 Header 被忽略；配置真实 verifier 后合成身份强制关闭；缺认证 `401` 且带 `WWW-Authenticate` |
 | D-01-03 | auth/、persistence/、api/：PostgreSQL CaseGrant 资源授权切片；token case_ids 仅作收窄，撤销/过期在短事务内 fail-closed | A1-02、A1-01 | `(tenant_id,subject_id,case_id)` grant 迁移与 revision；API 同事务锁定活动授权；创建者与受理原子授予；撤销/过期及跨主体回归通过；不开放授权管理 HTTP |
+| D-01-04 | auth/introspection.py、auth/guard.py、api/：RFC 7662 撤销判定；静态 HTTPS endpoint、凭据只存注入客户端、有界 TTL 缓存、验签后按 active/sub/tenant 一致性 fail-closed | D-01-01、D-01-02 | endpoint 非 HTTPS 或凭据缺失时拒绝启动；`active=false`、sub/tenant 不一致、已过期判定、传输/解析/超大响应失败均返回 `UNAUTHENTICATED` 且不回退到合成身份；缓存不存 token 本身、有界且不缓存已过期判定 |
 | D-02 | PostgreSQL/对象备份恢复、保留删除、RPO/RTO、版本升级 | 实际恢复演练、恢复点之后外部动作核对；不是只检查备份任务显示成功 |
 | D-03 | 稳态/突发/集中唤醒压测、成本、资源限额和扩容 | 公布版本、工作负载、失败率、延迟/队列年龄和资源成本，不拿样例参数当 SLA |
 | D-04 | 按瓶颈评估 Broker、暖池、ACP、长期记忆或额外供应商 | 每个新增组件有需要、方案、代价、迁移和验收，未启用项明确保留为候选 |

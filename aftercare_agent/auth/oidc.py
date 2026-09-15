@@ -127,7 +127,7 @@ def auth_context_from_claims(
     )
 
 
-def _bearer_token(value: str) -> str:
+def bearer_token(value: str) -> str:
     """Parse one RFC 6750 bearer value without accepting ambiguous input."""
     parts = value.split(" ", 1)
     if len(parts) != 2 or parts[0].lower() != "bearer":
@@ -232,7 +232,7 @@ class JwtJwksVerifier:
 
     def verify(self, authorization: str, *, now: datetime | None = None) -> AuthContext:
         """Verify an Authorization header and map claims to AuthContext."""
-        token = _bearer_token(authorization)
+        token = bearer_token(authorization)
         try:
             header = jwt.get_unverified_header(token)
             kid = header.get("kid")

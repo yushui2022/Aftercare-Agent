@@ -8,12 +8,23 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
+import httpx
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
-from aftercare_agent.auth import AuthContext, JwtJwksVerifier, JwtVerifierConfig, synthetic_context
+from aftercare_agent.auth import (
+    AuthContext,
+    CachedIntrospector,
+    HttpTokenIntrospector,
+    IntrospectionConfig,
+    JwtJwksVerifier,
+    JwtVerifierConfig,
+    TokenAccessGuard,
+    TokenIntrospector,
+    synthetic_context,
+)
 from aftercare_agent.domain.approvals import ApprovalRecord
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, Identifier
 from aftercare_agent.domain.events import DomainEvent
@@ -344,8 +355,16 @@ def create_app(
     *,
     allow_synthetic: bool = False,
     oidc_verifier: JwtJwksVerifier | None = None,
+    introspector: TokenIntrospector | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Aftercare Agent", version="v1")
+    # A configured introspector turns on revocation checking; without a
+    # verifier there is no token to check, so both stay unset together.
+    guard = (
+        TokenAccessGuard(oidc_verifier, introspector=introspector)
+        if oidc_verifier is not None
+        else None
+    )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -372,17 +391,17 @@ def create_app(
             # A supplied bearer token always takes precedence.  In particular,
             # an invalid token must never fall back to a synthetic header.
             if authorization is not None:
-                if oidc_verifier is None:
+                if guard is None:
                     raise ContractViolation(
                         ErrorCode.UNAUTHENTICATED, "OIDC authentication is not configured"
                     )
-                return oidc_verifier.verify(authorization)
+                return guard.authorize(authorization)
             if tenant is None or subject is None:
                 raise ContractViolation(ErrorCode.UNAUTHENTICATED, "authentication required")
             # Once a real verifier is configured, synthetic identities are
             # disabled even if a stale test flag remains in the environment.
             return synthetic_context(
-                enabled=allow_synthetic and oidc_verifier is None,
+                enabled=allow_synthetic and guard is None,
                 tenant_id=tenant,
                 subject_id=subject,
             )
@@ -842,11 +861,54 @@ def create_default_app() -> FastAPI:
                 require_case_ids=require_case_ids == "1",
             )
         )
-    return create_app(
+    introspector = None
+    introspection_client = None
+    endpoint = os.environ.get("AFTERCARE_OIDC_INTROSPECTION_URL")
+    if endpoint is not None:
+        if verifier is None:
+            raise RuntimeError(
+                "AFTERCARE_OIDC_INTROSPECTION_URL requires the OIDC issuer, "
+                "audience and JWKS URL to be configured"
+            )
+        client_id = os.environ.get("AFTERCARE_OIDC_INTROSPECTION_CLIENT_ID")
+        client_secret = os.environ.get("AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET")
+        if not client_id or not client_secret:
+            raise RuntimeError(
+                "AFTERCARE_OIDC_INTROSPECTION_CLIENT_ID and "
+                "AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET are required with the "
+                "introspection URL"
+            )
+        try:
+            introspection = IntrospectionConfig(endpoint=endpoint)
+        except ValidationError as exc:
+            raise RuntimeError(
+                "AFTERCARE_OIDC_INTROSPECTION_URL must be an https URL without query or fragment"
+            ) from exc
+        # Credentials live only in this client; no contract model stores them.
+        introspection_client = httpx.Client(
+            timeout=introspection.request_timeout_seconds,
+            follow_redirects=False,
+            auth=httpx.BasicAuth(client_id, client_secret),
+        )
+        introspector = CachedIntrospector(
+            HttpTokenIntrospector(introspection, client=introspection_client),
+            ttl_seconds=introspection.cache_seconds,
+            max_entries=introspection.max_cache_entries,
+        )
+    app = create_app(
         Database(dsn),
         allow_synthetic=synthetic_enabled == "1",
         oidc_verifier=verifier,
+        introspector=introspector,
     )
+    if introspection_client is not None:
+        owned_client = introspection_client
+
+        @app.on_event("shutdown")
+        def _close_introspection_client() -> None:
+            owned_client.close()
+
+    return app
 
 
 app = create_default_app()

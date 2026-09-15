@@ -116,8 +116,38 @@ JWKS URL 必须是静态 HTTPS 配置，不能由 Token 的 `iss` 或 Header 控
 审计。每个 Case 路由在自己的短事务中锁定活动行；没有行、已撤销或已过期均返回 `403`。
 Token 的 `case_ids` 只能进一步收窄数据库结果，Token scope 与数据库权限取交集，不能凭
 声明新增权限。新建 Case 时创建者的 `case:read` grant 与受理事务一起写入；幂等重放不会
-为另一主体自动补授权。当前仍没有权限管理 UI、RLS、Token 撤销/introspection、实时授权
-事件或真实 IdP 演练；长寿命 Token、把全租户权限映射给普通用户都不应直接用于生产。
+为另一主体自动补授权。当前仍没有权限管理 UI、RLS、实时授权事件或真实 IdP 演练
+（Token 撤销/introspection 见下一节）；长寿命 Token、把全租户权限映射给普通用户都不应
+直接用于生产。
 需要人工控制面时，仍须在权限映射和 CaseGrant 中显式授予 `review:*`/`approval:*` scope。
 运行依赖为 `PyJWT[crypto]` 与 `httpx`，密钥轮换、JWKS 可用性、授权映射和生产审计留痕
 仍需 D-01 后续验收。
+
+## Token 撤销与 Introspection（D-01-04）
+
+本地验签只能证明 Token 由签发方签发，不能证明它现在仍然有效：被撤销的 Token 在自然过期
+前会一直通过验签。本轮补上 provider-neutral 的 RFC 7662 撤销判定：
+
+```powershell
+$env:AFTERCARE_OIDC_INTROSPECTION_URL = "https://idp.example/oauth2/introspect"
+$env:AFTERCARE_OIDC_INTROSPECTION_CLIENT_ID = "aftercare-api"
+$env:AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET = "<provider secret>"
+```
+
+- 这三个变量必须与 OIDC 三元组同时配置。URL 必须是静态 HTTPS（不接受 query 或
+  fragment），凭据缺失或 URL 不合法时进程启动即失败，不会静默降级成"只验签"。
+- `HttpTokenIntrospector` 用 `application/x-www-form-urlencoded` POST `token` 与
+  `token_type_hint=access_token`。凭据只存在于注入的 `httpx.Client`（`BasicAuth`），
+  既不进入契约模型也不进 `repr`，Token 本身不写日志。
+- 响应按 RFC 7662 读取：`active` 缺失或不是布尔值即拒绝；`sub`、`tenant_id`、`exp` 若
+  存在则必须类型正确、且与已验证 Token 一致。字段集由签发方决定，未知字段被忽略。
+- `CachedIntrospector` 以 Token 的 SHA-256 指纹为键，有界且带 TTL，只缓存 TTL 内的判定，
+  已过期的判定不缓存；失败也不缓存，下一次仍会问签发方。
+- `TokenAccessGuard` 在验签之后执行判定。任何失败——`active=false`、`sub`/`tenant_id`
+  不一致、判定已过期、传输/解析/超大响应错误或未预期异常——统一 fail-closed 为
+  `401 unauthenticated`，绝不回退到合成身份。
+
+本轮撤销相关测试全部离线（`httpx.MockTransport` 与 `TestClient`，认证边界之前不访问
+数据库）。仍未验证：真实 IdP 的 introspection 端点与凭据轮换、IdP 侧限流和超时行为、
+RLS、权限管理 UI 与生产演练。撤销判定不替代 CaseGrant：它回答"Token 是否仍然活跃"，
+不回答"这个主体能不能操作这个 Case"。

@@ -54,6 +54,10 @@ jobs:
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y postgresql-client-17
+          # The runner image already puts PostgreSQL 16's bindir on PATH, so
+          # installing 17 is not enough: prepend 17's own bindir.  If the
+          # install above failed this entry is ignored and the tests skip.
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
           pg_dump --version
       - name: Static checks
         run: |

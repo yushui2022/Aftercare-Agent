@@ -3,7 +3,9 @@
 `aftercare-backup` 是运维工具，不在请求路径上。它把"备份文件存在"变成"恢复被演练过"：
 一次备份产出一份 dump 与一份清单，演练把这份 dump 恢复到临时库并逐表比对，核对清单列出
 恢复点之后必须人工复核的外部动作。决策、口径与不变量见
-[ADR-0008](../decisions/0008-backup-and-restore-drills.md)。
+[ADR-0008](../decisions/0008-backup-and-restore-drills.md)；每次演练的结果会写在 dump 旁边，
+`status` 用这些记录回答"最新恢复点多老、最近一次恢复什么时候被证明过"，见
+[ADR-0009](../decisions/0009-backup-freshness-and-drill-records.md)。
 
 ## 1. 前置条件
 
@@ -26,6 +28,7 @@ aftercare-backup verify   --directory <dir> [--name <name> | --all]
 aftercare-backup drill    --directory <dir> [--dsn <url>] [--upgrade] [--keep-scratch]
 aftercare-backup retention --directory <dir> [--keep-last N] [--keep-daily N] [--apply]
 aftercare-backup reconcile --dsn <url> (--recovery-point <iso> | --directory <dir>)
+aftercare-backup status    --directory <dir> [--rpo-seconds N] [--drill-interval-seconds N]
 ```
 
 DSN 缺省取 `DATABASE_URL`。退出码：`0` 通过、`1` 检查未通过、`2` 缺参数或环境不允许
@@ -38,9 +41,11 @@ DSN 缺省取 `DATABASE_URL`。退出码：`0` 通过、`1` 检查未通过、`2
 |---|---|
 | `<name>.dump` | `pg_dump --format=custom` 的归档 |
 | `<name>.manifest.json` | 恢复点、库名、服务端版本、schema 版本与每条迁移的 SHA-256、每张 `aftercare_` 表的行数、dump 的字节数与 SHA-256、客户端版本 |
+| `<name>.drill.json` | 这份 dump 最近一次演练的结果：恢复点、结束时间、是否通过、RTO 与每条检查的结论；失败时也写，并带错误原因 |
 
-两者必须成对保留：清单是"恢复出来应该长什么样"的答案，缺了它只剩一个文件。清单从与 dump
-相同的快照读出，所以行数一字不差地描述这份 dump。
+前两者必须成对保留：清单是"恢复出来应该长什么样"的答案，缺了它只剩一个文件。清单从与 dump
+相同的快照读出，所以行数一字不差地描述这份 dump。第三条是"这份 dump 被证明能恢复过"的
+记录，只由 `drill` 写；`retention --apply` 删除一份备份时会把它一起删掉。
 
 ## 4. 校验（离线）
 
@@ -71,7 +76,43 @@ aftercare-backup drill --directory <dir> --upgrade --json drill.json
 演练不是灾难恢复流程本身：真实恢复需要一个变更窗口、一个干净的实例、停写与切换决定。
 `--upgrade` 演示的是恢复出来的库能否被本 build 的迁移接管。
 
-## 6. 恢复点之后的外部动作核对
+## 6. 新鲜度与预算检查（给调度用）
+
+```powershell
+aftercare-backup status --directory <dir> [--rpo-seconds N] [--drill-interval-seconds N]
+                            [--require-newest-drill] [--emit-metrics] [--json status.json]
+```
+
+`status` 只读目录，回答两个不同的问题：最新恢复点多老（RPO 问题），以及最近一次**成功**的
+演练多老（演练问题）。三个预算**都没有默认值**，必须由部署给出，也可以用
+`AFTERCARE_BACKUP_RPO_SECONDS` 与 `AFTERCARE_BACKUP_DRILL_INTERVAL_SECONDS` 配置：
+
+- `--rpo-seconds`：最新 dump 的恢复点比这个年龄更久就算失败；
+- `--drill-interval-seconds`：距最近一次成功演练超过这段时长就算失败，并隐含
+  `--require-newest-drill`；
+- `--require-newest-drill`：最新那份备份必须被成功演练过。
+
+一个预算都不给时，`status` 只报告、不判定，输出里写 `budgets none stated`——**未配置不等于
+已满足**。目录为空、清单对应的 dump 缺失、记录文件读不出来，无论预算怎么配都失败或报错：
+这些不是策略问题。退出码与其它子命令一致（`0` 通过、`1` 未通过、`2` 参数或环境错误）。
+
+`drill` 无论成功失败都会写 `<name>.drill.json`，`status` 读的就是这些记录，所以"昨晚演练过、
+但失败了"和"从来没人试过"是两种不同的输出。
+
+在没有导出器（C-03）之前，告警靠**非零退出码**。下面两段接线只是示例，**没有在本机执行
+过**（本机是 Windows，没有 cron/systemd），落地时按目标环境写：
+
+```cron
+# 每小时：备份、演练、预算检查串成一条，任何一步非零由 cron 的 MAILTO 报警
+0 * * * * /usr/local/bin/aftercare-backup create --directory /srv/backups >>/var/log/aftercare-backup.log 2>&1 && /usr/local/bin/aftercare-backup drill --directory /srv/backups --upgrade >>/var/log/aftercare-backup.log 2>&1 && /usr/local/bin/aftercare-backup status --directory /srv/backups --rpo-seconds 86400 --drill-interval-seconds 604800 >>/var/log/aftercare-backup.log 2>&1
+```
+
+systemd 用 `OnFailure=` 接告警单元，Kubernetes 用 CronJob 并按非零退出重试或告警；
+`--emit-metrics` 为每次检查打一行一条 JSON 的 `aftercare.backup.*` 日志（唯一标签
+`component`），导出器接上之后可以同时走指标通道。示例里的 86400 / 604800 秒只是占位数字，
+不是本项目的推荐值。
+
+## 7. 恢复点之后的外部动作核对
 
 ```powershell
 aftercare-backup reconcile --directory <dir> --json review.json
@@ -82,7 +123,7 @@ Action** 与供应商核对，不能换幂等键重发），以及 `updated_at` 
 点再提前 60 s（`--safety-margin-seconds`），把与 dump 赛跑的那个提交留在清单里。工具不调用
 供应商、不解析回执、不自动改状态；`--fail-on-open` 让清单非空时退出码为 1，可用于发布门禁。
 
-## 7. 保留删除
+## 8. 保留删除
 
 ```powershell
 aftercare-backup retention --directory <dir> --keep-last 7 --keep-daily 30   # 先看计划
@@ -93,7 +134,7 @@ aftercare-backup retention --directory <dir> --keep-last 7 --keep-daily 30 --app
 其余删除。任何会删空的计划都被拒绝，名字必须匹配受限模式（防止把删除引到目录外）。先看
 计划再 `--apply`，不要直接自动化执行未经阅读的计划。
 
-## 8. 本机实测（2026-09-15）
+## 9. 本机实测（2026-09-15）
 
 Windows 11 / 临时 PostgreSQL 16.13 / CPython 3.13.15 / 客户端 16.13，数据库含整套回归
 留下的合成数据：dump 111,950 字节、31 张 `aftercare_` 表、schema 迁移 16。
@@ -110,7 +151,8 @@ restore drill aftercare-20260915T120729Z: ok
 [`2026-09-15-restore-drill.json`](2026-09-15-restore-drill.json)。这些数字只说明方法与口径，
 不是 SLA。
 
-## 9. 尚未覆盖
+## 10. 尚未覆盖
 
-WAL 归档与时间点恢复（PITR）、对象存储/异地副本、备份加密与密钥托管、定期演练的自动化与
-告警、按部署目标给出的 RPO/RTO 结论、多租户级选择性恢复、恢复过程中的流量切换脚本。
+WAL 归档与时间点恢复（PITR）、对象存储/异地副本、备份加密与密钥托管、按部署目标给出的
+RPO/RTO 结论、多租户级选择性恢复、恢复过程中的流量切换脚本。定期演练的检查已经可以跑
+（见第 6 节），但调度接线只在文档里给出，没有在目标环境执行过。

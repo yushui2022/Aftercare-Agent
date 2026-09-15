@@ -77,9 +77,13 @@ The volume contains only local synthetic data. Production deployment still
 needs real authentication, secret injection, TLS, migrations policy, resource
 limits, and a separate Worker deployment. Backups are an operator job, not a
 Compose service: `aftercare-backup` writes a dump plus a manifest, drills the
-restore into a scratch database, and keeps the copies bounded (see
-[ADR-0008](../../docs/decisions/0008-backup-and-restore-drills.md) and the
-[runbook](../../docs/operations/backup-restore.md)); it does not cover WAL
+restore into a scratch database, records what the drill did next to the dump,
+and keeps the copies bounded; `status` then answers "how old is the newest
+recovery point, and when was a restore last proven to work" against budgets the
+deployment states (see
+[ADR-0008](../../docs/decisions/0008-backup-and-restore-drills.md),
+[ADR-0009](../../docs/decisions/0009-backup-freshness-and-drill-records.md) and
+the [runbook](../../docs/operations/backup-restore.md)); it does not cover WAL
 archiving, off-site copies or encryption.
 
 ## 合成 Aftercare 演示

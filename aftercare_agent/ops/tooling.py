@@ -11,18 +11,27 @@ import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Annotated, Protocol
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 DUMP_ENV = "AFTERCARE_PG_DUMP"
 RESTORE_ENV = "AFTERCARE_PG_RESTORE"
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 3600.0
 MAINTENANCE_DATABASES = ("postgres", "template1")
 DATABASE_NAME_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_$-]{0,62}")
+BACKUP_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}"
 _VERSION = re.compile(r"\b(\d+)(?:\.\d+)*\b")
+
+# A backup name becomes part of file names, so it is a boundary and not a
+# label: anything that could climb out of the directory is refused before it
+# reaches a path.  It lives here rather than in ``backup`` because the drill
+# records name their files the same way.
+type BackupName = Annotated[
+    str, Field(min_length=1, max_length=96, pattern=rf"^{BACKUP_NAME_PATTERN}$")
+]
 
 
 class OpsError(RuntimeError):
@@ -41,6 +50,15 @@ class OpsModel(BaseModel):
     """A boundary with a file: an unknown key means the reader is out of date."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def validate_backup_name(name: str) -> str:
+    """Refuse a name that could escape the backup directory."""
+    if not re.fullmatch(BACKUP_NAME_PATTERN, name):
+        raise OpsError(
+            f"backup names take letters, digits, dot, dash and underscore (got {name!r})"
+        )
+    return name
 
 
 @dataclass(frozen=True)

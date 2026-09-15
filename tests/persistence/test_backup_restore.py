@@ -16,9 +16,11 @@ import pytest
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
 from aftercare_agent.ops.backup import (
     create_backup,
+    main,
     run_restore_drill,
     verify_backup,
 )
+from aftercare_agent.ops.drill_records import drill_record_path, load_drill_records
 from aftercare_agent.ops.reconcile import build_reconciliation
 from aftercare_agent.ops.tooling import (
     DUMP_ENV,
@@ -291,3 +293,72 @@ def test_reconciliation_lists_the_actions_a_restore_cannot_describe(
     # review list instead of silently outside it.
     assert "confirmed-inside" in {entry.action_id for entry in widened.entries}
     assert other_tenant.entries == ()
+
+
+def test_the_drill_command_records_the_restore_beside_the_dump(
+    db: Database, dsn: str, directory: Path, client_tools: None
+) -> None:
+    _seed_case(db, case_id="ops-case", run_id="ops-run")
+    manifest = create_backup(dsn, directory)
+    # Before the drill the directory holds a dump nobody has ever restored, so a
+    # stated drill interval cannot be met yet.
+    assert load_drill_records(directory) == ()
+    assert main(["status", "--directory", str(directory), "--drill-interval-seconds", "86400"]) == 1
+
+    assert main(["drill", "--directory", str(directory), "--dsn", dsn, "--upgrade"]) == 0
+
+    record = load_drill_records(directory)[-1]
+    assert record.name == manifest.name
+    assert record.ok is True
+    assert record.recovery_point == manifest.taken_at
+    assert record.rto_seconds is not None and record.rto_seconds > 0
+    assert {check.check for check in record.checks} >= {"restored tables", "restored row counts"}
+    assert drill_record_path(directory, manifest.name).is_file()
+    # The same directory now answers both questions with the budgets stated.
+    assert (
+        main(
+            [
+                "status",
+                "--directory",
+                str(directory),
+                "--rpo-seconds",
+                "86400",
+                "--drill-interval-seconds",
+                "86400",
+            ]
+        )
+        == 0
+    )
+
+
+def test_a_drill_that_cannot_finish_is_recorded_as_a_failure(
+    db: Database, dsn: str, directory: Path, client_tools: None
+) -> None:
+    _seed_case(db, case_id="ops-case", run_id="ops-run")
+    manifest = create_backup(dsn, directory)
+    dump = manifest.dump_path(directory)
+    payload = dump.read_bytes()
+    dump.write_bytes(payload[: len(payload) // 2])
+
+    assert main(["drill", "--directory", str(directory), "--dsn", dsn]) == 2
+
+    record = load_drill_records(directory)[-1]
+    assert record.name == manifest.name
+    assert record.ok is False
+    assert record.rto_seconds is None
+    assert record.error is not None and "pg_restore" in record.error
+    # A recorded failure is still a failure: status must not read it as a
+    # restore, and must not read the missing record as "nobody tried".
+    assert main(["status", "--directory", str(directory), "--require-newest-drill"]) == 1
+    assert (
+        main(
+            [
+                "status",
+                "--directory",
+                str(directory),
+                "--drill-interval-seconds",
+                "86400",
+            ]
+        )
+        == 1
+    )

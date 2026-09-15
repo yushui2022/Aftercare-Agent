@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 from aftercare_agent.ops.backup import (
-    BACKUP_NAME_PATTERN,
     BackupManifest,
     DatabaseSnapshot,
     MigrationRecord,
@@ -31,10 +30,10 @@ from aftercare_agent.ops.backup import (
     load_manifests,
     main,
     plan_retention,
-    validate_backup_name,
     verify_backup,
 )
 from aftercare_agent.ops.tooling import (
+    BACKUP_NAME_PATTERN,
     CommandResult,
     IncompatibleToolError,
     MissingToolError,
@@ -45,6 +44,7 @@ from aftercare_agent.ops.tooling import (
     dsn_with_database,
     parse_major,
     resolve_tool,
+    validate_backup_name,
     validate_database_name,
 )
 from aftercare_agent.persistence.db import known_migrations, latest_schema_version

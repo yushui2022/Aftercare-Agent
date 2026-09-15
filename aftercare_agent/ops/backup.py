@@ -17,6 +17,13 @@ rather than an approximation.
 Nothing here talks to a supplier, a model or the runtime.  Recovering a
 database does not undo the external actions taken after the recovery point;
 that part is :mod:`aftercare_agent.ops.reconcile`.
+
+Every drill writes a record of what happened beside the dump it rehearsed,
+whether it passed or failed, and ``status`` reads those records to answer the
+two questions a schedule asks: how old the newest recovery point is, and when a
+restore was last proven to work.  Neither question has a default answer here --
+the budgets are a deployment's to state, and an unstated budget is reported as
+unstated rather than as met.
 """
 
 import argparse
@@ -24,7 +31,6 @@ import contextlib
 import hashlib
 import json
 import os
-import re
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -38,6 +44,22 @@ from psycopg import sql
 from pydantic import Field, ValidationError
 
 from aftercare_agent.domain.common import NonNegativeInt, Sha256, UtcDatetime
+from aftercare_agent.observability import LoggingMetrics
+from aftercare_agent.ops.drill_records import (
+    DRILL_SUFFIX,
+    MAX_DETAIL,
+    DrillCheck,
+    DrillRecord,
+    load_drill_records,
+    write_drill_record,
+)
+from aftercare_agent.ops.freshness import (
+    DRILL_INTERVAL_ENV,
+    RPO_ENV,
+    StatusBudget,
+    evaluate_status,
+    report_backup_status,
+)
 from aftercare_agent.ops.reconcile import (
     DEFAULT_RECONCILE_LIMIT,
     DEFAULT_SAFETY_MARGIN_SECONDS,
@@ -47,6 +69,7 @@ from aftercare_agent.ops.tooling import (
     DUMP_ENV,
     MAINTENANCE_DATABASES,
     RESTORE_ENV,
+    BackupName,
     CommandRunner,
     OpsError,
     OpsModel,
@@ -57,6 +80,7 @@ from aftercare_agent.ops.tooling import (
     dsn_with_database,
     parse_major,
     resolve_tool,
+    validate_backup_name,
     validate_database_name,
 )
 from aftercare_agent.persistence.db import known_migrations, latest_schema_version, migrate
@@ -66,11 +90,6 @@ MANIFEST_SUFFIX = ".manifest.json"
 DEFAULT_KEEP_LAST = 3
 DEFAULT_KEEP_DAILY = 7
 DEFAULT_SCRATCH_PREFIX = "aftercare_drill_"
-BACKUP_NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}"
-
-type BackupName = Annotated[
-    str, Field(min_length=1, max_length=96, pattern=rf"^{BACKUP_NAME_PATTERN}$")
-]
 type DatabaseName = Annotated[
     str, Field(min_length=1, max_length=63, pattern=r"^[A-Za-z0-9_][A-Za-z0-9_$-]*$")
 ]
@@ -148,15 +167,6 @@ class BackupManifest(OpsModel):
             return cls.model_validate_json(text)
         except ValidationError as exc:
             raise OpsError(f"manifest is not readable: {exc}") from exc
-
-
-def validate_backup_name(name: str) -> str:
-    """Refuse a name that could escape the backup directory."""
-    if not re.fullmatch(BACKUP_NAME_PATTERN, name):
-        raise OpsError(
-            f"backup names take letters, digits, dot, dash and underscore (got {name!r})"
-        )
-    return name
 
 
 def _scalar(connection: psycopg.Connection[Any], query: str) -> Any:
@@ -887,7 +897,11 @@ def apply_retention(directory: Path, plan: RetentionPlan) -> tuple[Path, ...]:
         if decision.keep:
             continue
         name = validate_backup_name(decision.name)
-        for path in (directory / f"{name}{DUMP_SUFFIX}", directory / f"{name}{MANIFEST_SUFFIX}"):
+        for path in (
+            directory / f"{name}{DUMP_SUFFIX}",
+            directory / f"{name}{MANIFEST_SUFFIX}",
+            directory / f"{name}{DRILL_SUFFIX}",
+        ):
             if path.is_file():
                 path.unlink()
                 removed.append(path)
@@ -966,6 +980,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reconcile.add_argument("--fail-on-open", action="store_true", help="exit 1 when not empty")
     reconcile.add_argument("--json", default=None, type=Path)
+
+    status = actions.add_parser(
+        "status", help="is the newest backup recent enough, and has it been restored"
+    )
+    status.add_argument("--directory", required=True, type=Path)
+    status.add_argument(
+        "--rpo-seconds",
+        type=float,
+        default=None,
+        help=f"fail when the newest recovery point is older than this (or set {RPO_ENV})",
+    )
+    status.add_argument(
+        "--drill-interval-seconds",
+        type=float,
+        default=None,
+        help=(
+            "fail when no working restore has been proven this recently "
+            f"(or set {DRILL_INTERVAL_ENV})"
+        ),
+    )
+    status.add_argument(
+        "--require-newest-drill",
+        action="store_true",
+        help="fail when the newest backup has never been restored",
+    )
+    status.add_argument("--emit-metrics", action="store_true", help="log one JSON line per metric")
+    status.add_argument("--json", default=None, type=Path)
     return parser
 
 
@@ -1005,19 +1046,93 @@ def _drill_command(args: argparse.Namespace) -> int:
     dsn = _require_dsn(args.dsn)
     directory: Path = args.directory
     manifest = load_manifest(directory, args.name)
-    drill = run_restore_drill(
-        dsn,
-        directory,
-        manifest,
-        scratch_database=args.scratch_database,
-        replace_scratch=args.replace_scratch,
-        keep_scratch=args.keep_scratch,
-        upgrade=args.upgrade,
-    )
+    try:
+        drill = run_restore_drill(
+            dsn,
+            directory,
+            manifest,
+            scratch_database=args.scratch_database,
+            replace_scratch=args.replace_scratch,
+            keep_scratch=args.keep_scratch,
+            upgrade=args.upgrade,
+        )
+    except OpsError as exc:
+        # Written before the error travels on: "the drill failed" is what a
+        # schedule needs to read, and a schedule cannot read an exception.
+        _record_failed_drill(directory, manifest, str(exc))
+        raise
+    record_path = _record_drill(directory, manifest, drill)
     print(drill.table())
+    print(f"  recorded         {record_path}")
     if args.json:
         _write_json(args.json, drill.to_json())
     return 0 if drill.ok else 1
+
+
+def _record_drill(directory: Path, manifest: BackupManifest, drill: RestoreDrill) -> Path:
+    """Write what the drill did beside the dump it rehearsed."""
+    return write_drill_record(
+        directory,
+        DrillRecord(
+            name=manifest.name,
+            recovery_point=drill.taken_at,
+            finished_at=drill.finished_at,
+            ok=drill.ok,
+            rto_seconds=drill.rto_seconds,
+            checks=tuple(
+                DrillCheck(check=finding.check, ok=finding.ok, detail=finding.detail)
+                for finding in drill.findings
+            ),
+        ),
+    )
+
+
+def _record_failed_drill(directory: Path, manifest: BackupManifest, error: str) -> Path:
+    """A drill that could not finish is still evidence, so it is still written."""
+    return write_drill_record(
+        directory,
+        DrillRecord(
+            name=manifest.name,
+            recovery_point=manifest.taken_at,
+            finished_at=datetime.now(UTC),
+            ok=False,
+            error=error[:MAX_DETAIL],
+        ),
+    )
+
+
+def _budget_seconds(value: float | None, env_var: str) -> float | None:
+    """A budget from the flag, or from the environment the schedule sets."""
+    if value is not None:
+        return float(value)
+    raw = os.environ.get(env_var, "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise OpsError(f"{env_var} is not a number of seconds: {raw!r}") from exc
+
+
+def _status_command(args: argparse.Namespace) -> int:
+    directory: Path = args.directory
+    budget = StatusBudget(
+        rpo_seconds=_budget_seconds(args.rpo_seconds, RPO_ENV),
+        drill_interval_seconds=_budget_seconds(args.drill_interval_seconds, DRILL_INTERVAL_ENV),
+        require_newest_drill=bool(args.require_newest_drill),
+    )
+    status = evaluate_status(
+        directory,
+        load_manifests(directory),
+        load_drill_records(directory),
+        budget=budget,
+    )
+    print(status.table())
+    if args.emit_metrics:
+        report_backup_status(LoggingMetrics(), status, component="backup")
+    if args.json:
+        _write_json(args.json, status.to_json())
+    return 0 if status.ok else 1
 
 
 def _retention_command(args: argparse.Namespace) -> int:
@@ -1076,6 +1191,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _drill_command(args)
         if args.action == "retention":
             return _retention_command(args)
+        if args.action == "status":
+            return _status_command(args)
         return _reconcile_command(args)
     except OpsError as exc:
         print(f"aftercare-backup: {exc}", file=sys.stderr)

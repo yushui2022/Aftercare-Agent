@@ -1,6 +1,6 @@
 # 当前工程状态与接手点
 
-格式版本：1。最后核验日期：2026-09-14（Asia/Shanghai）。记录者：本轮主 Agent。
+格式版本：1。最后核验日期：2026-09-15（Asia/Shanghai）。记录者：本轮主 Agent。
 
 本文件是进度与交接的唯一台账，不是实际代码/测试的替代证据，也不是自动执行授权。先读根 [AGENTS.md](../AGENTS.md)，任务定义见 [工程执行计划](engineering-plan.md)。
 
@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户授权继续完善项目；本轮在工作台与 SSE 之后补异步 polling tail、工单 keyset 分页、决策幂等键稳定性，并修复越权投影和 Outbox 序号/批量边界；不改变外部动作语义，不调用真实 provider |
-| 当前任务 | A3-03-c SSE 并发可靠性与工作台操作可靠性、A2-01 Outbox 事件连续性边界 |
+| 本轮请求范围 | 用户先要求只读评估完成度与缺口，随后授权“开始完善”。本轮改动限定为：A3-01 待办的 transcript→Responses input 映射、在途切片静态检查修复、A1-05 任务定义回填执行计划；不调用真实 provider、不做外部业务动作、不提交或推送 |
+| 当前任务 | A3-01（Session transcript→Responses input 映射）；DOC 治理（A1-05 补入执行计划并同步台账） |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成 |
 | 下一项代码候选 | D-01：真实 IdP/撤销演练；A3-04：完整业务评测；B-02-03：供应商回执核对；C-01：真实沙箱后端；随后补生产准入与容量验证 |
-| 活跃实现任务 | 本轮已完成 `b0ddffe` 工作台基础上的异步 tail、分页和决策重试边界，并补齐 Session transcript 引用与 provider-neutral 沙箱契约；下一阶段转入真实身份/撤销演练、完整业务评测、供应商回执、沙箱后端与生产准入 |
-| 本轮外部行为 | 本轮只调整运行时读取/事件边界、工作台客户端状态、Session 持久引用和沙箱契约，不调用模型、真实业务动作或生产部署；交付后以 Git 日志和 CI 为准 |
+| 活跃实现任务 | 本轮把 `SessionTranscriptLoader` 的校验结果接到 Responses 请求输入（新增 wire 输入类型与纯映射函数），并回填 A1-05 的任务定义；Worker 内租约/预算接线、真实 provider 调用和真实 artifact store 仍未开始 |
+| 本轮外部行为 | 本轮只新增离线纯函数、扩展内部请求契约并修复静态检查；不调用模型、真实业务动作或生产部署；交付后以 Git 日志和 CI 为准 |
 
 ## 2. 核验过的源码基线
 
@@ -55,13 +55,13 @@
 | A2-03 | DONE | PostgreSQL 全局/租户执行槽、slot 租约心跳、按 Run 幂等重试预算，以及 007/008 durable queue、Run 状态同步触发器、tenant cursor 轮转和过期 IN_FLIGHT 回收已接入；真实 PostgreSQL 通过跨租户/回收/槽竞争测试；这是基础骨架，权重校准与生产压测仍未完成 |
 | B-01 | IN PROGRESS | `ActionIntent`、Action Ledger、跨 Case business key 幂等、UNKNOWN/CONFIRMED/FAILED 与 claim fencing 已实现；审批门禁已补入但支付聚合、额度预留和真实供应商对账仍待实现 |
 | B-02 | IN PROGRESS | B-02-01/02 已实现 `ApprovalRepository`、010/011 迁移、参数/策略/身份/有效期绑定、重复决定幂等、`RESERVED` 派发 fail-closed 和绑定 Wait 的 Inbox 原子唤醒；Review 013 已实现 `REVIEW→READY/CANCELLED` 决定边界；已补齐 `approval.*`/`review.*` Outbox 事件、Case 序号分配、不可变门控快照和显式 operator API；支付聚合和供应商回执核对仍待实现 |
-| A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter` 和整数 token/cost budget：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏与超预算拒绝；离线回归通过；尚未发起真实 provider 请求 |
+| A3-01 | IN PROGRESS | 新增严格 Responses wire parser、`ResponsesAdapter`、整数 token/cost budget、`SessionTranscriptLoader` 与 `build_responses_input()`：校验原生响应、usage、函数参数、工具白名单、托管工具事件、provider 错误脱敏、超预算、transcript scope/序号/digest，并把已校验消息映射为 `ResponsesInputItem` 输入项（`tool` 角色 fail-closed）；离线回归通过；尚未发起真实 provider 请求，Worker 内租约/预算接线未完成 |
 | A3-02 | IN PROGRESS | 新增 `InvestigationEvidenceAdapter` 与 PostgreSQL 观察账本：可信连接器规范化写入、来源事件去重/撤回/重载、模型仅提交 `InvestigationProposal`、完整授权观察集确定性评估与默认禁用长期记忆；真实调查 EGM schema、来源认证和模型接线仍待实现 |
 | A3-03 | IN PROGRESS | 新增 case-scoped SSE replay、`Last-Event-ID`/after 游标、持久事件分页、有界 PostgreSQL polling tail 和 React 工作台；高吞吐 live broker tail、真实认证和生产压测仍待实现 |
 | A3-03-a | DONE | 新增操作员工单发现：可访问工单列表（活动 CaseGrant 收紧、`case_ids` 仅收窄、keyset 游标）、工单详情（Run 投影不含 tenant/lease/fence）、工单下 Review/Approval 列表，以及 `web/` 最小 React+TS+Vite 工作台（列表、详情、决定、事件时间线）；真实 PostgreSQL 全量 `362 passed`（含新增 11 项），前端 `tsc --noEmit` 与 `vite build` 通过，合成身份端到端冒烟通过；live broker tail、真实认证与生产压测仍待实现 |
 | A3-03-b | DONE | 工作台接入 SSE 实时订阅：`follow=true&limit=200&wait_seconds=60`，按 `case_seq` 游标续订串接有界读，`fetch`+`ReadableStream` 增量解析（不使用无法带 Header 的 `EventSource`），按 `case_seq` 去重并封顶 500 条，指数退避重连、`401/403` 终止不重试，界面显示 连接中/实时/重连中/已暂停 并可暂停改一次性回放；`web/src/sse.test.ts` 13 项、`tsc --noEmit`、`vite build` 通过，真实后端 `follow` 参数返回 `200 text/event-stream`、非法 `limit` 返回 `400`；订阅级授权、真实 IdP 与高吞吐 broker tail 仍未实现 |
 | A3-03-c | IN PROGRESS | SSE follow 改为异步生成器，数据库短轮询放入线程、等待异步 sleep；工作台接入 keyset 加载更多、筛选/身份切换请求代际保护和稳定决策幂等键；异步 tail、前端 API 与回归通过，仍需生产连接池/broker 和真实身份验收 |
-| A1-05 | IN PROGRESS | 新增 SessionMessage append-only transcript 引用表/Repository（tenant/case/session 隔离、连续序号、message_id 幂等、游标读取）与 provider-neutral `SandboxProvider` 生命周期契约；真实 artifact store、Responses transcript adapter、Kubernetes/E2B 后端仍待实现 |
+| A1-05 | IN PROGRESS | 新增 SessionMessage append-only transcript 引用表/Repository（tenant/case/session 隔离、连续序号、message_id 幂等、游标读取）与 provider-neutral `SandboxProvider` 生命周期契约；已按 2026-09-15 回填进行计划（原只存在于本台账）；真实 artifact store、Kubernetes/E2B 后端仍待实现，transcript→模型输入映射归 A3-01 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
 | D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口与 `015_case_grants.sql`/`CaseGrantRepository`：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销/introspection、真实 IdP 和生产演练仍待实现 |
 | D-01-03 | DONE | PostgreSQL CaseGrant 按 `(tenant_id,subject_id,case_id)` 持久化 scope/revision/有效期/撤销审计；AuthContext 非 synthetic 未绑定时 fail-closed，API 在业务短事务锁定 grant；创建者授权与受理原子提交，撤销/过期/跨主体及 token 收窄回归通过；真实 IdP、introspection、RLS 和管理面仍待完成 |
@@ -69,16 +69,17 @@
 
 ## 5. 工作区与提交边界
 
-本轮提交范围为 SSE/工作台运行可靠性与事件边界：异步 follow tail、短 DB 轮询与非阻塞等待、工单 keyset 分页、筛选代际保护、稳定决策幂等键、Outbox 连续序号和批量上限，以及 API/PG/离线测试和配套文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
+本轮提交范围为 A3-01 transcript→Responses input 映射与在途切片修复：`ResponsesInputItem`/`ResponsesInput` 输入项、`ResponsesRequest.input` 扩展、`build_responses_input()`、两处 Ruff 修复、5 项回归，以及 A1-05 回填执行计划和配套文档；未包含 .venv、缓存、dist、临时数据或 EGM 仓库改动。
 
-EGM 本轮观察到 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
+EGM 仓库仍有 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：前序批次已按用户授权提交并推送到 `origin/main`；本轮代码完成验证后集中提交，不做零散提交。本轮没有部署、生产数据或真实业务操作。GitHub Actions run #44 已成功；没有发布 Python 包；项目许可证仍待用户确定。
+提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub，本轮按该授权提交到 `origin/main`。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。CI 结果以推送后的 Actions run 为准，提交前不宣称成功。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
 
+- 2026-09-15 / A3-01 transcript→Responses input 映射与在途切片修复：新增 `build_responses_input()`，把 `SessionTranscriptLoader` 已校验的消息渲染成新的 `ResponsesInputItem`（仅 user/assistant/system）；`ResponsesRequest.input` 扩展为非空字符串或非空输入项元组，`ResponsesAdapter` 只在 wire 边界把输入项展开成 provider 侧列表。映射重复校验租户/Case/Session 范围、连续序号与角色，`tool` 角色 fail-closed（持久引用不携带 Responses 要求的 `call_id`，当普通消息发送等于伪造协议语义）；空 transcript、空内容和不连续序号同样拒绝。同时修掉在途切片的 2 个 Ruff 错误（`transcript.py` 未使用导入、测试 `UP012`）。离线全量 `292 passed, 87 skipped`；`ruff format --check`、`ruff check` 与严格 mypy（`aftercare_agent tests evals`，104 文件）通过。本轮没有真实 provider 调用；本机 Docker 守护进程未运行，**所有需要 `DATABASE_URL` 的集成测试均未执行**（87 项跳过），上述数字只覆盖离线范围。Worker 内租约/预算/检查点接线、真实 artifact store 仍未实现。
 
 - 2026-09-14 / A1-05 Session transcript 与 C-01 沙箱契约：新增 `SessionMessage` 和 `016_session_messages.sql`，按 tenant/case/session 保存不可变 artifact 引用、摘要、角色和连续 `message_seq`；短锁保证并发追加，`message_id` 完全重放幂等，列表支持游标且跨租户/Case 为空。新增 provider-neutral `SandboxProvider` Protocol，Fake provider 增加带 owner/fencing 的显式 `READY → RUNNING` 幂等启动；真实 artifact store、Responses transcript adapter、Kubernetes/E2B 后端仍未接入。离线全量 `284 passed, 87 skipped`；临时 PostgreSQL 17 全量 `371 passed, 38 warnings`；Ruff、format、严格 mypy、文档检查和 `git diff --check` 通过。
 

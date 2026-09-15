@@ -1,6 +1,8 @@
 # 工程执行计划
 
-版本：1；更新日期：2026-09-07。本文固定任务 ID、依赖、目标文件和验收，不记录实时完成状态；唯一进度入口是 [project-status.md](project-status.md)。选型见 [tech-stack.md](tech-stack.md)，行为约束见 [system-design.md](system-design.md)。
+版本：1；更新日期：2026-09-15。本文固定任务 ID、依赖、目标文件和验收，不记录实时完成状态；唯一进度入口是 [project-status.md](project-status.md)。选型见 [tech-stack.md](tech-stack.md)，行为约束见 [system-design.md](system-design.md)。
+
+2026-09-15 补记：A1-05 在实现中新增但未登记到本计划，现按原有 ID 回填，依赖与验收一并写清，不改动既有编号。其后续工作按归属拆分，不并入本任务：transcript→模型输入映射归 A3-01，真实沙箱后端归 C-01/C-02。
 
 ## 1. 工程目标与首版范围
 
@@ -78,8 +80,11 @@ A0 出口：环境可复现、接口已评审、合成案件有预期；无需�
 | A1-02 | api/、auth/：受理、读取 Case/Run；显式本地合成身份与真实认证接口边界 | A1-01 | 跨租户/工单引用拒绝；请求体不能自行选择授权身份；生产模式拒绝测试身份 |
 | A1-03 | runtime/、model_adapters/fake、connectors/：有限片段、FakePlanner、模拟只读工具、结构化日志 | A1-01、A0-03 | 固定步骤可从检查点恢复；有轮数/时长/工具预算；不持长数据库事务等待工具 |
 | A1-04 | deploy/compose/、CI 与实际开发说明：最小 PG/API/Worker 环境 | A1-01；完整启动验收依赖 A1-02、A1-03 | 干净环境可按已验证命令启动；CI 使用真实 PG；无真凭证；存储与卷位置明确 |
+| A1-05 | persistence/、domain/、sandbox/：append-only Session transcript 引用（tenant/case/session 隔离、连续序号、message_id 幂等、游标读取）与 provider-neutral 沙箱生命周期契约 | A1-01 | 重复追加不产生第二条消息；跨租户/Case/Session 读取为空或被拒绝；序号连续且可在重启后按游标恢复；沙箱契约不含具体后端实现 |
 
 A1 从第一版就包含基础租约/fencing，不先写一个以 Python 内存锁为权威、之后再替换的运行时。暂不引入完整支付 Action Ledger、对象存储平台或观测套件。
+
+A1-05 只固定持久引用与契约边界：message 正文留在 artifact store，真实 artifact store、Responses transcript 到模型输入的映射，以及 E2B/Kubernetes 沙箱后端分别属于 A3-01、C-01 和 C-02，不在本任务内验收。
 
 A1 出口：可以从 API 受理并驱动一个受权限约束的固定调查步骤；执行权可撤销，状态保存在 PostgreSQL，而非 HTTP 请求对象中。
 

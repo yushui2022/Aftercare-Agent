@@ -8,11 +8,18 @@ from .responses import (
     NormalizedResponse,
     ResponseEvent,
     ResponsesAdapter,
+    ResponsesInputItem,
     ResponsesRequest,
     ResponseUsage,
     ToolCall,
     normalize_error,
     normalize_response,
+)
+from .transcript import (
+    ArtifactResolver,
+    ResolvedTranscriptMessage,
+    SessionTranscriptLoader,
+    build_responses_input,
 )
 
 __all__ = [
@@ -22,6 +29,7 @@ __all__ = [
     "ResponseEvent",
     "ResponseUsage",
     "ResponsesAdapter",
+    "ResponsesInputItem",
     "ResponsesRequest",
     "ToolCall",
     "HostedToolEvent",
@@ -29,4 +37,8 @@ __all__ = [
     "normalize_response",
     "ModelPricing",
     "ModelUsageBudget",
+    "ArtifactResolver",
+    "ResolvedTranscriptMessage",
+    "SessionTranscriptLoader",
+    "build_responses_input",
 ]

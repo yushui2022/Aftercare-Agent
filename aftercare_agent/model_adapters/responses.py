@@ -9,7 +9,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, Self
+from typing import TYPE_CHECKING, Literal, Protocol, Self
 
 from pydantic import Field, ValidationError, model_validator
 
@@ -70,10 +70,36 @@ class NormalizedResponse(ContractModel):
     events: tuple[ResponseEvent, ...] = ()
 
 
+class ResponsesInputItem(ContractModel):
+    """One verified turn rendered as a provider-shaped input item.
+
+    Only roles that Responses represents as a plain message item are allowed.
+    Tool output is not a message: the provider protocol expects a
+    ``function_call_output`` item carrying the originating ``call_id``, which a
+    durable ``SessionMessage`` reference does not hold.  Mapping it here would
+    invent protocol semantics, so such a transcript is rejected instead.
+    """
+
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(min_length=1)
+
+
+type ResponsesInput = str | tuple[ResponsesInputItem, ...]
+
+
 class ResponsesRequest(ContractModel):
     model: Identifier
-    input: str = Field(min_length=1)
+    input: ResponsesInput
     tools: tuple[Identifier, ...] = ()
+
+    @model_validator(mode="after")
+    def input_is_present(self) -> Self:
+        if isinstance(self.input, str):
+            if not self.input:
+                raise ValueError("Responses input must not be empty")
+        elif not self.input:
+            raise ValueError("Responses input item list must not be empty")
+        return self
 
 
 class NormalizedError(ContractModel):
@@ -229,6 +255,14 @@ def normalize_error(error: BaseException) -> NormalizedError:
     return NormalizedError(category="provider", retryable=retryable, message=message)
 
 
+def _wire_input(value: ResponsesInput) -> str | list[dict[str, str]]:
+    """Render a request input for the provider without leaking local models."""
+
+    if isinstance(value, str):
+        return value
+    return [item.model_dump() for item in value]
+
+
 class ResponsesAdapter:
     """Thin client wrapper; it never executes a returned function call."""
 
@@ -248,7 +282,7 @@ class ResponsesAdapter:
             )
         payload = create(
             model=request.model,
-            input=request.input,
+            input=_wire_input(request.input),
             store=False,
             tools=[
                 {

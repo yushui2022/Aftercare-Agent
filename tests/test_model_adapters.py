@@ -3,10 +3,12 @@ from __future__ import annotations
 from typing import cast
 
 import pytest
+from pydantic import ValidationError
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.model_adapters.responses import (
     ResponsesAdapter,
+    ResponsesInputItem,
     ResponsesRequest,
     normalize_error,
     normalize_response,
@@ -138,6 +140,26 @@ def test_client_protocol_keeps_store_false_and_scoped_tool_names() -> None:
     tools = cast(list[dict[str, object]], client.responses.kwargs["tools"])
     assert tools[0]["name"] == "lookup_order"
     assert tools[0]["strict"] is True
+
+
+def test_verified_transcript_items_reach_the_client_as_provider_items() -> None:
+    client = FakeClient(response())
+    adapter = ResponsesAdapter(client, allowed_tools=frozenset())
+    adapter.complete(
+        ResponsesRequest(
+            model="model-1",
+            input=(ResponsesInputItem(role="user", content="hello"),),
+        )
+    )
+    assert client.responses.kwargs is not None
+    assert client.responses.kwargs["input"] == [{"role": "user", "content": "hello"}]
+
+
+def test_responses_request_rejects_an_empty_input() -> None:
+    with pytest.raises(ValidationError):
+        ResponsesRequest(model="model-1", input="")
+    with pytest.raises(ValidationError):
+        ResponsesRequest(model="model-1", input=())
 
 
 def test_error_normalization_redacts_credentials_and_classifies_retry() -> None:

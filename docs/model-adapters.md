@@ -22,6 +22,20 @@ Case scope、工具 schema、预算和 Action Ledger 再次门控；模型不能
 
 当前适配器仍是 A3-01 的边界实现，不代表已经接入真实模型、SSE、沙箱或业务动作。
 
+`SessionTranscriptLoader` 是持久会话和模型协议之间的受信窄接口。它接收
+`SessionMessageRepository` 返回的当前 Session 消息引用，使用宿主提供的
+`ArtifactResolver` 读取原文，并重新校验 Case 范围、连续序号、UTF-8、大小和 SHA-256。
+模型供应商的 session ID、previous response 或 Conversations 状态不能替代这条恢复边界；
+加载器也不执行工具、不写数据库、不接受模型提交的租户/Case/序号。
+
+`build_responses_input()` 把已校验的消息渲染成 `ResponsesInputItem`（仅
+user/assistant/system）。`ResponsesRequest.input` 因此接受非空字符串或非空输入项元组，
+`ResponsesAdapter` 只在 wire 边界把输入项展开成 provider 侧列表。映射会再次校验范围、
+连续序号和角色：`tool` 角色被拒绝，因为 Responses 用带 `call_id` 的
+`function_call_output` 表示工具结果，而持久引用不携带该字段，把它当普通消息发送等于伪造
+协议语义。真实 Worker 仍需在同一 Run 的租约、预算和检查点事务内保存原生响应，并显式
+决定上下文窗口；本模块不自动丢弃历史轮次。
+
 `model_adapters.budget.ModelUsageBudget` 可在 Worker 检查点之外做一次明确的 usage
 结算：输入 token、输出 token 和 micro-USD 均用整数，`ModelPricing` 只允许非负单价。
 provider 响应通过 schema 校验后才能扣减；任一维度超额返回 `BUDGET_EXHAUSTED`，不会

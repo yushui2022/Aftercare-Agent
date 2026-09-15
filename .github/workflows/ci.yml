@@ -78,4 +78,9 @@ jobs:
       - name: Test with PostgreSQL
         env:
           DATABASE_URL: postgresql://aftercare:ci-only-aftercare@127.0.0.1:5432/aftercare
+          # This job installs the PostgreSQL tools and a server on purpose, so
+          # a drill that skips here means the job ran less than it claims to
+          # have run.  The drills turn their own skips into failures under this
+          # variable; a developer without PostgreSQL still gets a skip.
+          AFTERCARE_REQUIRE_DRILLS: "1"
         run: uv run --locked pytest -q --tb=short

@@ -9,6 +9,7 @@ server, because a client that cannot read this server would prove nothing.
 import os
 from datetime import timedelta
 from pathlib import Path
+from typing import Never
 
 import psycopg
 import pytest
@@ -37,13 +38,28 @@ from aftercare_agent.persistence import Database, RunRepository, migrate
 from aftercare_agent.persistence.db import latest_schema_version
 
 TENANT = "ops-backup"
+REQUIRE_ENV = "AFTERCARE_REQUIRE_DRILLS"
+
+
+def _skip_or_fail(reason: str) -> Never:
+    """Skip where the tools may legitimately be absent; fail where they must exist.
+
+    A developer without a PostgreSQL installation is entitled to a skip that
+    says why.  CI is not that developer: it installs the tools on purpose, so a
+    drill that skips there means the job ran less than it claims to have run.
+    A green job over a skipped drill is the one outcome this gate exists to
+    prevent, so ``AFTERCARE_REQUIRE_DRILLS=1`` turns the skip into a failure.
+    """
+    if os.environ.get(REQUIRE_ENV) == "1":
+        pytest.fail(f"{REQUIRE_ENV}=1 but this drill cannot run: {reason}")
+    pytest.skip(reason)
 
 
 @pytest.fixture()
 def dsn() -> str:
     value = os.environ.get("DATABASE_URL")
     if not value:
-        pytest.skip("DATABASE_URL is not configured")
+        _skip_or_fail("DATABASE_URL is not configured")
     return value
 
 
@@ -70,7 +86,7 @@ def client_tools(dsn: str) -> None:
         try:
             resolve_tool(name, env_var=env_var, runner=SubprocessRunner(), required_major=required)
         except (MissingToolError, IncompatibleToolError) as exc:
-            pytest.skip(str(exc))
+            _skip_or_fail(str(exc))
 
 
 def _database_exists(dsn: str, name: str) -> bool:

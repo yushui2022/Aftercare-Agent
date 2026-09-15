@@ -21,8 +21,9 @@ WAL 有没有被归档牢牢接住，见 [ADR-0010](../decisions/0010-wal-archiv
   假装 dump 已经够了。
 
 CI 使用 `postgres:17` 服务，而 GitHub runner 自带的客户端可能是旧 major，因此工作流在
-测试前会尝试安装 `postgresql-client-17`；装不上时 `tests/persistence/test_backup_restore.py`
-会带着原因跳过，而不是把整条流水线判失败。
+测试前会安装 `postgresql-client-17` 与 `postgresql-17`（归档演练需要 `initdb`/`pg_ctl`），并用**绝对路径**自证装上了。
+演练类用例在本机缺客户端时会带着原因跳过；但 CI 专门设了
+`AFTERCARE_REQUIRE_DRILLS=1`，把跳过变成失败——一个没跑的演练不能被一个绿色作业盖住。
 
 ## 2. 命令
 

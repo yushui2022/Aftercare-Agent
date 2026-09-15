@@ -143,7 +143,15 @@ wal archive <archive>: failed
   找到的目录会被放进 `PATH`，因为被测代码就是从 `PATH` 找客户端的。
 - CI 多装一个 `postgresql-17`（在 `postgresql-client-17` 之外），归档演练要 `initdb` 与
   `pg_ctl`；用 `policy-rc.d` 阻止 apt 启动第二个集群，避免与作业自己的 service container
-  抢 5432。
+  抢 5432。这一步用**绝对路径**自证装上了（`$GITHUB_PATH` 只对后续步骤生效，用 `initdb
+  --version` 自检会命中 runner 自带的那份并报 127）。
+- 临时集群把 Unix socket 放在自己的临时目录里：Debian/Ubuntu 把默认 socket 编译成
+  `/var/run/postgresql`，那属于发行版自己的 `postgres` 用户，别人起的集群会在监听之前就
+  退出。另外，"起不来"的跳过消息现在会带上 postmaster 自己的日志——`pg_ctl` 只会说它等过、
+  服务器停了，说得出原因的日志在别处，而说不清原因的跳过不是任何东西的证据。
+- CI 把演练类的跳过当成失败（`AFTERCARE_REQUIRE_DRILLS=1`）。作业既然特意装了工具与服务器，
+  跳过就意味着它比声称的跑得少；一个绿色作业盖着一个没跑过的演练，正是这条闸门要挡住的
+  那种结果（本切片第一次推送就出现了：`629 passed, 3 skipped` 却是 `success`）。
 - 仍未完成：**PITR 演练本身**（按时间点到恢复并验证结果）、对象存储与异地副本、备份加密与
   密钥托管、按部署目标确定的 RPO/RTO 数值、把 `wal` 接进目标环境的调度、演练失败后的自动
   升级路径、多租户级选择性恢复，都不在本 ADR 范围内。本 ADR 交付的是判据，不是恢复流程。

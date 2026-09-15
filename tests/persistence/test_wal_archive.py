@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Never
 
 import psycopg
 import pytest
@@ -42,6 +43,7 @@ from aftercare_agent.ops.wal_archive import (
 from aftercare_agent.persistence import Database, migrate
 
 REQUIRED_TOOLS = ("initdb", "pg_ctl", "postgres", "pg_dump")
+REQUIRE_ENV = "AFTERCARE_REQUIRE_DRILLS"
 ARCHIVE_SCRIPT = """import shutil
 import sys
 
@@ -59,6 +61,20 @@ def _has_tool(directory: Path, name: str) -> bool:
     return (directory / name).exists() or (directory / f"{name}.exe").exists()
 
 
+def _skip_or_fail(reason: str) -> Never:
+    """Skip where the tools may legitimately be absent; fail where they must exist.
+
+    A developer without a PostgreSQL installation is entitled to a skip that
+    says why.  CI is not that developer: it installs the tools on purpose, so a
+    drill that skips there means the job ran less than it claims to have run.
+    A green job over a skipped drill is the one outcome this gate exists to
+    prevent, so ``AFTERCARE_REQUIRE_DRILLS=1`` turns the skip into a failure.
+    """
+    if os.environ.get(REQUIRE_ENV) == "1":
+        pytest.fail(f"{REQUIRE_ENV}=1 but this drill cannot run: {reason}")
+    pytest.skip(reason)
+
+
 def _bindir() -> Path:
     """Where the server binaries are, or a skip that says what is missing."""
     candidates: list[Path] = []
@@ -73,7 +89,7 @@ def _bindir() -> Path:
     for candidate in candidates:
         if all(_has_tool(candidate, tool) for tool in REQUIRED_TOOLS):
             return candidate
-    pytest.skip(
+    _skip_or_fail(
         "no PostgreSQL server binaries carrying their client tools "
         "(initdb/pg_ctl/postgres/pg_dump) were found together; "
         "install the server package or set AFTERCARE_PG_BINDIR"
@@ -232,7 +248,7 @@ def _start_cluster(bindir: Path, root: Path) -> ArchivedCluster:
     script.write_text(ARCHIVE_SCRIPT.format(target=repr(archive.as_posix())), encoding="utf-8")
     created = _initdb(bindir, data)
     if created.returncode != 0:
-        pytest.skip(f"initdb failed here: {created.stderr.strip()[-400:]}")
+        _skip_or_fail(f"initdb failed here: {created.stderr.strip()[-400:]}")
     conf = data / "postgresql.conf"
     base = conf.read_text(encoding="utf-8")
     settings = [
@@ -270,7 +286,7 @@ def _start_cluster(bindir: Path, root: Path) -> ArchivedCluster:
         )
         if cluster.control("start", "-l", str(root / "server.log"), "-w", "-t", "60") == 0:
             return cluster
-    pytest.skip(f"could not start a scratch PostgreSQL cluster: {_start_failure(cluster, root)}")
+    _skip_or_fail(f"could not start a scratch PostgreSQL cluster: {_start_failure(cluster, root)}")
 
 
 @pytest.fixture(scope="module")

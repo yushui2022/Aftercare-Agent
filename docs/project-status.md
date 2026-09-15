@@ -73,11 +73,14 @@
 
 EGM 仓库仍有 README.md 修改，assets/egm-roman-banner.png、assets/egm-roman-banner.prompt.md、docs/benchmark-history.md 未跟踪。这些不是本轮工程文件任务的产物，未修改、暂存或回滚。不能使用“清理工作区”删除它们，也不能把它们默默打入固定提交依赖。
 
-提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub，本轮按该授权提交到 `origin/main`。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。CI 结果以推送后的 Actions run 为准，提交前不宣称成功。
+提交授权：用户在 2026-09-15 明确要求提交并推送到 GitHub；本轮以提交 `e1a210a` 推送到 `origin/main`，GitHub Actions run [34947008994](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34947008994)（`ci`）已完成且为 `success`。本轮没有部署、生产数据或真实业务操作；没有发布 Python 包；项目许可证仍待用户确定。
 
 本地提交成功后，记录可随该提交进入本仓库的新 worktree；尚未推送时，另一台机器或 GitHub 不能自动取得它。跨机器交接需另行授权推送或明确的提交传递方式，不把本地提交等同远端同步。
 
 ## 6. 验证台账
+
+
+- 2026-09-15 / 远端 CI 验收（提交 `e1a210a`）：推送后 GitHub Actions run [34947008994](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34947008994) 完成，`Set up Python`、`Install locked dependencies`、`Static checks` 与 `Test with PostgreSQL` 全部通过；`Test with PostgreSQL` 报告 `379 passed, 38 warnings`，即本机因 Docker 守护进程未运行而跳过的 87 项集成测试在真实 PostgreSQL 17 上独立通过，补齐了 2026-09-15 离线条目的未覆盖范围。该结果只对应提交 `e1a210a`，不代表后续改动；唯一注解是 actions/checkout 与 setup-uv 仍指向 Node 20 的弃用提示，不影响结果。
 
 - 2026-09-15 / A3-01 transcript→Responses input 映射与在途切片修复：新增 `build_responses_input()`，把 `SessionTranscriptLoader` 已校验的消息渲染成新的 `ResponsesInputItem`（仅 user/assistant/system）；`ResponsesRequest.input` 扩展为非空字符串或非空输入项元组，`ResponsesAdapter` 只在 wire 边界把输入项展开成 provider 侧列表。映射重复校验租户/Case/Session 范围、连续序号与角色，`tool` 角色 fail-closed（持久引用不携带 Responses 要求的 `call_id`，当普通消息发送等于伪造协议语义）；空 transcript、空内容和不连续序号同样拒绝。同时修掉在途切片的 2 个 Ruff 错误（`transcript.py` 未使用导入、测试 `UP012`）。离线全量 `292 passed, 87 skipped`；`ruff format --check`、`ruff check` 与严格 mypy（`aftercare_agent tests evals`，104 文件）通过。本轮没有真实 provider 调用；本机 Docker 守护进程未运行，**所有需要 `DATABASE_URL` 的集成测试均未执行**（87 项跳过），上述数字只覆盖离线范围。Worker 内租约/预算/检查点接线、真实 artifact store 仍未实现。
 

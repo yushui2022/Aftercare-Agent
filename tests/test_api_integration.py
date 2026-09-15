@@ -2,13 +2,13 @@
 
 import os
 from collections.abc import Iterator
-from typing import cast
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
 from aftercare_agent.api.app import create_app
-from aftercare_agent.auth import AuthContext, JwtJwksVerifier
+from aftercare_agent.auth import AuthContext
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
 from aftercare_agent.persistence import CaseGrantRepository, Database, RunRepository, migrate
@@ -78,13 +78,17 @@ def test_synthetic_identity_is_not_enabled_in_production_mode() -> None:
 
 
 class _StubBearerVerifier:
-    """Small seam test double; JWT/JWKS behavior is covered separately."""
+    """Small seam test double; JWT/JWKS behavior is covered separately.
+
+    It mirrors :class:`TokenVerifier`, so a signature drift is a type error
+    here instead of a runtime failure only visible with a real database.
+    """
 
     def __init__(self, *, reject: bool = False, tenant_id: str = "api-tenant") -> None:
         self.reject = reject
         self.tenant_id = tenant_id
 
-    def verify(self, authorization: str) -> AuthContext:
+    def verify(self, authorization: str, *, now: datetime | None = None) -> AuthContext:
         if self.reject or authorization != "Bearer test-token":
             raise ContractViolation(ErrorCode.UNAUTHENTICATED, "invalid bearer token")
         return AuthContext(
@@ -102,7 +106,7 @@ def test_bearer_path_precedes_synthetic_headers(database: Database, client: Test
     app = create_app(
         database,
         allow_synthetic=True,
-        oidc_verifier=cast(JwtJwksVerifier, _StubBearerVerifier()),
+        oidc_verifier=_StubBearerVerifier(),
     )
     with TestClient(app) as bearer_client:
         rejected = bearer_client.get(
@@ -159,7 +163,7 @@ def test_bearer_case_access_requires_database_grant_and_honors_revoke(
 
     app = create_app(
         database,
-        oidc_verifier=cast(JwtJwksVerifier, _StubBearerVerifier(tenant_id="api-grant-tenant")),
+        oidc_verifier=_StubBearerVerifier(tenant_id="api-grant-tenant"),
     )
     with TestClient(app) as bearer_client:
         allowed = bearer_client.get(

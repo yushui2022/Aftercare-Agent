@@ -23,6 +23,7 @@ from aftercare_agent.auth import (
     JwtVerifierConfig,
     TokenAccessGuard,
     TokenIntrospector,
+    TokenVerifier,
     synthetic_context,
 )
 from aftercare_agent.domain.approvals import ApprovalRecord
@@ -354,7 +355,7 @@ def create_app(
     database: Database,
     *,
     allow_synthetic: bool = False,
-    oidc_verifier: JwtJwksVerifier | None = None,
+    oidc_verifier: TokenVerifier | None = None,
     introspector: TokenIntrospector | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Aftercare Agent", version="v1")

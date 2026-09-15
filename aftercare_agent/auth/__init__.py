@@ -2,7 +2,7 @@
 
 from .context import AuthContext, SyntheticAuthError, synthetic_context
 from .grants import CaseGrantRecord
-from .guard import TokenAccessGuard
+from .guard import TokenAccessGuard, TokenVerifier
 from .introspection import (
     CachedIntrospector,
     HttpTokenIntrospector,
@@ -34,6 +34,7 @@ __all__ = [
     "SyntheticAuthError",
     "TokenAccessGuard",
     "TokenIntrospector",
+    "TokenVerifier",
     "VerifiedOidcClaims",
     "auth_context_from_claims",
     "bearer_token",

@@ -9,12 +9,24 @@ signature check alone.
 """
 
 from datetime import UTC, datetime
+from typing import Protocol
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 
 from .context import AuthContext
 from .introspection import TokenIntrospector
-from .oidc import JwtJwksVerifier, bearer_token
+from .oidc import bearer_token
+
+
+class TokenVerifier(Protocol):
+    """The seam the guard needs: verify one Authorization header.
+
+    ``JwtJwksVerifier`` is the production implementation.  Declaring the seam
+    keeps test doubles honest - a verifier that cannot accept the guard's
+    explicit instant would otherwise fail only at request time.
+    """
+
+    def verify(self, authorization: str, *, now: datetime | None = None) -> AuthContext: ...
 
 
 class TokenAccessGuard:
@@ -22,7 +34,7 @@ class TokenAccessGuard:
 
     def __init__(
         self,
-        verifier: JwtJwksVerifier,
+        verifier: TokenVerifier,
         *,
         introspector: TokenIntrospector | None = None,
     ) -> None:
@@ -30,11 +42,14 @@ class TokenAccessGuard:
         self._introspector = introspector
 
     def authorize(self, authorization: str, *, now: datetime | None = None) -> AuthContext:
-        context = self.verifier.verify(authorization, now=now)
+        # One clock reading for both steps: the signature check and the
+        # revocation check must agree about "now", or a token could pass one
+        # and fail the other for reasons the caller cannot see.
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        context = self.verifier.verify(authorization, now=current)
         if self._introspector is None:
             return context
         token = bearer_token(authorization)
-        current = (now or datetime.now(UTC)).astimezone(UTC)
         try:
             verdict = self._introspector.introspect(token, now=current)
         except ContractViolation:

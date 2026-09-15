@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from aftercare_agent.api.app import create_app, create_default_app
 from aftercare_agent.auth import (
+    AuthContext,
     CachedIntrospector,
     HttpTokenIntrospector,
     IntrospectionConfig,
@@ -100,12 +101,27 @@ class _FakeIntrospector:
     def __init__(self, outcome: IntrospectionVerdict | Exception) -> None:
         self.outcome = outcome
         self.calls: list[str] = []
+        self.instants: list[datetime] = []
 
     def introspect(self, token: str, *, now: datetime) -> IntrospectionVerdict:
         self.calls.append(token)
+        self.instants.append(now)
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
+
+
+class _RecordingVerifier:
+    """A :class:`TokenVerifier` that captures the instant the guard hands it."""
+
+    def __init__(self, context: AuthContext) -> None:
+        self.context = context
+        self.instants: list[datetime] = []
+
+    def verify(self, authorization: str, *, now: datetime | None = None) -> AuthContext:
+        assert now is not None
+        self.instants.append(now)
+        return self.context
 
 
 class _Clock:
@@ -515,6 +531,32 @@ def test_a_provider_contract_violation_is_preserved(
     guard = _guard(jwk, _FakeIntrospector(failure))
     with pytest.raises(ContractViolation, match="provider rejected the token"):
         guard.authorize(f"Bearer {_token(private)}", now=NOW)
+
+
+def _recording_guard() -> tuple[TokenAccessGuard, _RecordingVerifier, _FakeIntrospector]:
+    verifier = _RecordingVerifier(
+        AuthContext(subject_id="user-1", tenant_id="tenant-1", permissions=frozenset({"case:read"}))
+    )
+    introspector = _FakeIntrospector(IntrospectionVerdict(active=True))
+    return TokenAccessGuard(verifier, introspector=introspector), verifier, introspector
+
+
+def test_both_checks_see_the_same_instant() -> None:
+    """Verification and revocation must not disagree about "now"."""
+    guard, verifier, introspector = _recording_guard()
+    guard.authorize("Bearer token-1", now=NOW)
+    assert verifier.instants == [NOW]
+    assert introspector.instants == [NOW]
+
+
+def test_the_guard_supplies_its_own_clock_when_the_caller_gives_none() -> None:
+    guard, verifier, introspector = _recording_guard()
+    before = datetime.now(UTC)
+    guard.authorize("Bearer token-1")
+    after = datetime.now(UTC)
+    assert verifier.instants == introspector.instants
+    assert before <= verifier.instants[0] <= after
+    assert verifier.instants[0].tzinfo is UTC
 
 
 def _api_client(

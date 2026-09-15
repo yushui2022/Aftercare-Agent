@@ -71,17 +71,19 @@ function CaseRow({
 
 function CaseRows({
   block,
+  emptyText,
   selectedId,
   onSelect,
 }: {
   block: CaseBlock;
+  emptyText: string;
   selectedId: string | null;
   onSelect: (row: WorkQueueRow) => void;
 }) {
   return (
     <>
       {block.rows.length === 0 ? (
-        <p className="empty">该租户当前没有可见工单。</p>
+        <p className="empty">{emptyText}</p>
       ) : (
         <ul>
           {block.rows.map((row) => (
@@ -137,7 +139,12 @@ export function CaseList({
           </button>
         ))}
       </div>
-      <CaseRows block={queue} selectedId={selectedId} onSelect={onSelect} />
+      <CaseRows
+        block={queue}
+        emptyText="该租户当前没有可见工单。"
+        selectedId={selectedId}
+        onSelect={onSelect}
+      />
       {showAdministration ? (
         <section className="administration-block">
           <div className="case-list-head">
@@ -147,7 +154,12 @@ export function CaseList({
           <p className="hint">
             这些工单你没有内容访问权，只能查看访问授权并移交给其他主体。
           </p>
-          <CaseRows block={administration} selectedId={selectedId} onSelect={onSelect} />
+          <CaseRows
+            block={administration}
+            emptyText="已加载的工单都在队列里；继续加载可查看更早的工单。"
+            selectedId={selectedId}
+            onSelect={onSelect}
+          />
         </section>
       ) : null}
     </aside>

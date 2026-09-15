@@ -334,10 +334,12 @@ export default function App() {
   }, [identity, selectedId, administrationOnly, refreshToken]);
 
   // Events are owned by the subscription, not by the case fetch, so a decision
-  // refresh never truncates the running timeline.
+  // refresh never truncates the running timeline.  An administration-only row
+  // never subscribes: the event stream is a content route, so asking for it
+  // would spend a request the server always refuses.
   useEffect(() => {
     setEvents([]);
-    if (selectedId === null) {
+    if (selectedId === null || administrationOnly) {
       setStreamStatus("stopped");
       return;
     }
@@ -371,7 +373,7 @@ export default function App() {
         }
       },
     });
-  }, [identity, selectedId, live]);
+  }, [identity, selectedId, administrationOnly, live]);
 
   const reload = useCallback(() => {
     setRefreshToken((token) => token + 1);

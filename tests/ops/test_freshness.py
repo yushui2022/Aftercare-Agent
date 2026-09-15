@@ -49,6 +49,7 @@ NOW = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
 PAYLOAD = b"custom-format-dump"
 CHECKSUM = "a" * 64
 TOOL_VERSION = "pg_dump (PostgreSQL) 16.13"
+WAL_LSN = "0/16B3748"
 RPO_CLAIM = "the newest recovery point is inside the RPO budget"
 INTERVAL_CLAIM = "a restore has been proven inside the drill interval"
 RESTORED_CLAIM = "the newest backup has been restored"
@@ -67,6 +68,7 @@ def _write_backup(
             database="aftercare",
             server_version="16.13",
             taken_at=taken_at,
+            wal_lsn=WAL_LSN,
             migrations=(MigrationRecord(version=16, checksum=CHECKSUM),),
             row_counts=(TableRows(table="aftercare_cases", rows=3),),
         ),

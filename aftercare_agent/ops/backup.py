@@ -41,7 +41,7 @@ from typing import Annotated, Any, Literal
 
 import psycopg
 from psycopg import sql
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 
 from aftercare_agent.domain.common import NonNegativeInt, Sha256, UtcDatetime
 from aftercare_agent.observability import LoggingMetrics
@@ -83,6 +83,15 @@ from aftercare_agent.ops.tooling import (
     validate_backup_name,
     validate_database_name,
 )
+from aftercare_agent.ops.wal_archive import (
+    ARCHIVE_LAG_ENV,
+    ArchiveBudget,
+    evaluate_archive,
+    parse_segment_size,
+    read_archiver_state,
+    read_inventory,
+    report_archive_status,
+)
 from aftercare_agent.persistence.db import known_migrations, latest_schema_version, migrate
 
 DUMP_SUFFIX = ".dump"
@@ -97,6 +106,10 @@ type TableName = Annotated[
     str, Field(min_length=1, max_length=63, pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
 ]
 type VersionText = Annotated[str, Field(min_length=1, max_length=200)]
+# A WAL position as PostgreSQL prints it, e.g. 0/16B3748.  It is the coordinate
+# an archive check needs: everything at or after it has to be archived before
+# this dump can be rolled forward.
+type WalLsn = Annotated[str, Field(pattern=r"^[0-9A-F]{1,8}/[0-9A-F]{1,8}$")]
 
 # --------------------------------------------------------------------------
 # Describing a database and a dump
@@ -121,6 +134,7 @@ class DatabaseSnapshot(OpsModel):
     database: DatabaseName
     server_version: VersionText
     taken_at: UtcDatetime
+    wal_lsn: WalLsn
     migrations: tuple[MigrationRecord, ...]
     row_counts: tuple[TableRows, ...]
 
@@ -137,19 +151,31 @@ class BackupManifest(OpsModel):
     happened to exit zero.
     """
 
-    manifest_version: Literal[1] = 1
+    manifest_version: Literal[1, 2] = 2
     name: BackupName
     created_at: UtcDatetime
     taken_at: UtcDatetime
     database: DatabaseName
     server_version: VersionText
     schema_version: NonNegativeInt
+    wal_lsn: WalLsn | None = None
     migrations: tuple[MigrationRecord, ...]
     row_counts: tuple[TableRows, ...]
     dump_file: str
     dump_bytes: NonNegativeInt
     dump_sha256: Sha256
     tool_version: VersionText
+
+    @model_validator(mode="after")
+    def _wal_position_matches_the_version(self) -> "BackupManifest":
+        """Version 2 means the manifest carries a WAL position, and version 1
+        means it predates them; a manifest that claims one and not the other
+        would make an archive check read a field that is not there."""
+        if self.manifest_version == 2 and self.wal_lsn is None:
+            raise ValueError("manifest_version 2 carries the WAL position the dump starts at")
+        if self.manifest_version == 1 and self.wal_lsn is not None:
+            raise ValueError("manifest_version 1 predates WAL positions; drop wal_lsn")
+        return self
 
     def dump_path(self, directory: Path) -> Path:
         return directory / self.dump_file
@@ -220,6 +246,7 @@ def read_snapshot(connection: psycopg.Connection[Any]) -> DatabaseSnapshot:
         database=str(_scalar(connection, "SELECT current_database()")),
         server_version=str(_scalar(connection, "SHOW server_version")),
         taken_at=_scalar(connection, "SELECT clock_timestamp()"),
+        wal_lsn=str(_scalar(connection, "SELECT pg_current_wal_lsn()")),
         migrations=read_migrations(connection),
         row_counts=read_row_counts(connection),
     )
@@ -263,6 +290,7 @@ def finalize_backup(
             created_at=created_at or datetime.now(UTC),
             taken_at=snapshot.taken_at,
             database=snapshot.database,
+            wal_lsn=snapshot.wal_lsn,
             server_version=snapshot.server_version,
             schema_version=snapshot.schema_version,
             migrations=snapshot.migrations,
@@ -1007,6 +1035,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.add_argument("--emit-metrics", action="store_true", help="log one JSON line per metric")
     status.add_argument("--json", default=None, type=Path)
+
+    wal = actions.add_parser(
+        "wal", help="check that archived WAL is contiguous, current and covers the newest dump"
+    )
+    wal.add_argument("--archive-dir", required=True, type=Path, help="where archive_command writes")
+    wal.add_argument(
+        "--dsn",
+        default=None,
+        help=(
+            "read the archiver's own state from this server; a directory alone cannot say "
+            "how far behind the archiver is"
+        ),
+    )
+    wal.add_argument(
+        "--directory", default=None, type=Path, help="check coverage against this backup directory"
+    )
+    wal.add_argument("--name", default=None, help="check this backup instead of the newest")
+    wal.add_argument(
+        "--segment-size",
+        default=None,
+        help="e.g. 16MB; the size the server reports wins when --dsn is given",
+    )
+    wal.add_argument(
+        "--archive-lag-seconds",
+        type=float,
+        default=None,
+        help=(
+            "fail when the newest archived segment is older than this many seconds "
+            f"(or set {ARCHIVE_LAG_ENV})"
+        ),
+    )
+    wal.add_argument("--emit-metrics", action="store_true", help="log one JSON line per metric")
+    wal.add_argument("--json", default=None, type=Path)
     return parser
 
 
@@ -1114,6 +1175,37 @@ def _budget_seconds(value: float | None, env_var: str) -> float | None:
         raise OpsError(f"{env_var} is not a number of seconds: {raw!r}") from exc
 
 
+def _wal_command(args: argparse.Namespace) -> int:
+    inventory = read_inventory(args.archive_dir)
+    if args.name is not None and args.directory is None:
+        raise OpsError("--name needs --directory: a name only means something next to a directory")
+    manifest: BackupManifest | None = None
+    if args.directory is not None:
+        manifest = load_manifest(args.directory, args.name)
+    segment_bytes = None if args.segment_size is None else parse_segment_size(args.segment_size)
+    # Only an explicit --dsn opens a connection.  This check has to work when the
+    # server is gone, which is exactly when an archive is the only thing left,
+    # so an unset DSN means "read the directory and stop" rather than "guess".
+    archiver = None
+    if args.dsn:
+        with psycopg.connect(args.dsn) as connection:
+            archiver = read_archiver_state(connection)
+    budget = ArchiveBudget(lag_seconds=_budget_seconds(args.archive_lag_seconds, ARCHIVE_LAG_ENV))
+    report = evaluate_archive(
+        inventory,
+        archiver=archiver,
+        manifest=manifest,
+        budget=budget,
+        segment_bytes=segment_bytes,
+    )
+    print(report.table())
+    if args.emit_metrics:
+        report_archive_status(LoggingMetrics(), report, component="backup")
+    if args.json:
+        _write_json(args.json, report.to_json())
+    return 0 if report.ok else 1
+
+
 def _status_command(args: argparse.Namespace) -> int:
     directory: Path = args.directory
     budget = StatusBudget(
@@ -1193,6 +1285,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _retention_command(args)
         if args.action == "status":
             return _status_command(args)
+        if args.action == "wal":
+            return _wal_command(args)
         return _reconcile_command(args)
     except OpsError as exc:
         print(f"aftercare-backup: {exc}", file=sys.stderr)

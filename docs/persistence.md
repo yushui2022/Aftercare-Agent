@@ -33,6 +33,8 @@ $env:DATABASE_URL = "postgresql://..."
 
 这不是完整运行时：真实业务 Harness、生产认证、供应商连接器、沙箱和真实 EGM 调查 schema
 仍待实施。Wait/Inbox/Outbox、发布租约、常驻 Worker、基础 fencing、调查观察账本和 Action
-Ledger 已有真实 PostgreSQL 验收；备份、恢复演练、保留删除与恢复后核对已由
-[`aftercare-backup`](operations/backup-restore.md) 提供（[ADR-0008](decisions/0008-backup-and-restore-drills.md)），
-当前 SQL 仍不包含生产 RLS、HA、WAL 归档/时间点恢复或备份加密。
+Ledger 已有真实 PostgreSQL 验收；备份、恢复演练、保留删除、恢复后核对、新鲜度判定与 WAL 归档检查已由
+[`aftercare-backup`](operations/backup-restore.md) 提供（[ADR-0008](decisions/0008-backup-and-restore-drills.md)、
+[ADR-0009](decisions/0009-backup-freshness-and-drill-records.md)、[ADR-0010](decisions/0010-wal-archive-checks.md)）；
+WAL 归档本身仍是部署配置（`archive_mode`/`archive_command`），工具只检查它是不是连续、在推进、覆盖最新 dump，
+不做按时间点的恢复演练；当前 SQL 仍不包含生产 RLS、HA 或备份加密。

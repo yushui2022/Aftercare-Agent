@@ -136,7 +136,7 @@ class BackupStatus:
         else:
             lines.append(
                 f"  newest dump      {self.newest_dump_name} "
-                f"({_age_text(self.newest_dump_age_seconds)})"
+                f"({age_text(self.newest_dump_age_seconds)})"
             )
         if self.last_drill is None:
             lines.append("  last drill       never recorded in this directory")
@@ -144,12 +144,12 @@ class BackupStatus:
             outcome = "ok" if self.last_drill.ok else "failed"
             lines.append(
                 f"  last drill       {self.last_drill.name} {outcome} "
-                f"({_age_text(self.last_drill_age_seconds)})"
+                f"({age_text(self.last_drill_age_seconds)})"
             )
         if self.newest_ok_drill is not None:
             lines.append(
                 f"  last good drill  {self.newest_ok_drill.name} "
-                f"({_age_text(self.newest_ok_drill_age_seconds)})"
+                f"({age_text(self.newest_ok_drill_age_seconds)})"
             )
         if not self.budget.configured:
             lines.append("  budgets          none stated, so nothing here can fail")
@@ -194,7 +194,7 @@ class BackupStatus:
         }
 
 
-def _age_text(seconds: float | None) -> str:
+def age_text(seconds: float | None) -> str:
     if seconds is None:
         return "unknown age"
     if seconds < 90:
@@ -286,12 +286,12 @@ def _rpo_verdict(newest: ManifestLike | None, observed: float | None, limit: flo
         return Verdict(claim, False, limit, None, "there is no recovery point to measure")
     if observed <= limit:
         detail = (
-            f"the newest recovery point ({newest.name}) is {_age_text(observed)}, "
+            f"the newest recovery point ({newest.name}) is {age_text(observed)}, "
             f"inside {limit:.0f}s"
         )
         return Verdict(claim, True, limit, observed, detail)
     detail = (
-        f"the newest recovery point ({newest.name}) is {_age_text(observed)}, "
+        f"the newest recovery point ({newest.name}) is {age_text(observed)}, "
         f"past the {limit:.0f}s budget"
     )
     return Verdict(claim, False, limit, observed, detail)
@@ -309,12 +309,12 @@ def _drill_verdict(newest_ok: DrillRecord | None, observed: float | None, limit:
         )
     if observed <= limit:
         detail = (
-            f"the newest restored backup ({newest_ok.name}) is {_age_text(observed)}, "
+            f"the newest restored backup ({newest_ok.name}) is {age_text(observed)}, "
             f"inside {limit:.0f}s"
         )
         return Verdict(claim, True, limit, observed, detail)
     detail = (
-        f"the newest restored backup ({newest_ok.name}) is {_age_text(observed)}, "
+        f"the newest restored backup ({newest_ok.name}) is {age_text(observed)}, "
         f"past the {limit:.0f}s interval"
     )
     return Verdict(claim, False, limit, observed, detail)

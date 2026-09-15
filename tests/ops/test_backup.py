@@ -52,6 +52,7 @@ from aftercare_agent.persistence.db import known_migrations, latest_schema_versi
 CHECKSUM = "a" * 64
 PAYLOAD = b"custom-format-dump"
 TAKEN_AT = datetime(2026, 9, 15, 8, 0, tzinfo=UTC)
+WAL_LSN = "0/16B3748"
 KNOWN = dict(known_migrations())
 
 
@@ -85,6 +86,7 @@ def _snapshot(
         database="aftercare",
         server_version="16.13",
         taken_at=taken_at,
+        wal_lsn=WAL_LSN,
         migrations=records,
         row_counts=(TableRows(table="aftercare_cases", rows=3),),
     )
@@ -98,6 +100,7 @@ def _manifest(name: str, taken_at: datetime, *, rows: int = 3) -> BackupManifest
         database="aftercare",
         server_version="16.13",
         schema_version=2,
+        wal_lsn=WAL_LSN,
         migrations=(
             MigrationRecord(version=1, checksum=CHECKSUM),
             MigrationRecord(version=2, checksum=CHECKSUM),

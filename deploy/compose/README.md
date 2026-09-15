@@ -80,11 +80,13 @@ Compose service: `aftercare-backup` writes a dump plus a manifest, drills the
 restore into a scratch database, records what the drill did next to the dump,
 and keeps the copies bounded; `status` then answers "how old is the newest
 recovery point, and when was a restore last proven to work" against budgets the
-deployment states (see
+deployment states, and `wal` checks that the WAL archive behind that
+point is contiguous, still advancing, and reaches the newest dump (see
 [ADR-0008](../../docs/decisions/0008-backup-and-restore-drills.md),
-[ADR-0009](../../docs/decisions/0009-backup-freshness-and-drill-records.md) and
-the [runbook](../../docs/operations/backup-restore.md)); it does not cover WAL
-archiving, off-site copies or encryption.
+[ADR-0009](../../docs/decisions/0009-backup-freshness-and-drill-records.md),
+[ADR-0010](../../docs/decisions/0010-wal-archive-checks.md) and
+the [runbook](../../docs/operations/backup-restore.md)); it does not drill a
+point-in-time recovery, and does not cover off-site copies or encryption.
 
 ## 合成 Aftercare 演示
 

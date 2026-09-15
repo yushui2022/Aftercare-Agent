@@ -108,6 +108,15 @@ export interface CaseGrant {
 
 export interface CaseGrantListResponse {
   grants: CaseGrant[];
+  /**
+   * Closed-set permissions the caller may hand out here, and whether it may
+   * write at all.  Both describe the caller's own token scopes, so the form
+   * never has to guess the bound from a Case projection -- a real bearer
+   * identity's projection is the intersection with a grant, which understates
+   * a tenant administrator that holds no grant on this Case.
+   */
+  delegable: string[];
+  can_administer: boolean;
 }
 
 export interface CaseEvent {

@@ -189,7 +189,36 @@ Case 的 grant，第一条授权永远发不出去。防止它变成提权通道
 因此授权历史可以直接按 Case 事件流审计；这两类事件没有 `run_id`，授权变更不是 Run 推进的
 一部分。管理面改变的是权威状态而不是调用者的即时权限：`CaseGrant` 仍是“使用时”的权威，
 撤销不会中断已经在途的请求。`web/` 工作台已经消费这三个端点（单工单访问管理面板，见
-[工作台说明](../web/README.md#工单访问管理d-01-05--d-01-06)）：面板只在服务端允许时出现，
-每次变更后时间线会按事件流自然刷新。仍未完成：面向 `grant:read` 的跨工单发现与租户级
-授权总览（当前工单列表只列出调用者已有授权的工单，所以管理员暂时只能移交自己参与的工单）、
-RLS、真实 IdP 权限映射与演练。
+[工作台说明](../web/README.md#工单访问管理d-01-05--d-01-06--d-01-07)）：面板只在服务端
+允许时出现，每次变更后时间线会按事件流自然刷新。响应携带 `delegable` 与 `can_administer`
+两个字段描述**调用者**而不是 Case，理由见
+[ADR-0005](decisions/0005-access-administration-discovery.md) 决策第 6 条：Case 投影是
+与 grant 的交集，在该 Case 上没有 grant 的租户管理员在投影里看不到 `grant:admin`，客户端
+无法据此判断表单是否该出现。仍未完成：租户级授权总览、RLS、真实 IdP 权限映射与演练。
+
+## 访问管理发现（D-01-07）
+
+移交需要先能命名目标工单，而 `GET /v1/cases` 是数据面入口——每行都来自活动 `CaseGrant`，
+所以不参与任何工单的访问管理员看到的是空队列，手上虽有 `grant:admin` 却无从移交。本切片
+开放控制面发现入口（决策见
+[ADR-0005](decisions/0005-access-administration-discovery.md)）：
+
+| 路由 | 所需权限 | 行为 |
+| --- | --- | --- |
+| `GET /v1/administration/cases` | 租户级 `grant:read` | 列出本租户工单的标识与进度，按创建时间/`case_id` 的 keyset 游标分页，`limit` 上限 200 |
+
+它返回 `case_id`、`order_id`、`status`、`version`、`created_at`，**没有** Case 内容、
+Run、Review、Approval 或事件流：这些仍逐工单判定 `CaseGrant`，`grant:read` 不参与它们的
+授权。换句话说，本切片放宽的是控制面，数据面没有放宽——如果 `grant:read` 能打开 Case
+内容，它就等价于“租户管理员对所有客户数据的常驻读权”，与逐工单 grant 收敛权限的立场相反。
+
+行的 `permissions` 只报调用者自己的租户级管理 scope（`grant:read`、`grant:admin`），
+刻意不复用 `_case_summary()` 的逐 Case 投影：在该 Case 上没有 grant 的调用者本来就没有
+任何 Case 权限，报出 `case:read` 会让工作台去打开下一个请求必然拒绝的内容。`grant:read`
+因此必须只发给真正的访问管理员：工单编号、订单号与状态对这个 scope 完全可见。
+
+分页参数与响应契约与数据面工单列表一致（`status`、`limit`、`after_created_at`、
+`after_case_id`、`next_created_at`、`next_case_id`），便于工作台共用同一套分页代码；
+但两侧游标不共享，因为判定不同、行集合也不同。token 的 `case_ids` 仍是上界：它只收窄这个
+清单，不会放宽任何读取。`web/` 工作台把结果渲染成"本租户其他工单"区块，行内标注“仅可
+管理访问”，选中时只显示授权面板与说明，不调用任何内容路由。

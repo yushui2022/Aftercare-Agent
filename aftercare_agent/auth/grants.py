@@ -34,6 +34,16 @@ GRANTABLE_CASE_PERMISSIONS: frozenset[str] = frozenset(
 GRANT_READ_PERMISSION = "grant:read"
 GRANT_ADMIN_PERMISSION = "grant:admin"
 
+#: The tenant-level administration scopes, and therefore everything an
+#: access administrator may be told it can do *with* a Case row it holds no
+#: grant on.  Kept separate from ``GRANTABLE_CASE_PERMISSIONS``: that set
+#: bounds what may be delegated per Case, this one bounds what an inventory
+#: row may report.  Mixing them would let a control-plane listing claim
+#: Case-scoped content permissions the caller does not have.
+ADMINISTRATION_PERMISSIONS: frozenset[str] = frozenset(
+    {GRANT_READ_PERMISSION, GRANT_ADMIN_PERMISSION}
+)
+
 
 def authorize_case_grant(
     *, actor_permissions: frozenset[str], requested: frozenset[str]

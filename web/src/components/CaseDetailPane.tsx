@@ -8,6 +8,7 @@ import type {
   CaseDetail,
   CaseEvent,
   CaseGrant,
+  CaseSummary,
   Review,
   ReviewDecision,
 } from "../types";
@@ -66,8 +67,34 @@ function DecisionForm({
   );
 }
 
+function CaseHeader({ summary }: { summary: CaseSummary }) {
+  return (
+    <header className="detail-head">
+      <div>
+        <h2>{summary.order_id}</h2>
+        <p className="detail-sub">
+          {summary.case_id} · v{summary.version} · {formatTime(summary.created_at)}
+        </p>
+      </div>
+      <div className="detail-badges">
+        <span className={`badge status-${summary.status.toLowerCase()}`}>
+          {CASE_STATUS_LABEL[summary.status]}
+        </span>
+        {summary.permissions.map((permission) => (
+          <span key={permission} className="badge scope">
+            {permission}
+          </span>
+        ))}
+      </div>
+    </header>
+  );
+}
+
 interface Props {
-  detail: CaseDetail;
+  /** Header fields, present even when this row may not be opened. */
+  summary: CaseSummary;
+  /** null when the row is administrable only, so no content route was called. */
+  detail: CaseDetail | null;
   reviews: Review[];
   approvals: Approval[];
   events: CaseEvent[];
@@ -77,6 +104,9 @@ interface Props {
   pendingDecisionIds: ReadonlySet<string>;
   /** null when the identity may not read grants, so no request is sent. */
   grants: CaseGrant[] | null;
+  /** Closed-set permissions the server says this identity may hand out. */
+  delegable: string[];
+  canAdminister: boolean;
   pendingGrantSubjects: ReadonlySet<string>;
   onGrant: (body: GrantBody) => Promise<boolean>;
   onRevoke: (subjectId: string, body: RevokeBody) => Promise<boolean>;
@@ -90,6 +120,7 @@ interface Props {
 }
 
 export function CaseDetailPane({
+  summary,
   detail,
   reviews,
   approvals,
@@ -99,6 +130,8 @@ export function CaseDetailPane({
   busy,
   pendingDecisionIds,
   grants,
+  delegable,
+  canAdminister,
   pendingGrantSubjects,
   onGrant,
   onRevoke,
@@ -106,29 +139,38 @@ export function CaseDetailPane({
   onReviewDecision,
   onApprovalDecision,
 }: Props) {
-  const canDecideReview = detail.permissions.includes("review:decide");
-  const canDecideApproval = detail.permissions.includes("approval:decide");
+  const header = detail ?? summary;
+  const canDecideReview = detail !== null && detail.permissions.includes("review:decide");
+  const canDecideApproval = detail !== null && detail.permissions.includes("approval:decide");
+
+  if (detail === null) {
+    return (
+      <section className="detail">
+        <CaseHeader summary={header} />
+        <div className="panel">
+          <h3>访问管理</h3>
+          <p className="empty">
+            当前身份对该工单只有访问管理权：可以查看并移交访问授权，但工单内容（Run、审核、审批与事件）仍由逐工单授权决定，因此在这里不可见。若需要处理内容，请让管理员为你的主体授予该工单的对应权限。
+          </p>
+        </div>
+        {grants === null ? null : (
+          <GrantPanel
+            grants={grants}
+            delegable={delegable}
+            canAdminister={canAdminister}
+            busy={busy}
+            pendingSubjects={pendingGrantSubjects}
+            onGrant={onGrant}
+            onRevoke={onRevoke}
+          />
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="detail">
-      <header className="detail-head">
-        <div>
-          <h2>{detail.order_id}</h2>
-          <p className="detail-sub">
-            {detail.case_id} · v{detail.version} · {formatTime(detail.created_at)}
-          </p>
-        </div>
-        <div className="detail-badges">
-          <span className={`badge status-${detail.status.toLowerCase()}`}>
-            {CASE_STATUS_LABEL[detail.status]}
-          </span>
-          {detail.permissions.map((permission) => (
-            <span key={permission} className="badge scope">
-              {permission}
-            </span>
-          ))}
-        </div>
-      </header>
+      <CaseHeader summary={header} />
 
       <div className="panel">
         <h3>执行 Run</h3>
@@ -269,7 +311,8 @@ export function CaseDetailPane({
       {grants === null ? null : (
         <GrantPanel
           grants={grants}
-          actorPermissions={detail.permissions}
+          delegable={delegable}
+          canAdminister={canAdminister}
           busy={busy}
           pendingSubjects={pendingGrantSubjects}
           onGrant={onGrant}

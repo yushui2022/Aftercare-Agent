@@ -1,15 +1,23 @@
 import { CASE_STATUS_LABEL, formatTime } from "../labels";
-import type { CaseStatus, CaseSummary } from "../types";
+import type { WorkQueueRow } from "../cases";
+import type { CaseStatus } from "../types";
 
-interface Props {
-  cases: CaseSummary[];
-  selectedId: string | null;
-  statusFilter: CaseStatus | "ALL";
-  onSelect: (caseId: string) => void;
-  onStatusFilter: (status: CaseStatus | "ALL") => void;
+/** One paginated list: its rows plus its own keyset cursor. */
+export interface CaseBlock {
+  rows: WorkQueueRow[];
   hasMore: boolean;
   loadingMore: boolean;
   onLoadMore: () => void;
+}
+
+interface Props {
+  queue: CaseBlock;
+  /** Inventory rows the queue cannot see; empty for a non-administrator. */
+  administration: CaseBlock;
+  selectedId: string | null;
+  statusFilter: CaseStatus | "ALL";
+  onSelect: (row: WorkQueueRow) => void;
+  onStatusFilter: (status: CaseStatus | "ALL") => void;
 }
 
 const FILTERS: Array<{ value: CaseStatus | "ALL"; label: string }> = [
@@ -19,21 +27,101 @@ const FILTERS: Array<{ value: CaseStatus | "ALL"; label: string }> = [
   { value: "CLOSED", label: "已关闭" },
 ];
 
+function CaseRow({
+  row,
+  selected,
+  onSelect,
+}: {
+  row: WorkQueueRow;
+  selected: boolean;
+  onSelect: (row: WorkQueueRow) => void;
+}) {
+  const { summary } = row;
+  const classes = ["case-row"];
+  if (selected) {
+    classes.push("selected");
+  }
+  if (row.administrationOnly) {
+    classes.push("admin-only");
+  }
+  return (
+    <li>
+      <button
+        type="button"
+        className={classes.join(" ")}
+        onClick={() => {
+          onSelect(row);
+        }}
+      >
+        <span className="case-row-top">
+          <strong>{summary.order_id}</strong>
+          <span className={`badge status-${summary.status.toLowerCase()}`}>
+            {CASE_STATUS_LABEL[summary.status]}
+          </span>
+        </span>
+        <span className="case-row-meta">
+          {summary.case_id} · v{summary.version}
+          {row.administrationOnly ? " · 仅可管理访问" : ""}
+        </span>
+        <span className="case-row-meta">{formatTime(summary.created_at)}</span>
+      </button>
+    </li>
+  );
+}
+
+function CaseRows({
+  block,
+  selectedId,
+  onSelect,
+}: {
+  block: CaseBlock;
+  selectedId: string | null;
+  onSelect: (row: WorkQueueRow) => void;
+}) {
+  return (
+    <>
+      {block.rows.length === 0 ? (
+        <p className="empty">该租户当前没有可见工单。</p>
+      ) : (
+        <ul>
+          {block.rows.map((row) => (
+            <CaseRow
+              key={row.summary.case_id}
+              row={row}
+              selected={row.summary.case_id === selectedId}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      )}
+      {block.hasMore ? (
+        <button
+          type="button"
+          className="load-more"
+          disabled={block.loadingMore}
+          onClick={block.onLoadMore}
+        >
+          {block.loadingMore ? "加载中…" : "加载更多"}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 export function CaseList({
-  cases,
+  queue,
+  administration,
   selectedId,
   statusFilter,
   onSelect,
   onStatusFilter,
-  hasMore,
-  loadingMore,
-  onLoadMore,
 }: Props) {
+  const showAdministration = administration.rows.length > 0 || administration.hasMore;
   return (
     <aside className="case-list">
       <div className="case-list-head">
         <h2>工单队列</h2>
-        <span className="count">{cases.length}</span>
+        <span className="count">{queue.rows.length}</span>
       </div>
       <div className="filters">
         {FILTERS.map((filter) => (
@@ -49,38 +137,18 @@ export function CaseList({
           </button>
         ))}
       </div>
-      {cases.length === 0 ? (
-        <p className="empty">该租户当前没有可见工单。</p>
-      ) : (
-        <ul>
-          {cases.map((item) => (
-            <li key={item.case_id}>
-              <button
-                type="button"
-                className={item.case_id === selectedId ? "case-row selected" : "case-row"}
-                onClick={() => {
-                  onSelect(item.case_id);
-                }}
-              >
-                <span className="case-row-top">
-                  <strong>{item.order_id}</strong>
-                  <span className={`badge status-${item.status.toLowerCase()}`}>
-                    {CASE_STATUS_LABEL[item.status]}
-                  </span>
-                </span>
-                <span className="case-row-meta">
-                  {item.case_id} · v{item.version}
-                </span>
-                <span className="case-row-meta">{formatTime(item.created_at)}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {hasMore ? (
-        <button type="button" className="load-more" disabled={loadingMore} onClick={onLoadMore}>
-          {loadingMore ? "加载中…" : "加载更多"}
-        </button>
+      <CaseRows block={queue} selectedId={selectedId} onSelect={onSelect} />
+      {showAdministration ? (
+        <section className="administration-block">
+          <div className="case-list-head">
+            <h2>本租户其他工单</h2>
+            <span className="count">{administration.rows.length}</span>
+          </div>
+          <p className="hint">
+            这些工单你没有内容访问权，只能查看访问授权并移交给其他主体。
+          </p>
+          <CaseRows block={administration} selectedId={selectedId} onSelect={onSelect} />
+        </section>
       ) : null}
     </aside>
   );

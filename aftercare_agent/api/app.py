@@ -27,8 +27,10 @@ from aftercare_agent.auth import (
     synthetic_context,
 )
 from aftercare_agent.auth.grants import (
+    ADMINISTRATION_PERMISSIONS,
     GRANT_ADMIN_PERMISSION,
     GRANT_READ_PERMISSION,
+    GRANTABLE_CASE_PERMISSIONS,
     CaseGrantRecord,
     authorize_case_grant,
 )
@@ -240,11 +242,20 @@ class CaseGrantResponse(BaseModel):
 
 
 class CaseGrantListResponse(BaseModel):
-    """Case-scoped grant list for the access-administration view."""
+    """Case-scoped grant list for the access-administration view.
+
+    ``delegable`` and ``can_administer`` describe the *caller*, not the Case.
+    The client cannot derive them from the Case projection: that projection is
+    the intersection with a grant, so it understates a tenant administrator
+    (who may hold no grant here at all).  Both values are the caller's own
+    scopes, so they disclose nothing it did not present.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     grants: list[CaseGrantResponse]
+    delegable: list[str]
+    can_administer: bool
 
 
 def _identifier(value: str, field: str) -> str:
@@ -334,6 +345,26 @@ def _case_summary(entry: CaseListEntry, identity: AuthContext) -> CaseSummaryRes
         version=entry.version,
         created_at=entry.created_at,
         permissions=sorted(_effective_case_permissions(entry, identity)),
+    )
+
+
+def _administration_summary(entry: CaseListEntry, identity: AuthContext) -> CaseSummaryResponse:
+    """Project one Case for the access-administration inventory.
+
+    ``permissions`` reports only what the caller may do *with this row*: its
+    tenant-level administration scopes.  It deliberately does not reuse the
+    Case-scoped projection -- a caller holding no grant on this Case has no
+    Case permission here, and reporting ``case:read`` would tell the
+    workbench to open content the next request would refuse.  The identity's
+    own scopes are already known to it, so this discloses nothing new.
+    """
+    return CaseSummaryResponse(
+        case_id=entry.case_id,
+        order_id=entry.order_id,
+        status=cast(Literal["OPEN", "IN_REVIEW", "CLOSED"], entry.status),
+        version=entry.version,
+        created_at=entry.created_at,
+        permissions=sorted(identity.permissions.intersection(ADMINISTRATION_PERMISSIONS)),
     )
 
 
@@ -835,7 +866,14 @@ def create_app(
                 records = CaseGrantRepository().list_for_case(
                     connection, identity.tenant_id, scoped_case_id, limit=limit
                 )
-            return CaseGrantListResponse(grants=[_grant_projection(record) for record in records])
+            return CaseGrantListResponse(
+                grants=[_grant_projection(record) for record in records],
+                # What this caller may hand out here, decided by the server
+                # instead of inferred from a Case projection that may hold no
+                # grant at all.
+                delegable=sorted(identity.permissions.intersection(GRANTABLE_CASE_PERMISSIONS)),
+                can_administer=GRANT_ADMIN_PERMISSION in identity.permissions,
+            )
         except ContractViolation as exc:
             raise _error(exc) from exc
 
@@ -903,6 +941,46 @@ def create_app(
                     expected_revision=body.expected_revision,
                 )
                 return _grant_projection(record)
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.get("/v1/administration/cases", response_model=CaseListResponse)
+    def list_administrable_cases(
+        identity: Auth,
+        status_filter: Annotated[
+            Literal["OPEN", "IN_REVIEW", "CLOSED"] | None, Query(alias="status")
+        ] = None,
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+        after_created_at: datetime | None = None,
+        after_case_id: str | None = None,
+    ) -> CaseListResponse:
+        """List the tenant's Cases for an access administrator.
+
+        Handing a Case over needs discovery: an administrator who is not a
+        participant cannot invent a Case id, and its own operator queue only
+        contains Cases it already holds a grant for.  This page is the
+        control-plane inventory and stays narrow on purpose -- identifiers,
+        status and version, never Case content, Runs or the event stream, all
+        of which keep resolving through a per-Case grant.
+        """
+        try:
+            identity.require(GRANT_READ_PERMISSION)
+            with database.transaction() as connection:
+                entries = CaseRepository().list_for_tenant(
+                    connection,
+                    tenant_id=identity.tenant_id,
+                    case_ids=identity.case_ids,
+                    status=status_filter,
+                    limit=limit,
+                    after_created_at=after_created_at,
+                    after_case_id=after_case_id,
+                )
+            last = entries[-1] if len(entries) == limit and entries else None
+            return CaseListResponse(
+                cases=[_administration_summary(entry, identity) for entry in entries],
+                next_created_at=None if last is None else last.created_at,
+                next_case_id=None if last is None else last.case_id,
+            )
         except ContractViolation as exc:
             raise _error(exc) from exc
 

@@ -255,6 +255,29 @@ input {
   word-break: break-all;
 }
 
+.administration-block {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* The inventory is secondary to the operator queue: shorter, and its rows
+   carry no Case content, so they are not the rows to read first. */
+.administration-block ul {
+  max-height: 34vh;
+}
+
+.case-row.admin-only .case-row-top strong {
+  color: var(--muted);
+}
+
+.hint {
+  margin: 8px 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 .detail {
   padding: 18px;
   display: flex;

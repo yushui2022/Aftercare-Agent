@@ -53,6 +53,7 @@ Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一�
 | [嵌入式架构决策](docs/decisions/0002-embedded-egm.md) | 代码独立不等于服务独立；模块、存储、业务权威各自的边界 |
 | [Case 授权决策](docs/decisions/0003-case-grant-authorization.md) | Token 身份与 Case 资源授权分离；CaseGrant 是访问权威，每次使用都在短事务内判定 |
 | [授权管理面决策](docs/decisions/0004-case-grant-administration.md) | 开放 Case 授权管理 HTTP：租户级 grant scope、可授予闭集与委派上限 |
+| [访问管理发现决策](docs/decisions/0005-access-administration-discovery.md) | 只放宽控制面：`grant:read` 能看到租户工单清单，但打不开 Case 内容 |
 | [EGM 接入决策](docs/decisions/0001-evidence-gated-memory.md) | 有条件采用 Evidence-Gated-Memory，明确证据门控与业务权威的边界 |
 | [EGM 代码评估与验证](docs/research/evidence-gated-memory.md) | 固定提交的源码核查、65 项测试与三个合成边界探针 |
 | [EGM 0.5.0 服务接入](docs/integrations/egm-service.md) | 修复后的契约、认证、事务幂等、并发与离线集成验收；本地源码尚未发布 |

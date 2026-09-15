@@ -37,6 +37,21 @@ describe("operator API client", () => {
     expect(new Headers(init.headers).get("X-Synthetic-Subject")).toBe("operator-1");
   });
 
+  it("reads the tenant inventory from the administration route", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({ cases: [], next_created_at: null, next_case_id: null }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listAdministrableCases(identity, { status: "CLOSED", limit: 5 });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // Control plane: identifiers only, and the same keyset cursor contract as
+    // the operator queue.
+    expect(url).toBe("/api/v1/administration/cases?status=CLOSED&limit=5");
+    expect(new Headers(init.headers).get("X-Synthetic-Tenant")).toBe("tenant-a");
+  });
+
   it("uses the caller supplied idempotency key for decisions", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({ review_id: "review-1" }),

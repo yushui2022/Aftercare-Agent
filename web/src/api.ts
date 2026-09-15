@@ -38,20 +38,39 @@ export interface CaseQuery {
   afterCaseId?: string;
 }
 
+function caseQueryParams(query: CaseQuery): string {
+  const params = new URLSearchParams();
+  if (query.status !== undefined) {
+    params.set("status", query.status);
+  }
+  params.set("limit", String(query.limit ?? 50));
+  if (query.afterCreatedAt !== undefined) {
+    params.set("after_created_at", query.afterCreatedAt);
+  }
+  if (query.afterCaseId !== undefined) {
+    params.set("after_case_id", query.afterCaseId);
+  }
+  return params.toString();
+}
+
 export const api = {
   listCases(identity: Identity, query: CaseQuery = {}): Promise<CaseListResponse> {
-    const params = new URLSearchParams();
-    if (query.status !== undefined) {
-      params.set("status", query.status);
-    }
-    params.set("limit", String(query.limit ?? 50));
-    if (query.afterCreatedAt !== undefined) {
-      params.set("after_created_at", query.afterCreatedAt);
-    }
-    if (query.afterCaseId !== undefined) {
-      params.set("after_case_id", query.afterCaseId);
-    }
-    return request<CaseListResponse>(identity, `/v1/cases?${params.toString()}`);
+    return request<CaseListResponse>(identity, `/v1/cases?${caseQueryParams(query)}`);
+  },
+
+  /**
+   * Control-plane inventory: the tenant's Cases, for an access administrator.
+   *
+   * Handing a Case over needs discovery -- an administrator that is not a
+   * participant cannot name a Case, and its own queue only holds Cases it was
+   * granted -- so this page carries identifiers and progress and nothing
+   * else.  Case content keeps resolving through a per-Case grant.
+   */
+  listAdministrableCases(identity: Identity, query: CaseQuery = {}): Promise<CaseListResponse> {
+    return request<CaseListResponse>(
+      identity,
+      `/v1/administration/cases?${caseQueryParams(query)}`,
+    );
   },
 
   getCase(identity: Identity, caseId: string): Promise<CaseDetail> {

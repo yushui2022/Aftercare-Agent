@@ -2,7 +2,6 @@ import { useState } from "react";
 
 import { formatTime } from "../labels";
 import {
-  GRANT_ADMIN_PERMISSION,
   buildGrantRequest,
   buildRevokeRequest,
   delegablePermissions,
@@ -24,7 +23,14 @@ const STATUS_LABEL: Record<GrantStatus, string> = {
 
 interface Props {
   grants: CaseGrant[];
-  actorPermissions: string[];
+  /**
+   * Closed-set permissions the server says this identity may hand out, and
+   * whether it may write at all.  Both come from the grants response: the
+   * Case projection is the intersection with a grant, so it understates a
+   * tenant administrator that holds no grant on this Case.
+   */
+  delegable: string[];
+  canAdminister: boolean;
   busy: boolean;
   pendingSubjects: ReadonlySet<string>;
   onGrant: (body: GrantBody) => Promise<boolean>;
@@ -33,7 +39,8 @@ interface Props {
 
 export function GrantPanel({
   grants,
-  actorPermissions,
+  delegable,
+  canAdminister,
   busy,
   pendingSubjects,
   onGrant,
@@ -45,9 +52,8 @@ export function GrantPanel({
   const [expectedRevision, setExpectedRevision] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const canAdminister = actorPermissions.includes(GRANT_ADMIN_PERMISSION);
-  const options = delegablePermissions(actorPermissions);
-  const withheld = undelegablePermissions(actorPermissions);
+  const options = delegablePermissions(delegable);
+  const withheld = undelegablePermissions(delegable);
 
   const resetForm = (): void => {
     setSubjectId("");

@@ -562,6 +562,7 @@ class CaseRepository:
         connection: psycopg.Connection[Any],
         *,
         tenant_id: str,
+        case_ids: frozenset[str] | None = None,
         status: str | None = None,
         limit: int = 50,
         after_created_at: datetime | None = None,
@@ -569,13 +570,30 @@ class CaseRepository:
     ) -> list[CaseListEntry]:
         """List every Case in one tenant.
 
-        Reserved for the explicitly-enabled synthetic/local principal.  A real
-        operator must use :meth:`list_accessible`, so a Case the subject was
-        never granted can never appear in their queue.
+        Two callers may use this, and both are named explicitly because a
+        tenant-wide read is otherwise exactly the permission this table
+        exists to avoid:
+
+        * the explicitly-enabled synthetic/local principal, whose scope *is*
+          the tenant; and
+        * an access administrator holding the tenant-level ``grant:read``
+          scope, who cannot hand over a Case it is unable to name
+          (ADR-0005).  That caller sees identifiers, status and version, and
+          nothing else -- Case content still resolves through
+          :meth:`list_accessible` and a per-Case grant.
+
+        A real operator queue must keep using :meth:`list_accessible`, so a
+        Case the subject was never granted cannot appear there.  ``case_ids``
+        is the token's upper bound and only ever narrows this read.
         """
         _page(limit, after_created_at, after_case_id)
         params: list[Any] = [tenant_id]
         clauses = ["c.tenant_id=%s"]
+        if case_ids is not None:
+            if not case_ids:
+                return []
+            clauses.append("c.case_id = ANY(%s)")
+            params.append(sorted(case_ids))
         status_clause = self._status_clause(status, params)
         cursor_clause = self._cursor_clause(after_created_at, after_case_id, params)
         params.append(limit)

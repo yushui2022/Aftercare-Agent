@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError, api, type Identity } from "./api";
+import {
+  administrationRows,
+  appendPage,
+  canReadContent,
+  queueRows,
+  type WorkQueueRow,
+} from "./cases";
 import { CaseDetailPane } from "./components/CaseDetailPane";
 import { CaseList } from "./components/CaseList";
 import { IdentityBar } from "./components/IdentityBar";
@@ -11,6 +18,7 @@ import type {
   CaseDetail,
   CaseEvent,
   CaseGrant,
+  CaseListResponse,
   CaseStatus,
   CaseSummary,
   Review,
@@ -20,11 +28,20 @@ import type {
 const DEFAULT_IDENTITY: Identity = { tenantId: "synthetic-demo", subjectId: "ops-1" };
 
 interface Workspace {
-  detail: CaseDetail;
+  /** null when the row is administrable only; its content routes stay closed. */
+  detail: CaseDetail | null;
   reviews: Review[];
   approvals: Approval[];
   /** null when this identity may not read access rows. */
   grants: CaseGrant[] | null;
+  /** What the server says this identity may hand out on this Case. */
+  delegable: string[];
+  canAdminister: boolean;
+}
+
+interface Cursor {
+  createdAt: string;
+  caseId: string;
 }
 
 function describe(cause: unknown): string {
@@ -34,11 +51,19 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+/** Keyset cursor of a page, or null when the last page was reached. */
+function cursorOf(response: CaseListResponse): Cursor | null {
+  return response.next_created_at !== null && response.next_case_id !== null
+    ? { createdAt: response.next_created_at, caseId: response.next_case_id }
+    : null;
+}
+
 export default function App() {
   const [identity, setIdentity] = useState<Identity>(DEFAULT_IDENTITY);
   const [statusFilter, setStatusFilter] = useState<CaseStatus | "ALL">("ALL");
   const [cases, setCases] = useState<CaseSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [inventory, setInventory] = useState<CaseSummary[]>([]);
+  const [selected, setSelected] = useState<WorkQueueRow | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [events, setEvents] = useState<CaseEvent[]>([]);
   const [live, setLive] = useState(true);
@@ -46,10 +71,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [listBusy, setListBusy] = useState(false);
   const [listMoreBusy, setListMoreBusy] = useState(false);
-  const [nextCursor, setNextCursor] = useState<{
-    createdAt: string;
-    caseId: string;
-  } | null>(null);
+  const [inventoryCursor, setInventoryCursor] = useState<Cursor | null>(null);
+  const [inventoryMoreBusy, setInventoryMoreBusy] = useState(false);
+  const [nextCursor, setNextCursor] = useState<Cursor | null>(null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [pendingDecisionIds, setPendingDecisionIds] = useState<Set<string>>(
     () => new Set(),
@@ -65,6 +89,13 @@ export default function App() {
   // its gates re-read from the server instead of trusting local state.
   const [refreshToken, setRefreshToken] = useState(0);
 
+  // Both lists share the status filter, so the query object is built once and
+  // stays referentially stable across renders.
+  const filterQuery = useMemo(
+    () => (statusFilter === "ALL" ? {} : { status: statusFilter }),
+    [statusFilter],
+  );
+
   useEffect(() => {
     let cancelled = false;
     const generation = listGeneration.current + 1;
@@ -75,29 +106,19 @@ export default function App() {
     setListBusy(true);
     setError(null);
     api
-      .listCases(identity, statusFilter === "ALL" ? {} : { status: statusFilter })
+      .listCases(identity, filterQuery)
       .then((response) => {
         if (cancelled) {
           return;
         }
         setCases(response.cases);
-        setNextCursor(
-          response.next_created_at !== null && response.next_case_id !== null
-            ? { createdAt: response.next_created_at, caseId: response.next_case_id }
-            : null,
-        );
-        setSelectedId((current) =>
-          current !== null && response.cases.some((item) => item.case_id === current)
-            ? current
-            : (response.cases[0]?.case_id ?? null),
-        );
+        setNextCursor(cursorOf(response));
       })
       .catch((cause: unknown) => {
         if (cancelled) {
           return;
         }
         setCases([]);
-        setSelectedId(null);
         setError(describe(cause));
       })
       .finally(() => {
@@ -108,7 +129,75 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [identity, statusFilter, refreshToken]);
+  }, [identity, filterQuery, refreshToken]);
+
+  // The administration inventory is a control-plane page, and a refusal is an
+  // ordinary state rather than an error: most identities are not access
+  // administrators, and the workbench must not nag them about it.
+  useEffect(() => {
+    let cancelled = false;
+    setInventory([]);
+    setInventoryCursor(null);
+    api
+      .listAdministrableCases(identity, filterQuery)
+      .then(
+        (response) => response,
+        (cause: unknown) => {
+          if (cause instanceof ApiError && cause.isFatal) {
+            return null;
+          }
+          throw cause;
+        },
+      )
+      .then((response) => {
+        if (cancelled || response === null) {
+          return;
+        }
+        setInventory(response.cases);
+        setInventoryCursor(cursorOf(response));
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setError(describe(cause));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [identity, filterQuery, refreshToken]);
+
+  // A new identity or filter invalidates the previous selection.  Refreshing
+  // must not: an administrator would be thrown out of the Case it is handing
+  // over.  Repairing is a separate effect so that a list which is briefly
+  // empty while it reloads keeps the current selection.
+  useEffect(() => {
+    setSelected(null);
+  }, [identity, statusFilter]);
+
+  useEffect(() => {
+    if (cases.length === 0 && inventory.length === 0) {
+      return;
+    }
+    setSelected((current) => {
+      // Re-read the row from the freshly loaded pages so that a refresh also
+      // updates the header, and prefer the queue: a queued Case carries its
+      // real Case permissions while an inventory row only carries the
+      // administration scopes.  Keeping the old object when nothing moved
+      // avoids re-fetching the workspace on every render.
+      const caseId = current?.summary.case_id;
+      const found =
+        cases.find((item) => item.case_id === caseId) ??
+        inventory.find((item) => item.case_id === caseId);
+      const next = found ?? cases[0];
+      if (next === undefined) {
+        return null;
+      }
+      if (current !== null && next === current.summary) {
+        return current;
+      }
+      return { summary: next, administrationOnly: !canReadContent(next) };
+    });
+  }, [cases, inventory]);
 
   const loadMoreCases = useCallback(async () => {
     if (nextCursor === null || listMoreBusy || listBusy) {
@@ -119,22 +208,15 @@ export default function App() {
     const generation = listGeneration.current;
     try {
       const response = await api.listCases(identity, {
-        ...(statusFilter === "ALL" ? {} : { status: statusFilter }),
+        ...filterQuery,
         afterCreatedAt: nextCursor.createdAt,
         afterCaseId: nextCursor.caseId,
       });
       if (generation !== listGeneration.current) {
         return;
       }
-      setCases((current) => {
-        const known = new Set(current.map((item) => item.case_id));
-        return [...current, ...response.cases.filter((item) => !known.has(item.case_id))];
-      });
-      setNextCursor(
-        response.next_created_at !== null && response.next_case_id !== null
-          ? { createdAt: response.next_created_at, caseId: response.next_case_id }
-          : null,
-      );
+      setCases((current) => appendPage(current, response.cases));
+      setNextCursor(cursorOf(response));
     } catch (cause: unknown) {
       if (generation === listGeneration.current) {
         setError(describe(cause));
@@ -144,29 +226,61 @@ export default function App() {
         setListMoreBusy(false);
       }
     }
-  }, [identity, listBusy, listMoreBusy, nextCursor, statusFilter]);
+  }, [identity, filterQuery, listBusy, listMoreBusy, nextCursor]);
+
+  const loadMoreInventory = useCallback(async () => {
+    if (inventoryCursor === null || inventoryMoreBusy) {
+      return;
+    }
+    setInventoryMoreBusy(true);
+    const generation = listGeneration.current;
+    try {
+      const response = await api.listAdministrableCases(identity, {
+        ...filterQuery,
+        afterCreatedAt: inventoryCursor.createdAt,
+        afterCaseId: inventoryCursor.caseId,
+      });
+      if (generation !== listGeneration.current) {
+        return;
+      }
+      setInventory((current) => appendPage(current, response.cases));
+      setInventoryCursor(cursorOf(response));
+    } catch (cause: unknown) {
+      if (generation === listGeneration.current) {
+        setError(describe(cause));
+      }
+    } finally {
+      if (generation === listGeneration.current) {
+        setInventoryMoreBusy(false);
+      }
+    }
+  }, [identity, filterQuery, inventoryCursor, inventoryMoreBusy]);
+
+  // One derived id, plus the one row property this fetch branches on, so that
+  // the content routes, the event subscription and the grant actions cannot
+  // disagree about which Case they are acting on.  Depending on the id instead
+  // of the row object also lets a refreshed summary update the header without
+  // re-fetching the workspace.
+  const selectedId = selected?.summary.case_id ?? null;
+  const administrationOnly = selected?.administrationOnly ?? false;
 
   useEffect(() => {
     if (selectedId === null) {
       setWorkspace(null);
       return;
     }
+    const caseId = selectedId;
     let cancelled = false;
     setDetailBusy(true);
     void (async () => {
       try {
-        const [detail, reviews, approvals] = await Promise.all([
-          api.getCase(identity, selectedId),
-          api.listReviews(identity, selectedId),
-          api.listApprovals(identity, selectedId),
-        ]);
         // Access rows are a tenant-level view.  The Case projection cannot
         // answer whether this identity may read them - a real bearer identity
         // sees only the intersection with its grant, which never contains
         // `grant:read` - so the server decides and a refusal just hides the
         // panel instead of showing an error the operator cannot act on.
-        const grants = await api.listCaseGrants(identity, selectedId).then(
-          (response) => response.grants,
+        const grants = await api.listCaseGrants(identity, caseId).then(
+          (response) => response,
           (cause: unknown) => {
             if (cause instanceof ApiError && cause.isFatal) {
               return null;
@@ -174,14 +288,32 @@ export default function App() {
             throw cause;
           },
         );
+        // Only a row that actually carries a Case grant may call the content
+        // routes: an inventory row would be refused.  Saying so once in the
+        // panel beats a 403 banner on every visit.
+        let detail: CaseDetail | null = null;
+        let reviews: Review[] = [];
+        let approvals: Approval[] = [];
+        if (!administrationOnly) {
+          const [detailResponse, reviewList, approvalList] = await Promise.all([
+            api.getCase(identity, caseId),
+            api.listReviews(identity, caseId),
+            api.listApprovals(identity, caseId),
+          ]);
+          detail = detailResponse;
+          reviews = reviewList.reviews;
+          approvals = approvalList.approvals;
+        }
         if (cancelled) {
           return;
         }
         setWorkspace({
           detail,
-          reviews: reviews.reviews,
-          approvals: approvals.approvals,
-          grants,
+          reviews,
+          approvals,
+          grants: grants === null ? null : grants.grants,
+          delegable: grants?.delegable ?? [],
+          canAdminister: grants?.can_administer ?? false,
         });
         setError(null);
       } catch (cause: unknown) {
@@ -199,7 +331,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [identity, selectedId, refreshToken]);
+  }, [identity, selectedId, administrationOnly, refreshToken]);
 
   // Events are owned by the subscription, not by the case fetch, so a decision
   // refresh never truncates the running timeline.
@@ -362,27 +494,40 @@ export default function App() {
       )}
       <main className="layout">
         <CaseList
-          cases={cases}
+          queue={{
+            rows: queueRows(cases),
+            hasMore: nextCursor !== null,
+            loadingMore: listMoreBusy,
+            onLoadMore: () => {
+              void loadMoreCases();
+            },
+          }}
+          administration={{
+            rows: administrationRows(cases, inventory),
+            hasMore: inventoryCursor !== null,
+            loadingMore: inventoryMoreBusy,
+            onLoadMore: () => {
+              void loadMoreInventory();
+            },
+          }}
           selectedId={selectedId}
           statusFilter={statusFilter}
-          onSelect={setSelectedId}
+          onSelect={setSelected}
           onStatusFilter={setStatusFilter}
-          hasMore={nextCursor !== null}
-          loadingMore={listMoreBusy}
-          onLoadMore={() => {
-            void loadMoreCases();
-          }}
         />
-        {workspace === null ? (
+        {workspace === null || selected === null ? (
           <section className="detail placeholder">
             <p className="empty">选择左侧工单以查看 Run、审核、审批与事件。</p>
           </section>
         ) : (
           <CaseDetailPane
+            summary={selected.summary}
             detail={workspace.detail}
             reviews={workspace.reviews}
             approvals={workspace.approvals}
             grants={workspace.grants}
+            delegable={workspace.delegable}
+            canAdminister={workspace.canAdminister}
             events={events}
             streamStatus={streamStatus}
             live={live}

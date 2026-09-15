@@ -206,10 +206,28 @@ def _initdb(bindir: Path, data: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _start_failure(cluster: ArchivedCluster, root: Path) -> str:
+    """Why the cluster would not start, which ``pg_ctl`` alone never says.
+
+    ``pg_ctl`` reports only that it waited and the server stopped; the reason is
+    in the postmaster's own log, which ``-l`` puts beside the data directory.
+    A skip that cannot say what went wrong is not evidence of anything.
+    """
+    logs = [cluster.pg_ctl_log, root / "server.log"]
+    parts = [
+        log.read_text(encoding="utf-8", errors="replace").strip()[-400:]
+        for log in logs
+        if log.exists()
+    ]
+    return " / ".join(part for part in parts if part) or "no log was written"
+
+
 def _start_cluster(bindir: Path, root: Path) -> ArchivedCluster:
     data = root / "data"
     archive = root / "archive"
+    socket = root / "socket"
     archive.mkdir(parents=True, exist_ok=True)
+    socket.mkdir(parents=True, exist_ok=True)
     script = root / "archive_copy.py"
     script.write_text(ARCHIVE_SCRIPT.format(target=repr(archive.as_posix())), encoding="utf-8")
     created = _initdb(bindir, data)
@@ -217,18 +235,28 @@ def _start_cluster(bindir: Path, root: Path) -> ArchivedCluster:
         pytest.skip(f"initdb failed here: {created.stderr.strip()[-400:]}")
     conf = data / "postgresql.conf"
     base = conf.read_text(encoding="utf-8")
+    settings = [
+        "listen_addresses = '127.0.0.1'",
+        "archive_mode = on",
+        "archive_timeout = 2s",
+        "fsync = off",
+        "full_page_writes = off",
+    ]
+    if os.name != "nt":
+        # Debian and Ubuntu build the default Unix socket into
+        # /var/run/postgresql, which belongs to their own postgres user: a
+        # throwaway cluster started by anyone else stops there before it
+        # listens at all.  Keep every file this cluster makes inside its own
+        # directory, which no system user owns.  Windows has no such socket.
+        settings.append(f"unix_socket_directories = '{socket.as_posix()}'")
     for _ in range(3):
         port = _free_port()
         command = _archive_command(script)
         conf.write_text(
             base
-            + "\nlisten_addresses = '127.0.0.1'\n"
-            + f"port = {port}\n"
-            + "archive_mode = on\n"
-            + "archive_timeout = 2s\n"
-            + f"archive_command = '{command}'\n"
-            + "fsync = off\n"
-            + "full_page_writes = off\n",
+            + "\n"
+            + "".join(f"{setting}\n" for setting in [*settings, f"port = {port}"])
+            + f"archive_command = '{command}'\n",
             encoding="utf-8",
         )
         cluster = ArchivedCluster(
@@ -242,8 +270,7 @@ def _start_cluster(bindir: Path, root: Path) -> ArchivedCluster:
         )
         if cluster.control("start", "-l", str(root / "server.log"), "-w", "-t", "60") == 0:
             return cluster
-    detail = cluster.pg_ctl_log.read_text(encoding="utf-8", errors="replace")[-400:]
-    pytest.skip(f"could not start a scratch PostgreSQL cluster: {detail}")
+    pytest.skip(f"could not start a scratch PostgreSQL cluster: {_start_failure(cluster, root)}")
 
 
 @pytest.fixture(scope="module")

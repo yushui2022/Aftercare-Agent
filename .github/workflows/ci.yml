@@ -65,8 +65,11 @@ jobs:
           # installing 17 is not enough: prepend 17's own bindir.  If the
           # install above failed this entry is ignored and the tests skip.
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
-          pg_dump --version
-          initdb --version
+          # $GITHUB_PATH only reaches later steps, so ask the new binaries by
+          # absolute path here: this step is the proof that the install landed,
+          # and an unproven install is worse than a reported failure.
+          /usr/lib/postgresql/17/bin/pg_dump --version
+          /usr/lib/postgresql/17/bin/initdb --version
       - name: Static checks
         run: |
           uv run --locked ruff format --check .

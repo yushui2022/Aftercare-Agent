@@ -37,19 +37,18 @@ def _backend_pid(connection: psycopg.Connection[Any]) -> int:
 def test_pooled_units_of_work_reuse_backends(dsn: str) -> None:
     """Twenty-five transactions must not cost twenty-five connections.
 
-    The steady state is one backend per pool.  The looser assertion leaves room
-    for the return of a connection to lose a race with the next borrow on a
-    loaded host -- the pool is allowed to open a second one there -- while still
-    failing if every transaction opens its own.
+    The pool is capped at one connection, so it cannot grow its way out of the
+    assertion: every borrow either finds the connection waiting or is handed
+    the one that is coming back.  The unpooled comparison is the next test,
+    and it reaches a fresh backend every time.
     """
-    database = Database(dsn, min_size=1, max_size=8)
+    database = Database(dsn, min_size=1, max_size=1)
     try:
         pids = []
         for _ in range(25):
             with database.transaction() as connection:
                 pids.append(_backend_pid(connection))
-        assert len(set(pids)) <= 2
-        assert len(set(pids)) <= database.max_size
+        assert len(set(pids)) == 1
     finally:
         database.close()
 
@@ -72,12 +71,15 @@ def test_a_released_connection_goes_back_to_the_pool(dsn: str) -> None:
 
     The lease heartbeat holds one connection for a slice and gives it back with
     ``release()``; if that really closed the connection, every slice would pay
-    the handshake the heartbeat exists to avoid.
+    the handshake the heartbeat exists to avoid.  The pool is capped at one, so
+    the next borrow has to be served by the connection that came back: a
+    destroyed one would be replaced by a fresh backend with a new pid.
     """
-    database = Database(dsn, min_size=1, max_size=2)
+    database = Database(dsn, min_size=1, max_size=1)
     try:
         held = database.open()
-        pid = _backend_pid(held)
+        with held.transaction():
+            pid = _backend_pid(held)
         database.release(held)
         assert not held.closed
         with database.transaction() as reused:

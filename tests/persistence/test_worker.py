@@ -1,6 +1,5 @@
 """Durable Worker integration tests; skipped without PostgreSQL."""
 
-import os
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -26,17 +25,6 @@ from aftercare_agent.runtime import run_next, run_once
 from aftercare_agent.runtime.harness import HarnessResult
 
 NOW = datetime(2026, 9, 12, 12, tzinfo=UTC)
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 @pytest.fixture()

@@ -1,6 +1,5 @@
 """Durable session transcript reference tests (PostgreSQL only)."""
 
-import os
 from datetime import UTC, datetime
 
 import pytest
@@ -12,19 +11,7 @@ from aftercare_agent.persistence import (
     RunRepository,
     SessionMessageRepository,
     SessionRepository,
-    migrate,
 )
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 def _message(seq: int, *, message_id: str = "message-1") -> SessionMessage:

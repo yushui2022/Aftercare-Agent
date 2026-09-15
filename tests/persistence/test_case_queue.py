@@ -4,7 +4,6 @@ Every test allocates its own tenant id so repeated runs never collide and no
 cleanup of a shared tenant is required.
 """
 
-import os
 from datetime import datetime
 from uuid import uuid4
 
@@ -17,19 +16,7 @@ from aftercare_agent.persistence import (
     CaseRepository,
     Database,
     RunRepository,
-    migrate,
 )
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 def _tenant(prefix: str) -> str:

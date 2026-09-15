@@ -6,7 +6,6 @@ paying a TCP and authentication handshake, and only the server can say how
 many backends a borrower actually reached.
 """
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from typing import Any
@@ -18,14 +17,6 @@ from psycopg_pool import PoolTimeout
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.persistence import Database
-
-
-@pytest.fixture()
-def dsn() -> str:
-    value = os.environ.get("DATABASE_URL")
-    if not value:
-        pytest.skip("DATABASE_URL is not configured")
-    return value
 
 
 def _backend_pid(connection: psycopg.Connection[Any]) -> int:

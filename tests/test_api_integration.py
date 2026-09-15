@@ -15,14 +15,6 @@ from aftercare_agent.persistence import CaseGrantRepository, Database, RunReposi
 
 
 @pytest.fixture()
-def database() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    return Database(dsn)
-
-
-@pytest.fixture()
 def client(database: Database) -> Iterator[TestClient]:
     app = create_app(database, allow_synthetic=True)
     with TestClient(app) as value:

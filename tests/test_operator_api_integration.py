@@ -1,6 +1,5 @@
 """PostgreSQL API checks for the operator Review/Approval control plane."""
 
-import os
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -19,33 +18,21 @@ from aftercare_agent.persistence import (
     Database,
     ReviewRepository,
     RunRepository,
-    migrate,
 )
 
 
 @pytest.fixture()
-def database() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
-
-
-@pytest.fixture()
-def client(database: Database) -> Iterator[TestClient]:
-    with TestClient(create_app(database, allow_synthetic=True)) as value:
+def client(db: Database) -> Iterator[TestClient]:
+    with TestClient(create_app(db, allow_synthetic=True)) as value:
         yield value
 
 
-def _review_fixture(database: Database) -> tuple[str, str, str]:
+def _review_fixture(db: Database) -> tuple[str, str, str]:
     tenant = f"operator-review-{uuid4().hex[:12]}"
     case_id = "case-1"
     run_id = "run-1"
     review_id = "review-1"
-    with database.transaction() as connection:
+    with db.transaction() as connection:
         runs = RunRepository()
         runs.create_case(
             connection,
@@ -79,12 +66,12 @@ def _review_fixture(database: Database) -> tuple[str, str, str]:
     return tenant, case_id, review_id
 
 
-def _approval_fixture(database: Database) -> tuple[str, str, str]:
+def _approval_fixture(db: Database) -> tuple[str, str, str]:
     tenant = f"operator-approval-{uuid4().hex[:12]}"
     case_id = "case-1"
     action_id = "action-1"
     approval_id = "approval-1"
-    with database.transaction() as connection:
+    with db.transaction() as connection:
         RunRepository().create_case(
             connection,
             CaseRecord(tenant_id=tenant, case_id=case_id, order_id="order-1", version=1),
@@ -122,9 +109,9 @@ def _approval_fixture(database: Database) -> tuple[str, str, str]:
 
 
 def test_review_operator_routes_derive_reviewer_and_are_idempotent(
-    database: Database, client: TestClient
+    db: Database, client: TestClient
 ) -> None:
-    tenant, case_id, review_id = _review_fixture(database)
+    tenant, case_id, review_id = _review_fixture(db)
     headers = {"X-Synthetic-Tenant": tenant, "X-Synthetic-Subject": "ops-reviewer"}
 
     fetched = client.get(f"/v1/cases/{case_id}/reviews/{review_id}", headers=headers)
@@ -175,9 +162,9 @@ def test_review_operator_routes_derive_reviewer_and_are_idempotent(
 
 
 def test_approval_operator_routes_derive_approver_and_enforce_case_scope(
-    database: Database, client: TestClient
+    db: Database, client: TestClient
 ) -> None:
-    tenant, case_id, approval_id = _approval_fixture(database)
+    tenant, case_id, approval_id = _approval_fixture(db)
     headers = {"X-Synthetic-Tenant": tenant, "X-Synthetic-Subject": "ops-approver"}
 
     fetched = client.get(f"/v1/cases/{case_id}/approvals/{approval_id}", headers=headers)
@@ -216,8 +203,8 @@ def test_approval_operator_routes_derive_approver_and_enforce_case_scope(
     assert authority_in_body.status_code == 422
 
 
-def test_operator_routes_reject_synthetic_identity_when_disabled(database: Database) -> None:
-    with TestClient(create_app(database)) as production_client:
+def test_operator_routes_reject_synthetic_identity_when_disabled(db: Database) -> None:
+    with TestClient(create_app(db)) as production_client:
         response = production_client.get(
             "/v1/cases/case-1/reviews/review-1",
             headers={

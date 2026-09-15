@@ -1,7 +1,6 @@
 """PostgreSQL integration tests; skipped unless DATABASE_URL points at a test DB."""
 
 import hashlib
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -26,17 +25,6 @@ from aftercare_agent.persistence import (
     RunRepository,
     migrate,
 )
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 def test_claim_is_monotonic_and_old_owner_cannot_renew(db: Database) -> None:

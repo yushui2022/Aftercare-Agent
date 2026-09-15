@@ -1,6 +1,5 @@
 """PostgreSQL tests for the trusted REVIEW gate."""
 
-import os
 from datetime import timedelta
 
 import pytest
@@ -8,18 +7,7 @@ import pytest
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.reviews import ReviewRequest
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
-from aftercare_agent.persistence import Database, ReviewRepository, RunRepository, migrate
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
+from aftercare_agent.persistence import Database, ReviewRepository, RunRepository
 
 
 def _seed(db: Database, tenant: str = "review-test") -> ReviewRequest:

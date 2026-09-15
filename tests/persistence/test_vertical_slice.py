@@ -1,6 +1,5 @@
 """A reproducible admission -> wait -> wake -> resume acceptance test."""
 
-import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -16,20 +15,8 @@ from aftercare_agent.persistence import (
     Database,
     InvestigationAssessmentRepository,
     RunRepository,
-    migrate,
 )
 from aftercare_agent.runtime import SyntheticAftercareFlow, SyntheticCase
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 def test_synthetic_aftercare_survives_worker_stop_and_wakeup(db: Database) -> None:

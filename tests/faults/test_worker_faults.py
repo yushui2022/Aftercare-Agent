@@ -5,7 +5,6 @@ the database row lock, lease expiry and fencing token are the authority when a
 Worker disappears or a second Worker is delayed by contention.
 """
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from threading import Event
@@ -15,21 +14,10 @@ import pytest
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
-from aftercare_agent.persistence import CheckpointRepository, Database, RunRepository, migrate
+from aftercare_agent.persistence import CheckpointRepository, Database, RunRepository
 from aftercare_agent.runtime import run_once
 
 NOW = datetime(2026, 9, 12, 12, tzinfo=UTC)
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 def _seed(db: Database, tenant: str, case_id: str, run_id: str) -> None:

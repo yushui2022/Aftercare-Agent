@@ -1,6 +1,5 @@
 """PostgreSQL Action Ledger tests with a deterministic provider double."""
 
-import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -14,19 +13,7 @@ from aftercare_agent.persistence import (
     ApprovalRepository,
     Database,
     RunRepository,
-    migrate,
 )
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 def _intent(

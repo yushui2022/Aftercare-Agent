@@ -1,26 +1,12 @@
 # ruff: noqa: E501
 """PostgreSQL wait lifecycle and atomic wake-up checks."""
 
-import os
 from datetime import UTC, datetime, timedelta
-
-import pytest
 
 from aftercare_agent.domain.protocol import ArtifactReference
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
 from aftercare_agent.domain.waits import InboxSignal, WaitRecord
-from aftercare_agent.persistence import Database, RunRepository, WaitRepository, migrate
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
+from aftercare_agent.persistence import Database, RunRepository, WaitRepository
 
 
 def _setup(db: Database, tenant: str, *, deadline: datetime | None = None) -> WaitRecord:

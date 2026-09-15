@@ -1,24 +1,12 @@
 """Cross-process admission and retry-budget invariants; skipped without PostgreSQL."""
 
-import os
 from datetime import timedelta
 
 import pytest
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
-from aftercare_agent.persistence import AdmissionRepository, Database, RunRepository, migrate
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
+from aftercare_agent.persistence import AdmissionRepository, Database, RunRepository
 
 
 def _seed(db: Database, tenant: str, case_id: str, run_id: str) -> None:

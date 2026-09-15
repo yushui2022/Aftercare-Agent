@@ -7,13 +7,11 @@ delegation bound is actually tested rather than masked by the local test
 identity.
 """
 
-import os
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-import pytest
 from fastapi.testclient import TestClient
 
 from aftercare_agent.api.app import create_app
@@ -26,22 +24,10 @@ from aftercare_agent.persistence import (
     EventRepository,
     ReviewRepository,
     RunRepository,
-    migrate,
 )
 
 CASE_ID = "case-1"
 REVIEW_ID = "review-1"
-
-
-@pytest.fixture()
-def database() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 class _BearerVerifier:
@@ -64,7 +50,7 @@ def _identity(subject_id: str, tenant_id: str, permissions: set[str]) -> AuthCon
     )
 
 
-def _client(database: Database, tenant: str) -> TestClient:
+def _client(db: Database, tenant: str) -> TestClient:
     """One app, four identities: administration, a limited administrator, two operators."""
     verifier = _BearerVerifier(
         {
@@ -82,17 +68,17 @@ def _client(database: Database, tenant: str) -> TestClient:
             "reader-token": _identity("case-reader", tenant, {"case:read"}),
         }
     )
-    return TestClient(create_app(database, oidc_verifier=verifier))
+    return TestClient(create_app(db, oidc_verifier=verifier))
 
 
 def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _case_with_review(database: Database) -> str:
+def _case_with_review(db: Database) -> str:
     """A tenant whose Case already has a pending Review for the handover test."""
     tenant = f"grant-admin-{uuid4().hex[:12]}"
-    with database.transaction() as connection:
+    with db.transaction() as connection:
         runs = RunRepository()
         runs.create_case(
             connection,
@@ -135,9 +121,9 @@ def _grant(client: TestClient, token: str, **body: object) -> Any:
     return client.post(f"/v1/cases/{CASE_ID}/grants", headers=_bearer(token), json=payload)
 
 
-def test_a_granted_operator_can_take_over_another_subjects_case(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+def test_a_granted_operator_can_take_over_another_subjects_case(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
 
     # Scopes alone are not authority: without a CaseGrant the Case is invisible.
     assert client.get(f"/v1/cases/{CASE_ID}", headers=_bearer("operator-token")).status_code == 403
@@ -167,9 +153,9 @@ def test_a_granted_operator_can_take_over_another_subjects_case(database: Databa
     assert decided.json()["actor"] == "operator-1"
 
 
-def test_revoking_a_grant_closes_access_again(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+def test_revoking_a_grant_closes_access_again(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
     revision = _grant(client, "admin-token").json()["revision"]
 
     revoked = client.post(
@@ -186,9 +172,9 @@ def test_revoking_a_grant_closes_access_again(database: Database) -> None:
     assert client.get("/v1/cases", headers=_bearer("operator-token")).json()["cases"] == []
 
 
-def test_replacing_a_grant_requires_the_current_revision(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+def test_replacing_a_grant_requires_the_current_revision(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
     assert _grant(client, "admin-token").status_code == 200
 
     # A blind retry cannot silently apply twice.
@@ -205,9 +191,9 @@ def test_replacing_a_grant_requires_the_current_revision(database: Database) -> 
     assert listed["grants"][0]["revision"] == 2
 
 
-def test_only_grant_administrators_may_read_or_change_access(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+def test_only_grant_administrators_may_read_or_change_access(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
 
     assert (
         client.get(f"/v1/cases/{CASE_ID}/grants", headers=_bearer("reader-token")).status_code
@@ -226,9 +212,9 @@ def test_only_grant_administrators_may_read_or_change_access(database: Database)
     assert listed["grants"] == []
 
 
-def test_an_administrator_cannot_delegate_beyond_its_own_permissions(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+def test_an_administrator_cannot_delegate_beyond_its_own_permissions(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
 
     denied = _grant(client, "limited-token", permissions=["review:decide"])
     assert denied.status_code == 403
@@ -242,9 +228,9 @@ def test_an_administrator_cannot_delegate_beyond_its_own_permissions(database: D
     assert _grant(client, "limited-token", permissions=["case:read"]).status_code == 200
 
 
-def test_an_unknown_permission_never_reaches_the_acl(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+def test_an_unknown_permission_never_reaches_the_acl(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
 
     rejected = _grant(client, "admin-token", permissions=["approval:approve"])
     assert rejected.status_code == 400
@@ -253,9 +239,9 @@ def test_an_unknown_permission_never_reaches_the_acl(database: Database) -> None
     assert listed["grants"] == []
 
 
-def test_an_expiry_that_is_not_in_the_future_is_rejected(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+def test_an_expiry_that_is_not_in_the_future_is_rejected(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
 
     past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     rejected = _grant(client, "admin-token", expires_at=past)
@@ -265,9 +251,9 @@ def test_an_expiry_that_is_not_in_the_future_is_rejected(database: Database) -> 
     assert _grant(client, "admin-token", expires_at=future).status_code == 200
 
 
-def test_another_tenants_case_is_indistinguishable(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, "some-other-tenant")
+def test_another_tenants_case_is_indistinguishable(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, "some-other-tenant")
 
     assert (
         client.get(f"/v1/cases/{CASE_ID}/grants", headers=_bearer("admin-token")).status_code == 403
@@ -279,17 +265,17 @@ def test_another_tenants_case_is_indistinguishable(database: Database) -> None:
     )
     # The owning tenant is unaffected.
     owner_view = (
-        _client(database, tenant)
+        _client(db, tenant)
         .get(f"/v1/cases/{CASE_ID}/grants", headers=_bearer("admin-token"))
         .json()
     )
     assert owner_view["grants"] == []
 
 
-def test_access_changes_appear_in_the_case_stream(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
-    with database.transaction() as connection:
+def test_access_changes_appear_in_the_case_stream(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
+    with db.transaction() as connection:
         history = [
             event.event_type
             for event in EventRepository().list_case_events(
@@ -303,7 +289,7 @@ def test_access_changes_appear_in_the_case_stream(database: Database) -> None:
         json={"expected_revision": revision},
     )
 
-    with database.transaction() as connection:
+    with db.transaction() as connection:
         events = EventRepository().list_case_events(connection, tenant_id=tenant, case_id=CASE_ID)
         applied = [event.event_type for event in events]
         sequences = [event.case_seq for event in events]
@@ -320,10 +306,10 @@ def test_access_changes_appear_in_the_case_stream(database: Database) -> None:
 
 
 def test_a_granted_operator_can_read_the_access_event_in_the_api_stream(
-    database: Database,
+    db: Database,
 ) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
     assert _grant(client, "admin-token").status_code == 200
 
     stream = client.get(f"/v1/cases/{CASE_ID}/events", headers=_bearer("operator-token"))
@@ -332,7 +318,7 @@ def test_a_granted_operator_can_read_the_access_event_in_the_api_stream(
     assert "case_grant.revoked" not in stream.text
 
 
-def _administration_client(database: Database, tenant: str, case_ids: set[str]) -> TestClient:
+def _administration_client(db: Database, tenant: str, case_ids: set[str]) -> TestClient:
     """One administrator whose token is narrowed to ``case_ids``."""
     verifier = _BearerVerifier(
         {
@@ -346,11 +332,11 @@ def _administration_client(database: Database, tenant: str, case_ids: set[str]) 
             )
         }
     )
-    return TestClient(create_app(database, oidc_verifier=verifier))
+    return TestClient(create_app(db, oidc_verifier=verifier))
 
 
-def _create_case(database: Database, tenant: str, case_id: str, order_id: str) -> None:
-    with database.transaction() as connection:
+def _create_case(db: Database, tenant: str, case_id: str, order_id: str) -> None:
+    with db.transaction() as connection:
         RunRepository().create_case(
             connection,
             CaseRecord(tenant_id=tenant, case_id=case_id, order_id=order_id, version=1),
@@ -358,7 +344,7 @@ def _create_case(database: Database, tenant: str, case_id: str, order_id: str) -
 
 
 def test_an_access_administrator_can_discover_a_case_it_does_not_hold(
-    database: Database,
+    db: Database,
 ) -> None:
     """A first grant is impossible if the administrator cannot name the Case.
 
@@ -366,8 +352,8 @@ def test_an_access_administrator_can_discover_a_case_it_does_not_hold(
     queue stays empty while the control-plane inventory has to show it.  That
     inventory carries identifiers and progress, never Case content.
     """
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
 
     assert client.get("/v1/cases", headers=_bearer("admin-token")).json()["cases"] == []
 
@@ -392,9 +378,9 @@ def test_an_access_administrator_can_discover_a_case_it_does_not_hold(
     )
 
 
-def test_only_grant_readers_can_enumerate_the_tenant(database: Database) -> None:
-    tenant = _case_with_review(database)
-    client = _client(database, tenant)
+def test_only_grant_readers_can_enumerate_the_tenant(db: Database) -> None:
+    tenant = _case_with_review(db)
+    client = _client(db, tenant)
 
     # Holding Case scopes is not enough: without grant:read the tenant's Case
     # list is not a resource this identity may enumerate at all.
@@ -402,33 +388,33 @@ def test_only_grant_readers_can_enumerate_the_tenant(database: Database) -> None
         assert client.get("/v1/administration/cases", headers=_bearer(token)).status_code == 403
 
 
-def test_the_administration_inventory_stays_inside_the_tenant(database: Database) -> None:
-    tenant = _case_with_review(database)
+def test_the_administration_inventory_stays_inside_the_tenant(db: Database) -> None:
+    tenant = _case_with_review(db)
     # The same case id in another tenant must not surface.
-    _create_case(database, f"other-{uuid4().hex[:12]}", CASE_ID, "order-other-tenant")
-    client = _client(database, tenant)
+    _create_case(db, f"other-{uuid4().hex[:12]}", CASE_ID, "order-other-tenant")
+    client = _client(db, tenant)
 
     body = client.get("/v1/administration/cases", headers=_bearer("admin-token")).json()
     assert [entry["order_id"] for entry in body["cases"]] == ["order-1"]
 
 
 def test_a_narrowed_administration_token_cannot_widen_the_inventory(
-    database: Database,
+    db: Database,
 ) -> None:
-    tenant = _case_with_review(database)
-    _create_case(database, tenant, "case-2", "order-2")
-    client = _administration_client(database, tenant, {"case-2"})
+    tenant = _case_with_review(db)
+    _create_case(db, tenant, "case-2", "order-2")
+    client = _administration_client(db, tenant, {"case-2"})
 
     body = client.get("/v1/administration/cases", headers=_bearer("narrow-token")).json()
     assert [entry["case_id"] for entry in body["cases"]] == ["case-2"]
 
 
 def test_the_administration_inventory_pages_with_a_keyset_cursor(
-    database: Database,
+    db: Database,
 ) -> None:
-    tenant = _case_with_review(database)
-    _create_case(database, tenant, "case-2", "order-2")
-    client = _client(database, tenant)
+    tenant = _case_with_review(db)
+    _create_case(db, tenant, "case-2", "order-2")
+    client = _client(db, tenant)
 
     first = client.get(
         "/v1/administration/cases", headers=_bearer("admin-token"), params={"limit": 1}

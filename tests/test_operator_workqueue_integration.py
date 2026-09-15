@@ -1,6 +1,5 @@
 """PostgreSQL API checks for operator Case discovery and work-queue reads."""
 
-import os
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -19,34 +18,22 @@ from aftercare_agent.persistence import (
     Database,
     ReviewRepository,
     RunRepository,
-    migrate,
 )
 
 
 @pytest.fixture()
-def database() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
-
-
-@pytest.fixture()
-def client(database: Database) -> Iterator[TestClient]:
-    with TestClient(create_app(database, allow_synthetic=True)) as value:
+def client(db: Database) -> Iterator[TestClient]:
+    with TestClient(create_app(db, allow_synthetic=True)) as value:
         yield value
 
 
 def _open_case(
-    database: Database, *, case_status: str = "OPEN", run_state: str = "READY"
+    db: Database, *, case_status: str = "OPEN", run_state: str = "READY"
 ) -> tuple[str, str, str]:
     tenant = f"queue-{uuid4().hex[:12]}"
     case_id = "case-1"
     run_id = "run-1"
-    with database.transaction() as connection:
+    with db.transaction() as connection:
         runs = RunRepository()
         runs.create_case(
             connection,
@@ -72,10 +59,8 @@ def _open_case(
     return tenant, case_id, run_id
 
 
-def test_case_queue_lists_case_detail_and_empty_children(
-    database: Database, client: TestClient
-) -> None:
-    tenant, case_id, run_id = _open_case(database)
+def test_case_queue_lists_case_detail_and_empty_children(db: Database, client: TestClient) -> None:
+    tenant, case_id, run_id = _open_case(db)
     headers = {"X-Synthetic-Tenant": tenant, "X-Synthetic-Subject": "ops-1"}
 
     listed = client.get("/v1/cases", headers=headers)
@@ -121,10 +106,10 @@ def test_case_queue_lists_case_detail_and_empty_children(
 
 
 def test_case_queue_lists_pending_review_without_internal_fields(
-    database: Database, client: TestClient
+    db: Database, client: TestClient
 ) -> None:
-    tenant, case_id, run_id = _open_case(database, run_state="REVIEW")
-    with database.transaction() as connection:
+    tenant, case_id, run_id = _open_case(db, run_state="REVIEW")
+    with db.transaction() as connection:
         ReviewRepository().request(
             connection,
             ReviewRequest(
@@ -152,10 +137,10 @@ def test_case_queue_lists_pending_review_without_internal_fields(
 
 
 def test_case_queue_lists_pending_approval_without_internal_fields(
-    database: Database, client: TestClient
+    db: Database, client: TestClient
 ) -> None:
-    tenant, case_id, _ = _open_case(database)
-    with database.transaction() as connection:
+    tenant, case_id, _ = _open_case(db)
+    with db.transaction() as connection:
         ActionRepository().reserve(
             connection,
             ActionIntent(
@@ -197,8 +182,8 @@ def test_case_queue_lists_pending_approval_without_internal_fields(
     assert "tenant_id" not in approvals[0]
 
 
-def test_case_queue_is_tenant_scoped(database: Database, client: TestClient) -> None:
-    _tenant_a, case_id, _ = _open_case(database)
+def test_case_queue_is_tenant_scoped(db: Database, client: TestClient) -> None:
+    _tenant_a, case_id, _ = _open_case(db)
     other_tenant = f"queue-{uuid4().hex[:12]}"
     headers = {"X-Synthetic-Tenant": other_tenant, "X-Synthetic-Subject": "ops-other"}
 
@@ -212,9 +197,9 @@ def test_case_queue_is_tenant_scoped(database: Database, client: TestClient) -> 
     assert reviews.status_code == 403
 
 
-def test_case_queue_requires_authentication(database: Database) -> None:
+def test_case_queue_requires_authentication(db: Database) -> None:
     headers = {"X-Synthetic-Tenant": "queue-auth", "X-Synthetic-Subject": "ops"}
-    with TestClient(create_app(database)) as production_client:
+    with TestClient(create_app(db)) as production_client:
         listed = production_client.get("/v1/cases", headers=headers)
         detail = production_client.get("/v1/cases/case-1", headers=headers)
     assert listed.status_code == 401

@@ -1,6 +1,5 @@
 """PostgreSQL Inbox/Outbox integration tests."""
 
-import os
 from datetime import UTC, datetime
 
 import pytest
@@ -9,20 +8,9 @@ from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.events import DomainEvent, DomainEventDraft
 from aftercare_agent.domain.protocol import ArtifactReference
 from aftercare_agent.domain.waits import InboxSignal
-from aftercare_agent.persistence import Database, EventRepository, migrate
+from aftercare_agent.persistence import Database, EventRepository
 
 NOW = datetime(2026, 9, 12, 12, tzinfo=UTC)
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 def _event(event_id: str = "event-1", case_seq: int = 1) -> DomainEvent:

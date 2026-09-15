@@ -1,6 +1,5 @@
 """PostgreSQL tests for durable Case grants and revocation semantics."""
 
-import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -8,18 +7,7 @@ import pytest
 from aftercare_agent.auth import AuthContext
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.runtime import CaseRecord
-from aftercare_agent.persistence import CaseGrantRepository, Database, RunRepository, migrate
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
+from aftercare_agent.persistence import CaseGrantRepository, Database, RunRepository
 
 
 def _seed(db: Database, tenant: str = "grant-test") -> None:

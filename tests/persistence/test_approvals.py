@@ -1,6 +1,5 @@
 """PostgreSQL approval-gate tests with no external identity provider."""
 
-import os
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -17,19 +16,7 @@ from aftercare_agent.persistence import (
     Database,
     RunRepository,
     WaitRepository,
-    migrate,
 )
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    value = Database(dsn)
-    with value.transaction() as connection:
-        migrate(connection)
-    return value
 
 
 def _seed(db: Database, tenant: str = "approval-test") -> ActionIntent:

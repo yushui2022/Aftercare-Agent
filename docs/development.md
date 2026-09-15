@@ -58,6 +58,9 @@ uv run --locked pytest -q
 
 逐条检查退出码；安装或前一项失败时不要继续宣布全部通过。更改依赖时才显式运行 uv lock 并评审锁文件差异；日常执行使用 --locked，不能用跳过时效检查的 --frozen 掩盖元数据漂移。[uv 同步语义](https://docs.astral.sh/uv/concepts/projects/sync/)
 
+这一套在切片收尾时跑一次完整流程，不要在调试循环里反复跑全量；改动集中在一个模块时先跑相关子集。
+测试和文档的数量上限见 [AGENTS.md](../AGENTS.md) 的“测试与文档预算”：新增测试行数不超过新增产品行数的一半，只为不变量、边界和真实集成写用例。跨文件共用的 PostgreSQL fixture 只保留 [tests/conftest.py](../tests/conftest.py) 里的 `dsn`/`database`/`db`，需要额外准备数据的文件再各自定义并遮蔽它们。
+
 检查范围：
 
 - Ruff：Python、类型存根和 pyproject 配置，不修改历史文章中的示例代码。

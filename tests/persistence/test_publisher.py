@@ -1,6 +1,5 @@
 """Real PostgreSQL publisher leasing and acknowledgement tests."""
 
-import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -9,19 +8,8 @@ import pytest
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.events import DomainEvent
 from aftercare_agent.domain.protocol import ArtifactReference
-from aftercare_agent.persistence import Database, EventRepository, migrate
+from aftercare_agent.persistence import Database, EventRepository
 from aftercare_agent.runtime.publisher import FakePublisher, OutboxPublisher
-
-
-@pytest.fixture()
-def db() -> Database:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is not configured")
-    database = Database(dsn)
-    with database.transaction() as connection:
-        migrate(connection)
-    return database
 
 
 def event(tenant_id: str, *, event_id: str = "event-1", sequence: int = 1) -> DomainEvent:

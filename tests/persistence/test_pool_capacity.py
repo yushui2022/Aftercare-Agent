@@ -6,20 +6,10 @@ saturated pool is reported as failures instead of an exception, and the
 recommendation only ever names a size whose runs met the budget.
 """
 
-import os
-
 import pytest
 
 from aftercare_agent.capacity import Workload, run_probe, run_workload
 from aftercare_agent.persistence import Database
-
-
-@pytest.fixture()
-def dsn() -> str:
-    value = os.environ.get("DATABASE_URL")
-    if not value:
-        pytest.skip("DATABASE_URL is not configured")
-    return value
 
 
 def _workloads() -> tuple[Workload, ...]:

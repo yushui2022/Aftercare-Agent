@@ -8,12 +8,12 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮请求范围 | 用户先要求只读评估完成度与缺口，随后授权“开始完善”。本轮改动限定为：A3-01 待办的 transcript→Responses input 映射、在途切片静态检查修复、A1-05 任务定义回填执行计划；不调用真实 provider、不做外部业务动作、不提交或推送 |
-| 当前任务 | A3-01（Session transcript→Responses input 映射）；DOC 治理（A1-05 补入执行计划并同步台账） |
+| 本轮请求范围 | 用户设定目标：按路线图持续把项目推向企业级。本轮领取 A3-04 的离线部分（闭环评测）与它暴露出的模型边界缺口；不调用真实 provider、不做外部业务动作 |
+| 当前任务 | A3-04（离线闭环评测：模型边界 + 调研提案解析 + 引用完整性 + 合成成本报告） |
 | 当前阶段 | A1-03 DONE；A1-04 最小 Worker/Compose 已有；A2-01 Wait/Inbox/Outbox 与 gap buffer 基础已落地；A2-02 心跳/常驻轮询已落地；B-01 Action Ledger 最小闭环已落地；A3-03-a/b 工作台与 SSE 已完成 |
 | 下一项代码候选 | D-01：真实 IdP/撤销演练；A3-04：完整业务评测；B-02-03：供应商回执核对；C-01：真实沙箱后端；随后补生产准入与容量验证 |
-| 活跃实现任务 | 本轮把 `SessionTranscriptLoader` 的校验结果接到 Responses 请求输入（新增 wire 输入类型与纯映射函数），并回填 A1-05 的任务定义；Worker 内租约/预算接线、真实 provider 调用和真实 artifact store 仍未开始 |
-| 本轮外部行为 | 本轮只新增离线纯函数、扩展内部请求契约并修复静态检查；不调用模型、真实业务动作或生产部署；交付后以 Git 日志和 CI 为准 |
+| 活跃实现任务 | 本轮新增 `evals/loop.py` 闭环评测与 `parse_investigation_proposal()` 模型边界解析，并重构 `evals/runner.py` 复用期望匹配；真实模型效果/账单、Harness 的 PostgreSQL 等待与审批分支仍未纳入该评测 |
+| 本轮外部行为 | 本轮只新增离线评测与域层解析函数；不调用模型、真实业务动作或生产部署；本机 Docker 守护进程未运行，需 PostgreSQL 的验证以 CI 为准 |
 
 ## 2. 核验过的源码基线
 
@@ -61,6 +61,7 @@
 | A3-03-a | DONE | 新增操作员工单发现：可访问工单列表（活动 CaseGrant 收紧、`case_ids` 仅收窄、keyset 游标）、工单详情（Run 投影不含 tenant/lease/fence）、工单下 Review/Approval 列表，以及 `web/` 最小 React+TS+Vite 工作台（列表、详情、决定、事件时间线）；真实 PostgreSQL 全量 `362 passed`（含新增 11 项），前端 `tsc --noEmit` 与 `vite build` 通过，合成身份端到端冒烟通过；live broker tail、真实认证与生产压测仍待实现 |
 | A3-03-b | DONE | 工作台接入 SSE 实时订阅：`follow=true&limit=200&wait_seconds=60`，按 `case_seq` 游标续订串接有界读，`fetch`+`ReadableStream` 增量解析（不使用无法带 Header 的 `EventSource`），按 `case_seq` 去重并封顶 500 条，指数退避重连、`401/403` 终止不重试，界面显示 连接中/实时/重连中/已暂停 并可暂停改一次性回放；`web/src/sse.test.ts` 13 项、`tsc --noEmit`、`vite build` 通过，真实后端 `follow` 参数返回 `200 text/event-stream`、非法 `limit` 返回 `400`；订阅级授权、真实 IdP 与高吞吐 broker tail 仍未实现 |
 | A3-03-c | IN PROGRESS | SSE follow 改为异步生成器，数据库短轮询放入线程、等待异步 sleep；工作台接入 keyset 加载更多、筛选/身份切换请求代际保护和稳定决策幂等键；异步 tail、前端 API 与回归通过，仍需生产连接池/broker 和真实身份验收 |
+| A3-04 | IN PROGRESS | 新增离线闭环评测 `evals/loop.py`：脚本化 Responses client → 工具白名单/整数预算/`parse_investigation_proposal()` → 确定性评估，逐案报告 disposition、引用来源、未知引用、token 与合成成本，并给出稳定 digest 和可恢复的 Harness 步进；12 案件全部通过（1 个有来源建议、6 个转复核或补材料、5 个结构化/边界拒绝）；真实模型效果与账单、Harness 的等待/审批分支和生产压测仍未完成 |
 | A1-05 | IN PROGRESS | 新增 SessionMessage append-only transcript 引用表/Repository（tenant/case/session 隔离、连续序号、message_id 幂等、游标读取）与 provider-neutral `SandboxProvider` 生命周期契约；已按 2026-09-15 回填进行计划（原只存在于本台账）；真实 artifact store、Kubernetes/E2B 后端仍待实现，transcript→模型输入映射归 A3-01 |
 | C-01 | IN PROGRESS | 新增非安全边界 `FakeSandboxProvider`：allocation 幂等、fencing lease、资源/产物预算、过期回收和销毁确认前保留容量；4 项离线测试通过；真实 E2B/Kubernetes 后端未接入 |
 | D-01 | IN PROGRESS | 新增 provider-neutral `JwtJwksVerifier`、FastAPI Bearer 入口与 `015_case_grants.sql`/`CaseGrantRepository`：静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 `kid` 单次刷新、过期缓存 fail-closed、tenant/scope/Case claim 映射；CaseGrant 默认 fail-closed，token `case_ids` 仅可收窄，grant 与 API 操作同短事务锁定；撤销/introspection、真实 IdP 和生产演练仍待实现 |
@@ -79,6 +80,8 @@ EGM 仓库仍有 README.md 修改，assets/egm-roman-banner.png、assets/egm-rom
 
 ## 6. 验证台账
 
+
+- 2026-09-15 / A3-04 离线闭环评测：新增 `evals/loop.py`，用脚本化 Responses client 驱动真实 `ResponsesAdapter`（`store=false`、工具白名单、整数 token/成本预算），再经 `parse_investigation_proposal()` 解析模型 JSON，最后交给既有的确定性评估；逐案报告 disposition、引用来源、未被引用的接受项、未知引用、错误码与 token/合成成本，并输出稳定 digest 与可从检查点恢复的 Harness 步进。同时补上域层缺口 `parse_investigation_proposal()`——此前没有任何入口能把模型 JSON 变成 `InvestigationProposal`：未知字段、scope/prose 字段、未知 claim、空 claims、空 evidence_refs 和重复键 JSON 一律 `INVALID_INPUT`。为复用期望匹配，`evals/runner.py` 抽出 `expected_case()`/`assess_proposal()`，重构前后 `python -m evals.runner` 的 digest 完全一致（`80ddf7f0…`），证明行为未变。12 个案件的结果：1 个 `recommendation_ready`（引用 `carrier`）、6 个转人工复核或补材料、3 个结构化错误（跨订单、跨租户、重复证据）、1 个模型边界拒绝、1 个冲突；闭环步进 5、工具调用 3、可恢复。本机离线全量 `308 passed, 87 skipped`；`ruff format --check`、`ruff check` 与严格 mypy（106 文件）通过。**本轮没有调用任何真实 provider，也没有运行需要 PostgreSQL 的集成测试**：本机 Docker 守护进程以 `-WindowStyle Hidden` 启动后进程立即退出、引擎始终未就绪，因此数据库侧验证仍以 CI 为准。合成单价 3/15 micro-USD per token 只证明计费路径与回归稳定性，不是 provider 账单、模型效果或 SLA。
 
 - 2026-09-15 / 远端 CI 验收（提交 `e1a210a`）：推送后 GitHub Actions run [34947008994](https://github.com/yushui2022/Aftercare-Agent/actions/runs/34947008994) 完成，`Set up Python`、`Install locked dependencies`、`Static checks` 与 `Test with PostgreSQL` 全部通过；`Test with PostgreSQL` 报告 `379 passed, 38 warnings`，即本机因 Docker 守护进程未运行而跳过的 87 项集成测试在真实 PostgreSQL 17 上独立通过，补齐了 2026-09-15 离线条目的未覆盖范围。该结果只对应提交 `e1a210a`，不代表后续改动；唯一注解是 actions/checkout 与 setup-uv 仍指向 Node 20 的弃用提示，不影响结果。
 

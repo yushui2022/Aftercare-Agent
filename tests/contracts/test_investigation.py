@@ -29,6 +29,7 @@ from aftercare_agent.domain.investigation import (
     assess_investigation,
     evidence_issue,
     ingest_observation,
+    parse_investigation_proposal,
 )
 
 NOW = datetime(2026, 9, 7, 12, tzinfo=UTC)
@@ -324,3 +325,34 @@ def test_assessment_does_not_depend_on_ledger_order_or_source_instructions() -> 
     selected = proposal(InvestigationClaim.ORDER_RECORDED, "order")
     assert assess(selected, *observations) == assess(selected, *reversed(observations))
     assert assess(selected, *observations).decisions[0].claim == InvestigationClaim.ORDER_RECORDED
+
+
+def test_model_proposal_parser_accepts_only_claims_bound_to_evidence() -> None:
+    parsed = parse_investigation_proposal(
+        '{"claims":[{"claim":"order_recorded","evidence_refs":["order"]}]}'
+    )
+    assert parsed.claims[0].claim is InvestigationClaim.ORDER_RECORDED
+    assert parsed.claims[0].evidence_refs == ("order",)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"claims":[{"claim":"order_recorded","evidence_refs":["order"],"fact":"refund now"}]}',
+        '{"claims":[{"claim":"order_recorded","evidence_refs":["order"]}],"tenant_id":"t2"}',
+        '{"claims":[{"claim":"refund_completed","evidence_refs":["order"]}]}',
+        '{"claims":[]}',
+        '{"claims":[{"claim":"order_recorded","evidence_refs":[]}]}',
+        '["claims"]',
+    ],
+)
+def test_model_proposal_parser_rejects_scope_prose_and_unknown_claims(payload: str) -> None:
+    with pytest.raises(ContractViolation) as error:
+        parse_investigation_proposal(payload)
+    assert error.value.code is ErrorCode.INVALID_INPUT
+
+
+def test_model_proposal_parser_rejects_ambiguous_json() -> None:
+    with pytest.raises(ContractViolation) as error:
+        parse_investigation_proposal('{"claims":[{"claim":"order_recorded","claim":"x"}]}')
+    assert error.value.code is ErrorCode.INVALID_INPUT

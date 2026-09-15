@@ -6,7 +6,7 @@ database, or sandbox.  A failed case is a regression, not a model-quality score.
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, cast
@@ -17,6 +17,7 @@ from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.investigation import (
     FreshnessPolicy,
     InvestigationAssessment,
+    InvestigationEvidence,
     InvestigationProposal,
     assess_investigation,
 )
@@ -107,25 +108,48 @@ def evaluate_case(case_id: str) -> CaseResult:
             if isinstance(proposal_input, InvestigationProposal)
             else InvestigationProposal.model_validate(proposal_input)
         )
-        observations = raw_observations
-        actual = assess_investigation(
-            SCOPE,
-            proposal,
-            observations,
-            REGISTRY,
-            FreshnessPolicy.model_validate(POLICY),
-            now=NOW,
-        )
-    except ContractViolation as exc:
-        code = exc.code.value
+        return assess_proposal(case_id, proposal, observations=raw_observations)
+    except ValidationError:
+        code = ErrorCode.INVALID_INPUT.value
         return CaseResult(
             case_id,
             expected.get("outcome") == "error" and expected.get("error_code") == code,
             "error",
             error_code=code,
         )
-    except ValidationError:
-        code = ErrorCode.INVALID_INPUT.value
+
+
+def expected_case(case_id: str) -> dict[str, object]:
+    """Return the recorded v1 expectation for one synthetic case."""
+
+    return _expected()[case_id]
+
+
+def assess_proposal(
+    case_id: str,
+    proposal: InvestigationProposal,
+    *,
+    observations: Sequence[InvestigationEvidence] | None = None,
+) -> CaseResult:
+    """Assess one already-built proposal against its recorded expectation.
+
+    ``evals.loop`` reuses this so the model-boundary loop and the direct
+    regression path share exactly one expectation-matching implementation.
+    """
+
+    expected = expected_case(case_id)
+    ledger = observations if observations is not None else catalogue()[case_id][1]
+    try:
+        actual = assess_investigation(
+            SCOPE,
+            proposal,
+            ledger,
+            REGISTRY,
+            FreshnessPolicy.model_validate(POLICY),
+            now=NOW,
+        )
+    except ContractViolation as exc:
+        code = exc.code.value
         return CaseResult(
             case_id,
             expected.get("outcome") == "error" and expected.get("error_code") == code,

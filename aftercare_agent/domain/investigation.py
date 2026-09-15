@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from aftercare_agent.domain.common import (
     CaseScope,
@@ -20,6 +20,7 @@ from aftercare_agent.domain.common import (
     require_same_case,
     utc,
 )
+from aftercare_agent.domain.protocol import strict_json_object
 
 
 class InvestigationScope(CaseScope):
@@ -142,6 +143,23 @@ class InvestigationProposal(ContractModel):
         if len({proposal.claim for proposal in self.claims}) != len(self.claims):
             raise ValueError("duplicate claim")
         return self
+
+
+def parse_investigation_proposal(payload: str) -> InvestigationProposal:
+    """Parse the single model-visible payload, and nothing beyond it.
+
+    A model may only submit claims bound to evidence IDs.  Tenant/order scope,
+    source, provenance, timestamps and free-form prose are unknown fields and are
+    rejected, as are ambiguous JSON, duplicate keys and non-finite numbers.
+    Parsing is not authorization: the deterministic assessment still decides
+    which evidence may support which claim.
+    """
+
+    strict_json_object(payload)
+    try:
+        return InvestigationProposal.model_validate_json(payload)
+    except ValidationError as exc:
+        raise ContractViolation(ErrorCode.INVALID_INPUT, "proposal violates schema") from exc
 
 
 class EvidenceIssue(StrEnum):

@@ -72,12 +72,14 @@ class LeaseHeartbeat:
     refuses to save the slice and lets the normal fenced write report the
     authoritative error.
 
-    The renewing thread opens one connection for its whole life and closes it
-    before returning, so the connection is never shared across threads while
-    a renewal still costs one round trip instead of a fresh TCP and
+    The renewing thread takes one connection for its whole life and releases it
+    before returning, so the connection is never shared across threads while a
+    renewal still costs one round trip instead of a fresh TCP and
     authentication handshake.  That matters because the renewal has to land
     inside a window derived from the lease: a handshake timed from the same
     budget made short leases unrenewable on hosts where connecting is slow.
+    The heartbeat holds one pool slot for the length of the slice, so the pool
+    it borrows from has to be sized with that room.
     A connection that fails is not retried for the same reason a lost lease
     is not: the slice must not keep going on a liveness signal nobody can
     still prove.
@@ -174,7 +176,9 @@ class LeaseHeartbeat:
         if connection is None:
             return
         try:
-            connection.close()
+            # Back to the pool, not destroyed: the next slice can reuse the
+            # handshake this one already paid for.
+            self._database.release(connection)
         except Exception:
             # The slice's own fenced write decides the outcome, so a failure
             # while giving back a connection that is about to disappear must

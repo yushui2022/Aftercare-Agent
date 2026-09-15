@@ -11,7 +11,7 @@ requires-python = ">=3.13.15,<3.14"
 dependencies = [
     "evidence-gated-memory[postgres] @ git+https://github.com/yushui2022/Evidence-Gated-Memory.git@9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd",
     "pydantic>=2,<3",
-    "psycopg[binary]>=3.3,<4",
+    "psycopg[binary,pool]>=3.3,<4",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
     "PyJWT[crypto]>=2.10,<3",

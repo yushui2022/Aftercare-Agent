@@ -23,6 +23,11 @@ services:
       DATABASE_URL: postgresql://aftercare:local-only-aftercare@postgres:5432/aftercare
       # Synthetic identity is intentionally enabled only for local development.
       AFTERCARE_ALLOW_SYNTHETIC_IDENTITY: "1"
+      # Bounded pool, one per process: the API serves requests concurrently,
+      # so it gets the default ceiling.  See docs/decisions/0006-*.md.
+      AFTERCARE_DB_POOL_MIN_SIZE: "${AFTERCARE_DB_POOL_MIN_SIZE:-1}"
+      AFTERCARE_DB_POOL_MAX_SIZE: "${AFTERCARE_DB_POOL_MAX_SIZE:-8}"
+      AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS: "${AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS:-5}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,6 +55,11 @@ services:
       AFTERCARE_MAX_STEPS: "${AFTERCARE_MAX_STEPS:-8}"
       AFTERCARE_LEASE_SECONDS: "${AFTERCARE_LEASE_SECONDS:-30}"
       AFTERCARE_IDLE_SLEEP_SECONDS: "${AFTERCARE_IDLE_SLEEP_SECONDS:-1}"
+      # One slice thread plus its heartbeat need two connections; the ceiling
+      # is a little above that rather than an API-sized pool.
+      AFTERCARE_DB_POOL_MIN_SIZE: "${AFTERCARE_DB_POOL_MIN_SIZE:-1}"
+      AFTERCARE_DB_POOL_MAX_SIZE: "${AFTERCARE_DB_POOL_MAX_SIZE:-4}"
+      AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS: "${AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS:-5}"
     depends_on:
       api:
         condition: service_healthy

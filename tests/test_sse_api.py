@@ -4,8 +4,11 @@ import os
 import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import UTC, datetime
+from typing import Any
 
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -15,6 +18,22 @@ from aftercare_agent.domain.protocol import ArtifactReference
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
 from aftercare_agent.persistence import Database, EventRepository, RunRepository, migrate
 from aftercare_agent.runtime import PostgresEventTail
+
+
+class _PollRecordingDatabase(Database):
+    """A Database that records the backend each unit of work borrows."""
+
+    def __init__(self, dsn: str) -> None:
+        super().__init__(dsn)
+        self.backends: list[int] = []
+
+    @contextmanager
+    def transaction(self) -> Iterator[psycopg.Connection[Any]]:
+        with super().transaction() as connection:
+            row = connection.execute("SELECT pg_backend_pid()").fetchone()
+            assert row is not None
+            self.backends.append(int(row[0]))
+            yield connection
 
 
 @pytest.fixture()
@@ -139,3 +158,32 @@ def test_postgres_tail_observes_an_event_committed_after_it_starts(client: TestC
             )
         events = pending.result(timeout=2)
     assert [event.case_seq for event in events] == [2]
+
+
+def test_postgres_tail_polls_on_one_borrowed_connection(client: TestClient) -> None:
+    """Polling must cost a round trip, not a connection.
+
+    The tail polls inside a wall-clock window, so a poll that pays a TCP and
+    authentication handshake (p50 115 ms where this was measured) leaves the
+    window able to miss an event committed in the middle of it.  Polling every
+    10 ms gives the pool ten milliseconds to hand the connection back, so the
+    steady state is one backend; a regression to one connection per poll is
+    visible here as dozens.
+    """
+    del client  # Fixture creates the scoped Case and its seq=1 event.
+    database = _PollRecordingDatabase(os.environ["DATABASE_URL"])
+    try:
+        tail = PostgresEventTail(database, poll_seconds=0.01)
+        events = list(
+            tail.stream(
+                tenant_id="sse-api",
+                case_id="case-1",
+                after_case_seq=1,
+                wait_seconds=0.3,
+            )
+        )
+        assert events == []
+        assert len(database.backends) >= 3
+        assert len(set(database.backends)) <= 2
+    finally:
+        database.close()

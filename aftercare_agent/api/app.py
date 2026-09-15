@@ -543,6 +543,9 @@ def create_app(
 
     @app.on_event("startup")
     def startup() -> None:
+        # Open and pre-warm the pool before the first request borrows from it,
+        # so an unreachable database fails the start and not a caller.
+        database.startup()
         with database.transaction() as connection:
             migrate(connection)
 
@@ -1159,8 +1162,10 @@ def create_default_app() -> FastAPI:
             ttl_seconds=introspection.cache_seconds,
             max_entries=introspection.max_cache_entries,
         )
+    # This factory owns the Database, so it owns the pool that Database opens.
+    database = Database(dsn)
     app = create_app(
-        Database(dsn),
+        database,
         allow_synthetic=synthetic_enabled == "1",
         oidc_verifier=verifier,
         introspector=introspector,
@@ -1171,6 +1176,12 @@ def create_default_app() -> FastAPI:
         @app.on_event("shutdown")
         def _close_introspection_client() -> None:
             owned_client.close()
+
+    @app.on_event("shutdown")
+    def _close_database_pool() -> None:
+        # An app built around a caller's Database (tests, embeddings) leaves
+        # that Database to its owner; this one built its own.
+        database.close()
 
     return app
 

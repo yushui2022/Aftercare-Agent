@@ -96,9 +96,8 @@ uv run --locked pytest -q
 - 完整验证后停掉临时实例（`pg_ctl -D "$root\data" stop`），需要清理时再删除 `$root`。
 - 本机是 PostgreSQL 16.13，CI 是 `postgres:17`，两者不是同一版本；本机通过不等于 CI
   通过，远端结果才是权威。
-- 整机满载时 `tests/persistence/test_worker.py::test_worker_heartbeat_keeps_long_slice_lease_alive`
-  可能失败：该用例给 200 ms 租约、30 ms 心跳间隔，线程被调度延迟就会报
-  `lease heartbeat failed`。单独运行稳定通过，判定为负载相关抖动，不是功能回归。
+- 集成测试与本地进程默认走连接池：每进程 min 1 / max 8 条连接、借用超时 5 s，可用 `AFTERCARE_DB_POOL_MIN_SIZE`、`AFTERCARE_DB_POOL_MAX_SIZE`、`AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS` 覆盖；池在首次借用或 API `startup()` 时打开，构造 `Database` 不产生线程与连接。`Database.direct(dsn)` 明确走“每个工作单元一条连接”，只用于对照与一次性脚本；决策、代价与不变量见 [ADR-0006](decisions/0006-bounded-connection-pool.md)。
+- `tests/persistence/test_worker.py::test_worker_heartbeat_keeps_long_slice_lease_alive` 的预算不能再收紧：用例现在是 1 s 租约 / 100 ms 间隔 / 1.5 s 切片，而它存在的理由是 200 ms 租约会让心跳的建连去和它要保的截止时间赛跑（本机建连 p50 115 ms / 最大 215 ms，而续期事务 p50 0.8 ms）。D-04 之后心跳从连接池借连接，稳态下不再付建连，但池刚建立、连接被判坏或池被占满时仍可能付一次，因此预算保持不变。
 
 ## 4. 构建 sdist，再由 sdist 构建 wheel
 

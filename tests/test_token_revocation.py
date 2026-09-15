@@ -698,11 +698,14 @@ def test_introspection_url_must_be_https(monkeypatch: pytest.MonkeyPatch) -> Non
         create_default_app()
 
 
-def test_no_shutdown_hook_is_registered_without_introspection(
+def test_no_owned_client_shutdown_hook_is_registered_without_introspection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _environment(monkeypatch, **OIDC_ENV)
-    assert create_default_app().router.on_shutdown == []
+    # The app always closes the pool it opened; nothing else is owned here.
+    assert [hook.__name__ for hook in create_default_app().router.on_shutdown] == [
+        "_close_database_pool"
+    ]
 
 
 def test_configured_introspection_registers_an_owned_client_shutdown_hook(
@@ -716,5 +719,10 @@ def test_configured_introspection_registers_an_owned_client_shutdown_hook(
         AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET="provider-secret",
     )
     app = create_default_app()
-    assert len(app.router.on_shutdown) == 1
-    app.router.on_shutdown[0]()  # closes the owned httpx client; safe to repeat
+    hooks = {hook.__name__: hook for hook in app.router.on_shutdown}
+    assert sorted(hooks) == ["_close_database_pool", "_close_introspection_client"]
+    hooks["_close_introspection_client"]()  # closes the owned httpx client
+    # A shutdown hook also runs on a failed startup, so closing an unopened pool
+    # and closing the same client twice both have to stay safe.
+    hooks["_close_database_pool"]()
+    hooks["_close_database_pool"]()

@@ -25,7 +25,7 @@ Node 24 在本次核查的官方计划中属于 LTS；前端落地时再次检�
 | 包与环境 | pyproject.toml + uv.lock + 项目 .venv；setuptools 构建 | A0-01 |
 | 类型与数据校验 | Python 类型注解、Pydantic 2；公共接口不传播无约束 Any | A0-01 / A0-02 |
 | Web 服务 | FastAPI + Uvicorn | A1-02 |
-| 数据库 | psycopg 3 + psycopg_pool，同步短事务函数 | A1-01 |
+| 数据库 | psycopg 3 + psycopg_pool 有界池（D-04 起默认启用，见 [ADR-0006](decisions/0006-bounded-connection-pool.md)），同步短事务函数 | A1-01 |
 | 外部 HTTP | httpx；统一超时、重试与错误分类；JWKS 与 introspection 使用固定 HTTPS URL | D-01 / A3-01 / B-03 |
 | 身份验证 | PyJWT + cryptography；provider-neutral JWKS 验签适配器与 RFC 7662 撤销判定 | D-01；具体 IdP 与 CaseGrant 服务待选 |
 | 模型接口 | FakeModelAdapter 先行；官方 OpenAI Python SDK 的 Responses 适配器随后 | A1-03 / A3-01 |
@@ -34,7 +34,7 @@ Node 24 在本次核查的官方计划中属于 LTS；前端落地时再次检�
 
 依赖在引入时锁定经过测试的精确版本。当前 [pyproject.toml](../pyproject.toml) / [uv.lock](../uv.lock) 已包含 Aftercare 0.1.0a0、EGM、FastAPI、httpx、PyJWT/cryptography、直接使用的 Pydantic 和质量工具；模型 SDK、前端或整套观测平台仍未加入。Pydantic 必须直接声明，不能因为 EGM 间接安装就漏掉 Aftercare 自己的依赖。
 
-当前锁定的主要版本：Pydantic 2.13.5、psycopg/psycopg-binary 3.3.5、PyYAML 6.0.3、Ruff 0.16.6、mypy 1.20.2、pytest 9.1.1、pytest-asyncio 1.4.0；构建采用 setuptools 84.0.0、wheel 0.48.0、packaging 26.3。完整版本与来源以锁文件/构建配置为准；安装、质量与产物检查见[开发指南](development.md)。这份清单不表示已有 PostgreSQL 服务或生产镜像。
+当前锁定的主要版本：Pydantic 2.13.5、psycopg/psycopg-binary 3.3.5、psycopg-pool 3.3.1、PyYAML 6.0.3、Ruff 0.16.6、mypy 1.20.2、pytest 9.1.1、pytest-asyncio 1.4.0；构建采用 setuptools 84.0.0、wheel 0.48.0、packaging 26.3。完整版本与来源以锁文件/构建配置为准；安装、质量与产物检查见[开发指南](development.md)。这份清单不表示已有 PostgreSQL 服务或生产镜像。
 
 EGM 源码基线固定为 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd，包版本 0.6.0。普通构建从确切 Git 提交解析/构建并进入锁文件；发布镜像可使用该提交构建的内部 wheel。开发用相邻仓库 editable 覆盖只能显式开启，必须记录源码差异，不能以此声称是可复现发布。只需要核心和 postgres 能力时，不把 EGM 的 dev/server extras 带进生产镜像。
 
@@ -44,9 +44,9 @@ EGM 源码基线固定为 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd，包版本 0
 
 Worker 的模型/HTTP 等待使用 asyncio 和有界并发。数据库与同步 EGM 调用包装成短小、完整的同步事务函数，在有限线程/执行槽中运行；连接在同一函数中借出、使用、提交/回滚并归还。调用取消时不能假定后台线程中的事务已停止，必须通过操作键和数据库状态核对结果。
 
-不在事件循环线程直接执行阻塞 SQL/EGM，不在多 Run 之间共享一条正在使用的连接，不跨进程继承连接池。psycopg 同连接查询串行，多个游标还共享事务状态，这也是按工作单元借连接的理由。[psycopg 并发说明](https://www.psycopg.org/psycopg3/docs/advanced/async.html)
+不在事件循环线程直接执行阻塞 SQL/EGM，不在多 Run 之间共享一条正在使用的连接，不跨进程继承连接池。psycopg 同连接查询串行，多个游标还共享事务状态，这也是按工作单元借连接的理由。工作单元仍按需借还，但连接来自每进程一个的有界池：等待中的工作不占连接，拿不到连接在超时后 fail-closed，池化连接上不得留下 `SET`、`LISTEN` 或 `search_path` 这类会话状态（池只回滚归还时未结束的事务，不重置会话）。[psycopg 并发说明](https://www.psycopg.org/psycopg3/docs/advanced/async.html)
 
-目前唯一的例外是 Worker 的租约心跳：它在自己的线程内创建一条连接、只由该线程使用、线程退出前关闭，并跨多个短事务复用，因为续期必须落在由租约推出的窗口里，按工作单元借连接等于每次续期都先付一次建连（本机实测建连 p50 115 ms / 最大 215 ms，而续期事务 p50 0.8 ms）。这条例外不改变“不在线程之间、不在 Run 之间共享”的边界，也是 D-04 连接池评估的直接输入之一。
+Worker 的租约心跳是唯一的长持有者：它从池里借一条连接（`Database.open()`）、只由该线程使用、跨多个短事务复用、在返回前归还（`release()`），因为续期必须落在由租约推出的窗口里，按工作单元借连接等于每次续期都先付一次建连（本机实测建连 p50 115 ms / 最大 215 ms，而续期事务 p50 0.8 ms）。它仍占一个连接槽，池的 max_size 要为此留位置；这条例外不改变“不在线程之间共享正在使用的连接”的边界。
 
 首版不引入 ORM；使用 Repository 和显式 Unit of Work 组织参数化 SQL。既有 EGM join 接受同步 psycopg 连接，Aftercare 的同事务操作必须沿用相同连接及外层事务，不通过另一个池“看似同库”地写入。
 

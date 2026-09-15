@@ -17,36 +17,37 @@ from aftercare_agent.runtime import LeaseHeartbeat
 
 
 class _Connection:
-    """Stand-in for a caller-owned psycopg connection."""
+    """Stand-in for a borrowed psycopg connection."""
 
     def __init__(self) -> None:
         self.transactions = 0
-        self.closed = False
 
     @contextmanager
     def transaction(self) -> Iterator["_Connection"]:
         self.transactions += 1
         yield self
 
-    def close(self) -> None:
-        self.closed = True
-
 
 class _Database:
-    """Record every connection a holder takes for itself.
+    """Record every connection a holder takes for itself and gives back.
 
-    Only ``open()`` exists: a holder renewing a lease inside a deadline has to
-    keep its connection, so quietly borrowing a fresh one per tick is the
-    regression this fake is here to catch.
+    Only ``open()`` and ``release()`` exist: a holder renewing a lease inside a
+    deadline has to keep its connection, so quietly borrowing a fresh one per
+    tick is the regression this fake is here to catch, and keeping a borrowed
+    connection for itself instead of releasing it is the other.
     """
 
     def __init__(self) -> None:
         self.connections: list[_Connection] = []
+        self.released: list[_Connection] = []
 
     def open(self) -> _Connection:
         connection = _Connection()
         self.connections.append(connection)
         return connection
+
+    def release(self, connection: _Connection) -> None:
+        self.released.append(connection)
 
 
 class _RunRepository:
@@ -89,8 +90,9 @@ def test_heartbeat_stops_when_reserved_slot_renewal_is_rejected(
         fencing_token=claim.fencing_token,
         lease_until=datetime.now(UTC) + timedelta(seconds=1),
     )
+    database = _Database()
     heartbeat = LeaseHeartbeat(
-        cast(Database, _Database()),
+        cast(Database, database),
         claim,
         timedelta(seconds=1),
         slot=slot,
@@ -103,6 +105,7 @@ def test_heartbeat_stops_when_reserved_slot_renewal_is_rejected(
     failure = heartbeat.failure
     assert isinstance(failure, ContractViolation)
     assert failure.code is ErrorCode.LEASE_LOST
+    assert database.released == list(database.connections)
 
 
 def _claim() -> ExecutionClaim:
@@ -149,7 +152,7 @@ def test_heartbeat_renews_before_the_first_interval_elapses(
 
     assert heartbeat.failure is None
     assert [connection.transactions for connection in database.connections] == [1]
-    assert database.connections[0].closed
+    assert database.released == list(database.connections)
 
 
 def test_heartbeat_reuses_one_connection_across_renewals(
@@ -175,4 +178,4 @@ def test_heartbeat_reuses_one_connection_across_renewals(
 
     assert heartbeat.failure is None
     assert len(database.connections) == 1
-    assert database.connections[0].closed
+    assert database.released == list(database.connections)

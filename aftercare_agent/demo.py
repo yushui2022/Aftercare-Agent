@@ -204,8 +204,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not dsn:
         parser.error("DATABASE_URL is required (or pass --database-url)")
     case = _new_case(tenant_id=args.tenant_id, case_id=args.case_id, order_id=args.order_id)
+    database = Database(dsn)
     try:
-        report = run_demo(Database(dsn), case, message=args.message)
+        report = run_demo(database, case, message=args.message)
     except (ContractViolation, ValueError, RuntimeError) as exc:
         print(
             json.dumps(
@@ -232,6 +233,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    finally:
+        # The demo borrows a pooled connection per step; closing the pool keeps
+        # a one-shot CLI from leaving a maintenance thread or a socket behind.
+        database.close()
     print(json.dumps(report, ensure_ascii=False, sort_keys=True))
     return 0
 

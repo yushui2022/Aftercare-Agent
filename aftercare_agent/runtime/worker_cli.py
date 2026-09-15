@@ -51,6 +51,33 @@ def main() -> int:
     heartbeat_text = os.environ.get("AFTERCARE_HEARTBEAT_SECONDS", "")
     heartbeat = _seconds("AFTERCARE_HEARTBEAT_SECONDS", heartbeat_text) if heartbeat_text else None
     database = Database(dsn)
+    try:
+        return _run(
+            database,
+            tenant_id=tenant_id,
+            run_id=run_id,
+            owner=owner,
+            max_steps=max_steps,
+            lease=lease,
+            heartbeat=heartbeat,
+        )
+    finally:
+        # A slice, and more so a daemon loop, borrows a pooled connection per
+        # unit of work.  Closing the pool here returns them and stops the pool
+        # threads before the process exits.
+        database.close()
+
+
+def _run(
+    database: Database,
+    *,
+    tenant_id: str,
+    run_id: str,
+    owner: str,
+    max_steps: int,
+    lease: timedelta,
+    heartbeat: timedelta | None,
+) -> int:
     if _flag(os.environ.get("AFTERCARE_WORKER_DAEMON", "")):
         stop = Event()
         max_iterations_text = os.environ.get("AFTERCARE_MAX_ITERATIONS", "")

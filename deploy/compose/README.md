@@ -54,6 +54,16 @@ The Worker waits for the API readiness probe, which ensures PostgreSQL
 migrations have completed before it starts polling. This remains development
 configuration; production should run migrations as a separately audited job.
 
+## Connection pools
+
+API and Worker each hold one bounded pool per process (default min 1, max 8
+for the API and max 4 for the Worker, acquisition timeout 5 s). Compose passes
+`AFTERCARE_DB_POOL_MIN_SIZE`, `AFTERCARE_DB_POOL_MAX_SIZE` and
+`AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS` through, so the ceiling can be raised
+per service. These are bounded defaults, not a sizing result: a pool that
+cannot hand out a connection inside the timeout fails closed instead of
+queueing forever. See [ADR-0006](../../docs/decisions/0006-bounded-connection-pool.md).
+
 The volume contains only local synthetic data. Production deployment still
 needs real authentication, secret injection, backups, TLS, migrations policy,
 resource limits, and a separate Worker deployment.

@@ -8,7 +8,8 @@ from datetime import timedelta
 from threading import Event
 from types import FrameType
 
-from aftercare_agent.persistence import Database
+from aftercare_agent.observability import LoggingMetrics
+from aftercare_agent.persistence import Database, sampler_from_environment
 
 from .worker import WorkerLoopResult, WorkerResult, run_daemon, run_next, run_once
 
@@ -51,7 +52,10 @@ def main() -> int:
     heartbeat_text = os.environ.get("AFTERCARE_HEARTBEAT_SECONDS", "")
     heartbeat = _seconds("AFTERCARE_HEARTBEAT_SECONDS", heartbeat_text) if heartbeat_text else None
     database = Database(dsn)
+    sampler = sampler_from_environment(database, LoggingMetrics(), component="worker")
     try:
+        if sampler is not None:
+            sampler.start()
         return _run(
             database,
             tenant_id=tenant_id,
@@ -62,6 +66,8 @@ def main() -> int:
             heartbeat=heartbeat,
         )
     finally:
+        if sampler is not None:
+            sampler.stop()
         # A slice, and more so a daemon loop, borrows a pooled connection per
         # unit of work.  Closing the pool here returns them and stops the pool
         # threads before the process exits.

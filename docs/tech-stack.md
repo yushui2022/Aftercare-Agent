@@ -50,6 +50,8 @@ Worker 的租约心跳是唯一的长持有者：它从池里借一条连接（`
 
 首版不引入 ORM；使用 Repository 和显式 Unit of Work 组织参数化 SQL。既有 EGM join 接受同步 psycopg 连接，Aftercare 的同事务操作必须沿用相同连接及外层事务，不通过另一个池“看似同库”地写入。
 
+池健康按 [ADR-0007](decisions/0007-pool-metrics-and-capacity.md) 发布：`Database.stats()` 是唯一读取口（只含整数，装不下租户/工单/语句/DSN），每进程一个采样器按 `aftercare.db.pool.*` 发 gauge 与 counter，唯一标签是 `component`。默认每 10 s 一次并写标准库日志一行 JSON，`AFTERCARE_POOL_METRICS=0` 关闭，`AFTERCARE_POOL_METRICS_INTERVAL_SECONDS` 改间隔；OTel bridge 是可选类，导出器/采样/留存仍属 C-03。`max_size` 是“按并发有界”的默认值而不是容量结论：定标要用 `aftercare-capacity` 的实测 sweep，版本、工作负载、失败率、延迟与资源成本一起公布，样例参数不当 SLA，方法与三份本机报告见[容量报告](capacity/README.md)。
+
 业务迁移使用按版本编号的 SQL 文件和一个受限迁移命令：校验已应用文件摘要、互斥执行迁移、记录版本、默认事务执行，失败不假报成功。初版不支持在普通事务迁移中偷偷执行必须非事务运行的操作；需要时单独设计运维步骤。Aftercare 与 EGM 保留各自迁移版本，不合并成一个不透明 schema_version。
 
 首版关键列与约束使用关系字段，协议检查点和扩展载荷可用带版本的 JSONB；不是所有内容都塞进一个 state JSON。金额用最小货币单位整数，禁止浮点数参与金额比较；跨前端或 EGM 边界需要字符串表达时必须规范化且往返不丢精度。时间使用带时区 UTC，租约使用数据库时间，原始观察时间不因重放更新。

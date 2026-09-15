@@ -64,6 +64,15 @@ per service. These are bounded defaults, not a sizing result: a pool that
 cannot hand out a connection inside the timeout fails closed instead of
 queueing forever. See [ADR-0006](../../docs/decisions/0006-bounded-connection-pool.md).
 
+Each process also publishes pool health every 10 s as one JSON line on its log
+(`aftercare.db.pool.*`, disabled with `AFTERCARE_POOL_METRICS=0`). Measuring
+whether a ceiling should change is a separate job: run
+`aftercare-capacity` against a real database (see
+[ADR-0007](../../docs/decisions/0007-pool-metrics-and-capacity.md) and the
+[capacity reports](../../docs/capacity/README.md)) -- on a development host,
+pre-warming to the concurrency the process must carry mattered far more than
+raising the ceiling.
+
 The volume contains only local synthetic data. Production deployment still
 needs real authentication, secret injection, backups, TLS, migrations policy,
 resource limits, and a separate Worker deployment.

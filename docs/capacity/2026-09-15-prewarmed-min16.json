@@ -1,0 +1,139 @@
+{
+  "acquire_timeout_seconds": 1.0,
+  "generated_at": "2026-09-15T11:43:16+00:00",
+  "min_size": 16,
+  "note": "Pool-level workload model over short transactions: it sizes a process, it is not an SLA and it does not include model, connector or sandbox time.",
+  "p95_budget_ms": 50.0,
+  "platform": "Windows 11",
+  "postgres_version": "16.13",
+  "python_version": "3.13.15",
+  "results": [
+    {
+      "connection_errors": 0,
+      "connections_opened": 0,
+      "errors": 0,
+      "failures": 0,
+      "in_use_high_water": 16,
+      "max_ms": 34.68,
+      "max_size": 16,
+      "p50_ms": 28.534,
+      "p95_ms": 32.889,
+      "units": 240,
+      "wait_ms": 0,
+      "waiting_high_water": 0,
+      "wall_seconds": 0.41,
+      "watcher_samples": 28,
+      "workload": "steady"
+    },
+    {
+      "connection_errors": 0,
+      "connections_opened": 0,
+      "errors": 0,
+      "failures": 0,
+      "in_use_high_water": 16,
+      "max_ms": 31.975,
+      "max_size": 16,
+      "p50_ms": 29.133,
+      "p95_ms": 31.312,
+      "units": 240,
+      "wait_ms": 0,
+      "waiting_high_water": 0,
+      "wall_seconds": 0.462,
+      "watcher_samples": 31,
+      "workload": "burst"
+    },
+    {
+      "connection_errors": 0,
+      "connections_opened": 0,
+      "errors": 0,
+      "failures": 0,
+      "in_use_high_water": 16,
+      "max_ms": 46.22,
+      "max_size": 16,
+      "p50_ms": 29.57,
+      "p95_ms": 39.054,
+      "units": 240,
+      "wait_ms": 0,
+      "waiting_high_water": 0,
+      "wall_seconds": 0.492,
+      "watcher_samples": 33,
+      "workload": "wake"
+    },
+    {
+      "connection_errors": 0,
+      "connections_opened": 0,
+      "errors": 0,
+      "failures": 0,
+      "in_use_high_water": 16,
+      "max_ms": 45.323,
+      "max_size": 32,
+      "p50_ms": 29.909,
+      "p95_ms": 38.558,
+      "units": 240,
+      "wait_ms": 0,
+      "waiting_high_water": 0,
+      "wall_seconds": 0.458,
+      "watcher_samples": 31,
+      "workload": "steady"
+    },
+    {
+      "connection_errors": 0,
+      "connections_opened": 0,
+      "errors": 0,
+      "failures": 0,
+      "in_use_high_water": 16,
+      "max_ms": 32.439,
+      "max_size": 32,
+      "p50_ms": 28.091,
+      "p95_ms": 31.6,
+      "units": 240,
+      "wait_ms": 0,
+      "waiting_high_water": 0,
+      "wall_seconds": 0.463,
+      "watcher_samples": 31,
+      "workload": "burst"
+    },
+    {
+      "connection_errors": 0,
+      "connections_opened": 0,
+      "errors": 0,
+      "failures": 0,
+      "in_use_high_water": 16,
+      "max_ms": 37.684,
+      "max_size": 32,
+      "p50_ms": 30.217,
+      "p95_ms": 36.239,
+      "units": 240,
+      "wait_ms": 0,
+      "waiting_high_water": 0,
+      "wall_seconds": 0.486,
+      "watcher_samples": 32,
+      "workload": "wake"
+    }
+  ],
+  "service_time_seconds": 0.01,
+  "sizing": {
+    "max_size": 16,
+    "reason": "smallest size with no failures and p95 <= 50 ms"
+  },
+  "workloads": [
+    {
+      "cadence_seconds": null,
+      "concurrency": 16,
+      "name": "steady",
+      "rounds": 15
+    },
+    {
+      "cadence_seconds": null,
+      "concurrency": 16,
+      "name": "burst",
+      "rounds": 15
+    },
+    {
+      "cadence_seconds": 0.02,
+      "concurrency": 16,
+      "name": "wake",
+      "rounds": 15
+    }
+  ]
+}

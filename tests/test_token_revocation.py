@@ -702,9 +702,11 @@ def test_no_owned_client_shutdown_hook_is_registered_without_introspection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _environment(monkeypatch, **OIDC_ENV)
-    # The app always closes the pool it opened; nothing else is owned here.
+    # The app owns the pool it opened and the sampler that reports it; there
+    # is no outbound client to close without introspection.
     assert [hook.__name__ for hook in create_default_app().router.on_shutdown] == [
-        "_close_database_pool"
+        "_stop_pool_metrics",
+        "_close_database_pool",
     ]
 
 
@@ -720,9 +722,15 @@ def test_configured_introspection_registers_an_owned_client_shutdown_hook(
     )
     app = create_default_app()
     hooks = {hook.__name__: hook for hook in app.router.on_shutdown}
-    assert sorted(hooks) == ["_close_database_pool", "_close_introspection_client"]
+    assert sorted(hooks) == [
+        "_close_database_pool",
+        "_close_introspection_client",
+        "_stop_pool_metrics",
+    ]
     hooks["_close_introspection_client"]()  # closes the owned httpx client
     # A shutdown hook also runs on a failed startup, so closing an unopened pool
     # and closing the same client twice both have to stay safe.
     hooks["_close_database_pool"]()
     hooks["_close_database_pool"]()
+    hooks["_stop_pool_metrics"]()  # a sampler that never started stops too
+    hooks["_stop_pool_metrics"]()

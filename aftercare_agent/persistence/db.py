@@ -5,6 +5,7 @@ import os
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,35 @@ _MIGRATIONS = Path(__file__).with_name("migrations")
 DEFAULT_MIN_SIZE = 1
 DEFAULT_MAX_SIZE = 8
 DEFAULT_ACQUIRE_TIMEOUT_SECONDS = 5.0
+
+
+@dataclass(frozen=True)
+class PoolStats:
+    """One snapshot of a process's pool.
+
+    Counters are cumulative since the pool opened and start over with the
+    process; a caller that wants a rate differences two snapshots.  Nothing
+    here describes the work being done: no tenant, case, statement or DSN is
+    reachable from a snapshot, so it is safe to publish as a metric.
+    """
+
+    min_size: int
+    max_size: int
+    size: int
+    available: int
+    waiting: int
+    requests: int
+    queued: int
+    request_errors: int
+    wait_ms: int
+    connections: int
+    connection_errors: int
+    connections_lost: int
+
+    @property
+    def in_use(self) -> int:
+        """Slots that are out with a borrower right now."""
+        return self.size - self.available
 
 
 def _int_from_env(name: str, default: int) -> int:
@@ -103,18 +133,25 @@ class Database:
         database._pooled = False
         return database
 
-    def startup(self) -> None:
+    def startup(self, *, timeout: float | None = None) -> None:
         """Open the pool and wait for its first connections.
 
         Pre-warming keeps the first unit of work from paying a connect, and a
         database that is unreachable fails the process start instead of the
         first request.
+
+        *timeout* defaults to the borrow budget, so a start that cannot warm
+        the pool fails on the same footing as a unit of work that cannot
+        borrow one.  A caller that deliberately runs a very short borrow
+        budget -- the capacity probe measuring saturation -- passes a longer
+        start timeout instead of making every borrower wait that long.
         """
         pool = self._ensure_pool()
         if pool is None:
             return
+        budget = self.acquire_timeout if timeout is None else timeout
         try:
-            pool.open(wait=True, timeout=self.acquire_timeout)
+            pool.open(wait=True, timeout=budget)
         except PoolTimeout:
             # ``wait()`` closes the pool it could not fill; forget it so a
             # later attempt builds a fresh one instead of meeting a closed one.
@@ -133,6 +170,33 @@ class Database:
             self._closed = True
         if pool is not None:
             pool.close(timeout=timeout)
+
+    def stats(self) -> PoolStats | None:
+        """Snapshot the pool, or ``None`` when this Database has no pool.
+
+        The snapshot is a diagnostic read, not a health check: a caller that
+        cannot borrow still gets a truthful picture of how many slots were in
+        use and how many borrowers were waiting when it gave up.
+        """
+        with self._pool_lock:
+            pool = self._pool
+        if pool is None:
+            return None
+        raw = pool.get_stats()
+        return PoolStats(
+            min_size=int(raw.get("pool_min", self.min_size)),
+            max_size=int(raw.get("pool_max", self.max_size)),
+            size=int(raw.get("pool_size", 0)),
+            available=int(raw.get("pool_available", 0)),
+            waiting=int(raw.get("requests_waiting", 0)),
+            requests=int(raw.get("requests_num", 0)),
+            queued=int(raw.get("requests_queued", 0)),
+            request_errors=int(raw.get("requests_errors", 0)),
+            wait_ms=int(raw.get("requests_wait_ms", 0)),
+            connections=int(raw.get("connections_num", 0)),
+            connection_errors=int(raw.get("connections_errors", 0)),
+            connections_lost=int(raw.get("connections_lost", 0)),
+        )
 
     def _ensure_pool(self) -> ConnectionPool[psycopg.Connection[Any]] | None:
         with self._pool_lock:

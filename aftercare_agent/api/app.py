@@ -45,6 +45,7 @@ from aftercare_agent.domain.runtime import (
     RunRecord,
     SessionRecord,
 )
+from aftercare_agent.observability import LoggingMetrics, Metrics
 from aftercare_agent.persistence import (
     MAX_PAGE_SIZE,
     AdmissionRepository,
@@ -57,6 +58,7 @@ from aftercare_agent.persistence import (
     ReviewRepository,
     RunRepository,
     migrate,
+    sampler_from_environment,
 )
 from aftercare_agent.runtime import PostgresEventTail
 
@@ -487,6 +489,7 @@ def create_app(
     allow_synthetic: bool = False,
     oidc_verifier: TokenVerifier | None = None,
     introspector: TokenIntrospector | None = None,
+    metrics: Metrics | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Aftercare Agent", version="v1")
     # A configured introspector turns on revocation checking; without a
@@ -495,6 +498,11 @@ def create_app(
         TokenAccessGuard(oidc_verifier, introspector=introspector)
         if oidc_verifier is not None
         else None
+    )
+    # No sink means no sampler thread: a caller that has nowhere to publish
+    # pool health should not pay for collecting it.
+    sampler = (
+        None if metrics is None else sampler_from_environment(database, metrics, component="api")
     )
 
     @app.get("/healthz")
@@ -548,6 +556,17 @@ def create_app(
         database.startup()
         with database.transaction() as connection:
             migrate(connection)
+        if sampler is not None:
+            sampler.start()
+
+    if sampler is not None:
+        owned_sampler = sampler
+
+        @app.on_event("shutdown")
+        def _stop_pool_metrics() -> None:
+            # Diagnostics never hold up a shutdown: stopping waits for at most
+            # one read of the pool counters, not for any work in flight.
+            owned_sampler.stop()
 
     @app.post("/v1/cases", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
     def open_case(
@@ -1169,6 +1188,9 @@ def create_default_app() -> FastAPI:
         allow_synthetic=synthetic_enabled == "1",
         oidc_verifier=verifier,
         introspector=introspector,
+        # The API owns its process log, so pool health reaches operators with
+        # no extra dependency; an exporter can replace this sink later (C-03).
+        metrics=LoggingMetrics(),
     )
     if introspection_client is not None:
         owned_client = introspection_client

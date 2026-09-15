@@ -14,9 +14,10 @@ from .admission import (
 from .approvals import ApprovalRepository
 from .assessments import InvestigationAssessmentRepository
 from .case_grants import CaseGrantRepository
-from .db import Database, migrate
+from .db import Database, PoolStats, migrate
 from .events import MAX_OUTBOX_BATCH, EventRepository, OutboxDelivery
 from .investigations import InvestigationObservationRepository
+from .pool_metrics import PoolStatsSampler, report_pool_stats, sampler_from_environment
 from .projection import ProjectionIngestResult, ProjectionRepository
 from .repositories import (
     AttemptRepository,
@@ -49,8 +50,12 @@ __all__ = [
     "EventRepository",
     "OutboxDelivery",
     "InvestigationObservationRepository",
+    "PoolStats",
+    "PoolStatsSampler",
     "ProjectionIngestResult",
     "ProjectionRepository",
+    "report_pool_stats",
+    "sampler_from_environment",
     "ReviewRepository",
     "WaitRepository",
     "RunRepository",

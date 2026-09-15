@@ -28,6 +28,10 @@ services:
       AFTERCARE_DB_POOL_MIN_SIZE: "${AFTERCARE_DB_POOL_MIN_SIZE:-1}"
       AFTERCARE_DB_POOL_MAX_SIZE: "${AFTERCARE_DB_POOL_MAX_SIZE:-8}"
       AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS: "${AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS:-5}"
+      # Pool health: one JSON line per sample on the process log (ADR-0007).
+      # There is no exporter yet, so the log is the sink a deployment gets.
+      AFTERCARE_POOL_METRICS: "${AFTERCARE_POOL_METRICS:-1}"
+      AFTERCARE_POOL_METRICS_INTERVAL_SECONDS: "${AFTERCARE_POOL_METRICS_INTERVAL_SECONDS:-10}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +64,8 @@ services:
       AFTERCARE_DB_POOL_MIN_SIZE: "${AFTERCARE_DB_POOL_MIN_SIZE:-1}"
       AFTERCARE_DB_POOL_MAX_SIZE: "${AFTERCARE_DB_POOL_MAX_SIZE:-4}"
       AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS: "${AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS:-5}"
+      AFTERCARE_POOL_METRICS: "${AFTERCARE_POOL_METRICS:-1}"
+      AFTERCARE_POOL_METRICS_INTERVAL_SECONDS: "${AFTERCARE_POOL_METRICS_INTERVAL_SECONDS:-10}"
     depends_on:
       api:
         condition: service_healthy

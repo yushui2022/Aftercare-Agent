@@ -29,10 +29,17 @@ from aftercare_agent.persistence import (
 from .harness import HarnessResult
 from .harness import run_fake_harness as run_fake_harness
 
+# One bounded execution slice.  The default is the deterministic fake Harness;
+# a caller that owns a provider adapter, a tool executor and a budget injects
+# ``functools.partial`` of another one instead.  The Worker builds neither, so
+# it never holds credentials or business connectors itself.
+type Harness = Callable[..., HarnessResult]
+
 __all__ = [
     "LeaseHeartbeat",
     "WorkerLoopResult",
     "WorkerResult",
+    "Harness",
     "run_daemon",
     "run_fake_harness",
     "run_next",
@@ -214,11 +221,15 @@ def _execute_claim(
     execution_time: datetime,
     max_steps: int,
     lease: timedelta,
+    harness: Harness | None = None,
     heartbeat_interval: timedelta | None = None,
     slot: SlotReservation | None = None,
     resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
 ) -> WorkerResult:
     _validate_steps(max_steps)
+    # Resolved here rather than as a default argument so that replacing the
+    # module-level name still takes effect, as tests and embedders expect.
+    selected_harness = harness or run_fake_harness
     heartbeat = LeaseHeartbeat(
         database,
         claim,
@@ -262,7 +273,7 @@ def _execute_claim(
                     "wait_generation": None,
                 }
             )
-        result: HarnessResult = run_fake_harness(
+        result: HarnessResult = selected_harness(
             tenant_id=claim.tenant_id,
             case_id=claim.case_id,
             run_id=claim.run_id,
@@ -306,6 +317,7 @@ def run_once(
     max_steps: int = 8,
     heartbeat_interval: timedelta | None = None,
     resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
+    harness: Harness | None = None,
 ) -> WorkerResult:
     """Claim one Run, execute a bounded Fake Harness slice, and persist it.
 
@@ -334,6 +346,7 @@ def run_once(
         heartbeat_interval=heartbeat_interval,
         slot=slot,
         resume_next_step=resume_next_step,
+        harness=harness,
     )
 
 
@@ -347,6 +360,7 @@ def run_next(
     max_steps: int = 8,
     heartbeat_interval: timedelta | None = None,
     resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
+    harness: Harness | None = None,
 ) -> WorkerResult | None:
     """Claim and execute one runnable Run, or return ``None`` when idle.
 
@@ -375,6 +389,7 @@ def run_next(
         heartbeat_interval=heartbeat_interval,
         slot=slot,
         resume_next_step=resume_next_step,
+        harness=harness,
     )
 
 
@@ -391,6 +406,7 @@ def run_daemon(
     max_iterations: int | None = None,
     on_error: Callable[[Exception], None] | None = None,
     resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
+    harness: Harness | None = None,
 ) -> WorkerLoopResult:
     """Poll runnable Runs until stopped, with bounded idle backoff.
 
@@ -421,6 +437,7 @@ def run_daemon(
                 max_steps=max_steps,
                 heartbeat_interval=heartbeat_interval,
                 resume_next_step=resume_next_step,
+                harness=harness,
             )
             if result is None:
                 idle_polls += 1

@@ -29,6 +29,13 @@ class ArtifactReference(CaseScope):
     sha256: Sha256
 
 
+class ToolRequest(ContractModel):
+    schema_version: SchemaVersion = 1
+    call_id: Identifier
+    name: Identifier
+    arguments_json: str = Field(max_length=65_536)
+
+
 class RemainingBudget(ContractModel):
     model_calls: NonNegativeInt
     tool_calls: NonNegativeInt
@@ -63,6 +70,11 @@ class Checkpoint(RunScope):
     action_ids: tuple[Identifier, ...] = ()
     remaining_budget: RemainingBudget
     next_step: Literal["model", "tool", "evaluate", "wait", "retry", "review", "complete"]
+    # A tool phase must name the exact pending tool: a stateless deterministic
+    # planner could re-derive it, but a model-driven plan cannot, so without
+    # this a crash mid-tool would force a second paid model turn to find out
+    # what was asked.
+    pending_tool: ToolRequest | None = None
     # New wait checkpoints persist the exact phase to resume.  ``None`` is
     # accepted for schema-v1 checkpoints written before this field existed;
     # the Worker fails closed unless its caller supplies the legacy override.
@@ -86,6 +98,16 @@ class Checkpoint(RunScope):
             raise ValueError("non-wait checkpoint must not contain an active wait")
         if (self.next_step == "retry") != (self.available_at is not None):
             raise ValueError("retry checkpoint needs available_at, other kinds must omit it")
+        # A wait that resumes into the tool phase keeps its pending tool: a
+        # model-driven plan cannot be re-derived after the wait, so dropping it
+        # would force a second paid turn just to recover what was already asked.
+        resumes_tool = self.next_step == "tool" or self.resume_next_step == "tool"
+        if resumes_tool != (self.pending_tool is not None):
+            raise ValueError("a tool phase needs exactly one pending tool, including across a wait")
+        if self.pending_tool is not None and any(
+            r.call_id == self.pending_tool.call_id for r in self.tool_results
+        ):
+            raise ValueError("pending tool already has a recorded result")
         refs = [r.artifact for r in self.tool_results] + list(self.evidence_refs)
         if self.protocol_ref is not None:
             refs.append(self.protocol_ref)
@@ -170,13 +192,6 @@ def assert_resume_compatible(
             ErrorCode.CONFLICT, "checkpoint inputs need explicit reconciliation"
         )
     # saved_fencing_token is provenance, never the new execution claim.
-
-
-class ToolRequest(ContractModel):
-    schema_version: SchemaVersion = 1
-    call_id: Identifier
-    name: Identifier
-    arguments_json: str = Field(max_length=65_536)
 
 
 class BoundLookupArguments(ContractModel):

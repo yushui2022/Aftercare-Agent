@@ -115,6 +115,7 @@ def run_fake_harness(
                         update={"model_calls": budget.model_calls - 1}
                     ),
                     "next_step": "tool",
+                    "pending_tool": plan.request(calls),
                 }
             )
             continue
@@ -144,12 +145,14 @@ def run_fake_harness(
             artifact=_artifact(current, request.call_id),
         )
         next_step = "tool" if calls + 1 < len(plan.tools) else "evaluate"
+        following = plan.request(calls + 1) if next_step == "tool" else None
         current = current.model_copy(
             update={
                 "checkpoint_version": current.checkpoint_version + 1,
                 "tool_results": (*current.tool_results, result),
                 "remaining_budget": budget.model_copy(update={"tool_calls": budget.tool_calls - 1}),
                 "next_step": next_step,
+                "pending_tool": following,
             }
         )
         calls += 1

@@ -40,7 +40,7 @@ include = ["aftercare_agent*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-aftercare_agent = ["py.typed", "persistence/migrations/*.sql"]
+aftercare_agent = ["py.typed", "persistence/migrations/*.sql", "connectors/data/*.json"]
 
 [tool.uv]
 required-version = ">=0.9.26"

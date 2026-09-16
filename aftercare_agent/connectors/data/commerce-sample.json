@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "tenant_id": "tenant-demo",
+  "source": "synthetic-commerce-export",
+  "orders": [
+    {
+      "order_id": "A-1001",
+      "buyer_id": "buyer-77",
+      "placed_at": "2026-08-20T02:11:00+00:00",
+      "status": "delivered",
+      "items": [
+        {
+          "sku": "SKU-RUN-01",
+          "title": "Trail running shoes",
+          "quantity": 1,
+          "unit_price": { "amount_minor": "89900", "currency": "CNY" }
+        },
+        {
+          "sku": "SKU-SOCK-02",
+          "title": "Cushioned socks",
+          "quantity": 2,
+          "unit_price": { "amount_minor": "2900", "currency": "CNY" }
+        }
+      ],
+      "payment": {
+        "payment_id": "pay-5501",
+        "method": "card",
+        "amount": { "amount_minor": "95700", "currency": "CNY" },
+        "status": "captured",
+        "captured_at": "2026-08-20T02:12:30+00:00"
+      },
+      "shipments": [
+        {
+          "shipment_id": "shp-9001",
+          "carrier": "carrier-fast",
+          "tracking_number": "FAST9001",
+          "dispatched_at": "2026-08-21T01:05:00+00:00",
+          "delivered_at": "2026-08-24T09:40:00+00:00",
+          "events": [
+            {
+              "at": "2026-08-21T01:05:00+00:00",
+              "code": "picked_up",
+              "location": "Hangzhou origin hub",
+              "description": "Parcel scanned at origin"
+            },
+            {
+              "at": "2026-08-22T18:20:00+00:00",
+              "code": "in_transit",
+              "location": "Shanghai regional hub",
+              "description": "Departed regional hub"
+            },
+            {
+              "at": "2026-08-24T09:40:00+00:00",
+              "code": "delivered",
+              "location": "Buyer front desk",
+              "description": "Signed for at reception"
+            }
+          ]
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3001",
+          "channel": "in_app",
+          "received_at": "2026-08-26T03:00:00+00:00",
+          "assertion": "not_received",
+          "text": "The parcel never arrived. Tracking says delivered, but I was away that week."
+        }
+      ]
+    },
+    {
+      "order_id": "A-1002",
+      "buyer_id": "buyer-91",
+      "placed_at": "2026-09-02T07:45:00+00:00",
+      "status": "shipped",
+      "items": [
+        {
+          "sku": "SKU-LAMP-07",
+          "title": "Desk lamp",
+          "quantity": 1,
+          "unit_price": { "amount_minor": "31900", "currency": "CNY" }
+        }
+      ],
+      "payment": {
+        "payment_id": "pay-5502",
+        "method": "wallet",
+        "amount": { "amount_minor": "31900", "currency": "CNY" },
+        "status": "captured",
+        "captured_at": "2026-09-02T07:46:10+00:00"
+      },
+      "shipments": [
+        {
+          "shipment_id": "shp-9002",
+          "carrier": "carrier-fast",
+          "tracking_number": "FAST9002",
+          "dispatched_at": "2026-09-03T23:10:00+00:00",
+          "events": [
+            {
+              "at": "2026-09-03T23:10:00+00:00",
+              "code": "picked_up",
+              "location": "Shenzhen origin hub",
+              "description": "Parcel scanned at origin"
+            },
+            {
+              "at": "2026-09-05T04:35:00+00:00",
+              "code": "in_transit",
+              "location": "Guangzhou sorting centre",
+              "description": "Arrived at sorting centre"
+            }
+          ]
+        }
+      ],
+      "messages": [
+        {
+          "message_id": "msg-3002",
+          "channel": "in_app",
+          "received_at": "2026-09-06T01:20:00+00:00",
+          "assertion": "unclear",
+          "text": "Any update on my lamp? The last scan has not moved for a day."
+        }
+      ]
+    }
+  ]
+}

@@ -8,10 +8,32 @@ from datetime import timedelta
 from threading import Event
 from types import FrameType
 
+from aftercare_agent.domain.common import ContractViolation
 from aftercare_agent.observability import LoggingMetrics
 from aftercare_agent.persistence import Database, sampler_from_environment
 
-from .worker import WorkerLoopResult, WorkerResult, run_daemon, run_next, run_once
+from .sandbox_executor import StaticCaseBinding
+from .wiring import harness_from_environment
+from .worker import Harness, WorkerLoopResult, WorkerResult, run_daemon, run_next, run_once
+
+
+def _model_harness(owner: str, max_steps: int) -> Harness | None:
+    """Build the model-driven Harness only when a deployment asks for it.
+
+    The default stays the deterministic fake plan, so an unconfigured worker
+    cannot start spending provider budget or reaching a sandbox by accident.
+    """
+    if not _flag(os.environ.get("AFTERCARE_HARNESS_MODEL", "")):
+        return None
+    order_id = os.environ.get("AFTERCARE_ORDER_ID", "").strip()
+    if not order_id:
+        raise SystemExit("AFTERCARE_ORDER_ID is required for the model Harness")
+    try:
+        return harness_from_environment(
+            owner=owner, case_binding=StaticCaseBinding(order_id=order_id), max_steps=max_steps
+        )
+    except (ContractViolation, ValueError) as error:
+        raise SystemExit(f"model Harness is not configured: {error}") from error
 
 
 def _flag(value: str) -> bool:
@@ -53,6 +75,7 @@ def main() -> int:
     heartbeat = _seconds("AFTERCARE_HEARTBEAT_SECONDS", heartbeat_text) if heartbeat_text else None
     database = Database(dsn)
     sampler = sampler_from_environment(database, LoggingMetrics(), component="worker")
+    harness = _model_harness(owner, max_steps)
     try:
         if sampler is not None:
             sampler.start()
@@ -64,6 +87,7 @@ def main() -> int:
             max_steps=max_steps,
             lease=lease,
             heartbeat=heartbeat,
+            harness=harness,
         )
     finally:
         if sampler is not None:
@@ -83,6 +107,7 @@ def _run(
     max_steps: int,
     lease: timedelta,
     heartbeat: timedelta | None,
+    harness: Harness | None,
 ) -> int:
     if _flag(os.environ.get("AFTERCARE_WORKER_DAEMON", "")):
         stop = Event()
@@ -116,6 +141,7 @@ def _run(
                         sort_keys=True,
                     )
                 ),
+                harness=harness,
             )
         finally:
             signal.signal(signal.SIGINT, old_int)
@@ -144,6 +170,7 @@ def _run(
             lease=lease,
             max_steps=max_steps,
             heartbeat_interval=heartbeat,
+            harness=harness,
         )
     else:
         slice_result = run_next(
@@ -153,6 +180,7 @@ def _run(
             lease=lease,
             max_steps=max_steps,
             heartbeat_interval=heartbeat,
+            harness=harness,
         )
         if slice_result is None:
             print(json.dumps({"status": "idle"}))

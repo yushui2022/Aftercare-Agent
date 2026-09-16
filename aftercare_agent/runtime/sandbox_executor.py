@@ -22,7 +22,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import ValidationError
 
 from aftercare_agent.artifacts import ContentAddressedArtifactStore
-from aftercare_agent.connectors.commerce import CommerceConnector
+from aftercare_agent.connectors.commerce import CommerceConnector, ConnectorAnswer
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, RunScope
 from aftercare_agent.domain.protocol import (
     ArtifactReference,
@@ -44,6 +44,24 @@ class CaseBinding(Protocol):
 
     def order_id_for(self, scope: RunScope) -> str:
         """Return the order the host bound to this Run; never a model input."""
+
+
+class AnswerObserver(Protocol):
+    """Records one stored connector answer; this module does not know where.
+
+    The executor deliberately never holds a database or an evidence ledger: it
+    hands the answer and the artifact that holds its bytes to whoever owns the
+    audit trail, so the same executor is usable with and without one.
+    """
+
+    def __call__(
+        self,
+        *,
+        request: ToolRequest,
+        scope: RunScope,
+        answer: ConnectorAnswer,
+        artifact: ArtifactReference,
+    ) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -82,6 +100,7 @@ class SandboxedToolExecutor:
         tiers: Mapping[str, str],
         owner: str,
         max_result_bytes: int = 262_144,
+        observer: AnswerObserver | None = None,
     ) -> None:
         if not owner:
             raise ContractViolation(ErrorCode.INVALID_INPUT, "sandbox owner is required")
@@ -94,6 +113,7 @@ class SandboxedToolExecutor:
         self._tiers = dict(tiers)
         self._owner = owner
         self._max_result_bytes = max_result_bytes
+        self._observer = observer
 
     @property
     def owner(self) -> str:
@@ -147,7 +167,7 @@ class SandboxedToolExecutor:
         order_id: str,
     ) -> ArtifactReference:
         self._manager.begin(allocation, owner=self._owner)
-        content = self._answered(request, order_id=order_id, tenant_id=scope.tenant_id)
+        content, answer = self._answer(request, order_id=order_id, tenant_id=scope.tenant_id)
         if len(content) > self._max_result_bytes:
             raise ContractViolation(
                 ErrorCode.BUDGET_EXHAUSTED, "tool result exceeds the sandbox result budget"
@@ -160,11 +180,21 @@ class SandboxedToolExecutor:
             # A real backend hashes what it actually stored; a mismatch means
             # the sandbox did not receive the bytes this step believes it sent.
             raise ContractViolation(ErrorCode.CONFLICT, "sandbox artifact digest mismatch")
-        return self._store.put(
+        reference = self._store.put(
             scope, reference_id=f"tool-result:{request.call_id}", content=content
         )
+        if answer is not None and self._observer is not None:
+            # Inside the lease and after the artifact exists: a fact that cannot
+            # be recorded as evidence fails the step instead of being used
+            # unaudited, and a replay re-derives the same evidence rather than
+            # a second copy of it.
+            self._observer(request=request, scope=scope, answer=answer, artifact=reference)
+        return reference
 
-    def _answered(self, request: ToolRequest, *, order_id: str, tenant_id: str) -> bytes:
+    def _answer(
+        self, request: ToolRequest, *, order_id: str, tenant_id: str
+    ) -> tuple[bytes, ConnectorAnswer | None]:
+        """Return the canonical answer bytes and, for a business answer, its source."""
         arguments = _revalidated(request)
         if isinstance(arguments, MaterialDraftArguments):
             body: dict[str, object] = {
@@ -172,13 +202,20 @@ class SandboxedToolExecutor:
                 "order_id": order_id,
                 "questions": list(arguments.questions),
             }
-            return json.dumps(
-                body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
+            # A material draft asks the buyer for facts; it is not a business
+            # fact itself, so it never becomes evidence.
+            return (
+                json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                ),
+                None,
+            )
         if request.name == "lookup_order":
-            return self._connector.lookup_order(tenant_id=tenant_id, order_id=order_id).content()
+            order = self._connector.lookup_order(tenant_id=tenant_id, order_id=order_id)
+            return order.content(), order
         if request.name == "lookup_tracking":
-            return self._connector.lookup_tracking(tenant_id=tenant_id, order_id=order_id).content()
+            tracking = self._connector.lookup_tracking(tenant_id=tenant_id, order_id=order_id)
+            return tracking.content(), tracking
         raise ContractViolation(ErrorCode.FORBIDDEN, "tool has no connector binding")
 
     def _release_after_failure(self, allocation: SandboxAllocation) -> None:

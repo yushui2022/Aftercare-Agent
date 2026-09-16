@@ -35,7 +35,7 @@ from aftercare_agent.sandbox import FakeSandboxProvider, SandboxSpec
 from aftercare_agent.sandbox.manager import SandboxManager, SandboxTierPolicy
 
 from .model_harness import HarnessLimits, run_model_harness
-from .sandbox_executor import CaseBinding, SandboxedToolExecutor
+from .sandbox_executor import AnswerObserver, CaseBinding, SandboxedToolExecutor
 from .worker import Harness
 
 DEFAULT_TIERS = SandboxTierPolicy(
@@ -119,9 +119,17 @@ def _seconds(env: Mapping[str, str], name: str, default: str) -> timedelta:
 
 
 def build_sandbox_executor(
-    env: Mapping[str, str], *, owner: str, case_binding: CaseBinding
+    env: Mapping[str, str],
+    *,
+    owner: str,
+    case_binding: CaseBinding,
+    observer: AnswerObserver | None = None,
 ) -> SandboxedToolExecutor:
-    """Wire a read-only connector to tiered sandboxes and a content-addressed store."""
+    """Wire a read-only connector to tiered sandboxes and a content-addressed store.
+
+    The observer -- the evidence recorder -- is injected by the host, because
+    auditing an answer needs the database this module deliberately never opens.
+    """
     dataset = load_commerce_dataset(_required(env, "AFTERCARE_COMMERCE_DATASET"))
     connector = CommerceConnector(
         dataset,
@@ -148,6 +156,7 @@ def build_sandbox_executor(
         tiers=TOOL_TIERS,
         owner=owner,
         max_result_bytes=_positive_int(env, "AFTERCARE_SANDBOX_RESULT_BYTES", "262144"),
+        observer=observer,
     )
 
 

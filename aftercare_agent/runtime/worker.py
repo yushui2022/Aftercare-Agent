@@ -213,6 +213,27 @@ def _validate_steps(max_steps: int) -> None:
         raise ContractViolation(ErrorCode.INVALID_INPUT, "max_steps must be positive")
 
 
+# A slice's last phase, mapped to the Run state that makes it actionable.
+# ``complete`` and the two routes are terminal for a slice; any other phase
+# means the slice hit ``max_steps`` and gives its execution right back.
+_RUN_STATE_FOR_STEP: dict[str, str] = {
+    "complete": "COMPLETED",
+    "review": "REVIEW",
+    "retry": "RETRY_AT",
+}
+
+
+def _run_state_for(checkpoint: Checkpoint) -> str:
+    """Return the Run state to record for the checkpoint a slice just produced."""
+    target = _RUN_STATE_FOR_STEP.get(checkpoint.next_step, "READY")
+    if target == "RETRY_AT" and checkpoint.available_at is None:
+        # The checkpoint invariant already refuses this combination.  The guard
+        # is here so the slice fails before saving a checkpoint that no
+        # transition could accept.
+        raise ContractViolation(ErrorCode.INVALID_INPUT, "retry route lost its available_at")
+    return target
+
+
 def _execute_claim(
     database: Database,
     *,
@@ -286,13 +307,22 @@ def _execute_claim(
     if heartbeat.failure is not None:
         raise ContractViolation(ErrorCode.LEASE_LOST, "lease heartbeat failed")
     checkpoint = result.checkpoint.model_copy(update={"saved_fencing_token": claim.fencing_token})
+    target = _run_state_for(checkpoint)
     runs = RunRepository()
     checkpoints = CheckpointRepository()
     with database.transaction() as connection:
         checkpoints.save(connection, checkpoint, claim)
-        # A bounded slice gives the execution right back so another Worker
-        # can resume it without waiting for lease expiry.
-        runs.transition(connection, claim, "COMPLETED" if result.completed else "READY")
+        # The checkpoint decides where the Run goes, not the HarnessResult: a
+        # bounded slice that ran out of steps is READY again, while a slice
+        # that stopped because the model may not spend more, or because the
+        # provider refused, must land somewhere a human can see it instead of
+        # sitting in RUNNING until the lease expires.
+        runs.transition(
+            connection,
+            claim,
+            target,
+            available_at=checkpoint.available_at if target == "RETRY_AT" else None,
+        )
         if slot is not None:
             AdmissionRepository().release_slot(connection, claim)
     return WorkerResult(

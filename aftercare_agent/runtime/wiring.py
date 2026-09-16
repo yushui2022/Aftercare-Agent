@@ -227,6 +227,7 @@ def build_model_harness(
                 tool_calls=_positive_int(env, "AFTERCARE_TOOL_CALLS", "4"),
                 cost_microusd=_positive_int(env, "AFTERCARE_MODEL_COST_MICROUSD", "1000000"),
                 ttl=_seconds(env, "AFTERCARE_HARNESS_TTL_SECONDS", "300"),
+                retry_backoff=_seconds(env, "AFTERCARE_HARNESS_RETRY_BACKOFF_SECONDS", "30"),
             ),
             executor=executor,
             render_input=make_render_input(store, case_binding),

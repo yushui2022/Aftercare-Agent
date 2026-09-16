@@ -17,13 +17,14 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, RunScope, utc
 from aftercare_agent.domain.protocol import (
     ArtifactReference,
     Checkpoint,
     RemainingBudget,
+    RouteReason,
     ToolRequest,
     ToolResultReference,
     validate_tool_request,
@@ -35,7 +36,9 @@ from aftercare_agent.model_adapters.responses import (
     ResponsesInput,
     ResponsesRequest,
     ToolSpec,
+    normalize_error,
 )
+from aftercare_agent.model_adapters.transport import ProviderError
 
 from .harness import HarnessResult
 
@@ -60,6 +63,10 @@ class HarnessLimits:
     tool_calls: int
     cost_microusd: int
     ttl: timedelta
+    # How long a retryable provider failure parks the Run.  A retry is not free
+    # -- it consumes one model call -- so the budget, not a counter, is what
+    # stops a provider outage from being retried forever.
+    retry_backoff: timedelta = timedelta(seconds=30)
 
 
 def _initial_checkpoint(
@@ -94,16 +101,51 @@ def _initial_checkpoint(
     )
 
 
-def _charge(response: NormalizedResponse, pricing: ModelPricing, budget: RemainingBudget) -> int:
-    """Return the cost of one answered call, refusing to guess a missing usage."""
-
+def _cost(response: NormalizedResponse, pricing: ModelPricing) -> int | None:
+    """Return the cost of one call, or ``None`` when no usage was reported."""
     if response.usage is None:
-        raise ContractViolation(
-            ErrorCode.INVALID_INPUT, "a chargeable model call must report usage"
-        )
+        return None
     return (
         response.usage.input_tokens * pricing.input_microusd_per_token
         + response.usage.output_tokens * pricing.output_microusd_per_token
+    )
+
+
+def _spent_one_call(budget: RemainingBudget) -> RemainingBudget:
+    """Charge one attempt whose usage the provider never reported.
+
+    A call that failed mid-flight may still have been billed.  Counting the
+    attempt under-counts a cost nobody can see, which is safer than treating
+    the attempt as free, and it is what bounds a retry loop: the budget runs
+    out, the route becomes ``review``, and a human decides.
+    """
+    return budget.model_copy(update={"model_calls": budget.model_calls - 1})
+
+
+def _route(
+    current: Checkpoint,
+    *,
+    next_step: Literal["review", "retry"],
+    reason: RouteReason,
+    budget: RemainingBudget,
+    available_at: datetime | None = None,
+) -> Checkpoint:
+    """Persist a durable decision instead of raising out of the slice.
+
+    Raising would lose the charge of a call that was already billed and leave
+    the Run RUNNING until its lease expired, where nothing can act on it.  A
+    route travels with the checkpoint, so the Worker can move the Run to a
+    state an operator or the queue decides about.
+    """
+    return current.model_copy(
+        update={
+            "checkpoint_version": current.checkpoint_version + 1,
+            "remaining_budget": budget,
+            "next_step": next_step,
+            "route_reason": reason,
+            "pending_tool": None,
+            "available_at": available_at,
+        }
     )
 
 
@@ -116,32 +158,65 @@ def _model_step(
     pricing: ModelPricing,
     render_input: InputRenderer,
     now: datetime,
+    retry_backoff: timedelta,
 ) -> Checkpoint:
     budget = current.remaining_budget
-    if budget.model_calls < 1:
-        raise ContractViolation(ErrorCode.BUDGET_EXHAUSTED, "model budget exhausted")
     if utc(now) >= budget.deadline:
-        raise ContractViolation(ErrorCode.BUDGET_EXHAUSTED, "model deadline passed")
-    response = adapter.complete(
-        ResponsesRequest(model=model, input=render_input(current), tools=tools)
-    )
-    cost = _charge(response, pricing, budget)
+        return _route(current, next_step="review", reason="deadline_passed", budget=budget)
+    if budget.model_calls < 1:
+        return _route(current, next_step="review", reason="model_budget_exhausted", budget=budget)
+    try:
+        response = adapter.complete(
+            ResponsesRequest(model=model, input=render_input(current), tools=tools)
+        )
+    except (ProviderError, ContractViolation) as exc:
+        charged = _spent_one_call(budget)
+        info = normalize_error(exc)
+        if info.retryable and utc(now) + retry_backoff <= budget.deadline:
+            return _route(
+                current,
+                next_step="retry",
+                reason="provider_retryable_error",
+                budget=charged,
+                available_at=utc(now) + retry_backoff,
+            )
+        return _route(current, next_step="review", reason="provider_error", budget=charged)
+    cost = _cost(response, pricing)
+    if cost is None:
+        # A budget this Run has to be able to prove cannot be charged against a
+        # usage the provider never reported.
+        return _route(
+            current, next_step="review", reason="empty_turn", budget=_spent_one_call(budget)
+        )
     if cost > budget.cost_microusd:
-        raise ContractViolation(ErrorCode.BUDGET_EXHAUSTED, "model cost budget exhausted")
+        return _route(
+            current,
+            next_step="review",
+            reason="cost_budget_exhausted",
+            budget=_spent_one_call(budget),
+        )
     charged = budget.model_copy(
         update={"model_calls": budget.model_calls - 1, "cost_microusd": budget.cost_microusd - cost}
     )
     if len(response.tool_calls) > 1:
         # One intent per turn keeps the checkpoint resumable without a queue,
         # and stops a single turn from spending several tool slots at once.
-        raise ContractViolation(ErrorCode.INVALID_INPUT, "one tool call per turn is supported")
+        return _route(current, next_step="review", reason="intent_rejected", budget=charged)
     if response.tool_calls:
         call = response.tool_calls[0]
+        if budget.tool_calls < 1:
+            # The model asked for evidence this Run may no longer buy.  The
+            # turn is charged either way: it was already paid for.
+            return _route(
+                current, next_step="review", reason="tool_budget_exhausted", budget=charged
+            )
         return current.model_copy(
             update={
                 "checkpoint_version": current.checkpoint_version + 1,
                 "remaining_budget": charged,
                 "next_step": "tool",
+                "route_reason": None,
+                "available_at": None,
                 "pending_tool": ToolRequest(
                     call_id=call.call_id,
                     name=call.name,
@@ -155,14 +230,14 @@ def _model_step(
             }
         )
     if not response.text:
-        raise ContractViolation(
-            ErrorCode.INVALID_INPUT, "model returned neither text nor a tool call"
-        )
+        return _route(current, next_step="review", reason="empty_turn", budget=charged)
     return current.model_copy(
         update={
             "checkpoint_version": current.checkpoint_version + 1,
             "remaining_budget": charged,
             "next_step": "complete",
+            "route_reason": None,
+            "available_at": None,
         }
     )
 
@@ -180,14 +255,25 @@ def _tool_step(
     budget = current.remaining_budget
     # A checkpoint is durable input, not proof that the intent was already
     # checked: re-validate it against the schema and budget in force *now*.
-    validate_tool_request(
-        pending,
-        stream_complete=True,
-        allowed_tools=allowed_tools,
-        budget=budget,
-        now=now,
-    )
-    artifact = executor.execute(pending, scope=current, now=utc(now))
+    try:
+        validate_tool_request(
+            pending,
+            stream_complete=True,
+            allowed_tools=allowed_tools,
+            budget=budget,
+            now=now,
+        )
+    except ContractViolation:
+        # A malformed or out-of-scope intent is a planner problem, and nothing
+        # ran.  The paid turn is already recorded; a human decides what next.
+        return _route(current, next_step="review", reason="intent_rejected", budget=budget)
+    try:
+        artifact = executor.execute(pending, scope=current, now=utc(now))
+    except ContractViolation:
+        # Deliberately not retried: a refused intent does not spend the tool
+        # budget, so nothing would stop the next claim from asking the same
+        # question of the same broken connector, forever.
+        return _route(current, next_step="review", reason="executor_rejected", budget=budget)
     index = len(current.tool_results) + 1
     result = ToolResultReference(
         call_id=pending.call_id,
@@ -203,6 +289,8 @@ def _tool_step(
             "remaining_budget": budget.model_copy(update={"tool_calls": budget.tool_calls - 1}),
             "next_step": "model",
             "pending_tool": None,
+            "route_reason": None,
+            "available_at": None,
         }
     )
 
@@ -242,10 +330,23 @@ def run_model_harness(
     )
     if (current.tenant_id, current.case_id, current.run_id) != (tenant_id, case_id, run_id):
         raise ContractViolation(ErrorCode.FORBIDDEN, "checkpoint scope mismatch")
+    if current.next_step in ("review", "retry"):
+        # Resuming a routed checkpoint means the host made it runnable again: a
+        # REVIEW Run has no queue row, and a RETRY_AT Run waits for its
+        # available_at, so only an explicit decision brings it back.  Resuming
+        # therefore means "try the model phase again" -- returning the same
+        # route immediately would make that release a no-op.
+        current = current.model_copy(
+            update={"next_step": "model", "route_reason": None, "available_at": None}
+        )
     allowed_tools = frozenset(tool.name for tool in tools)
     for _ in range(max_steps):
         if current.next_step == "complete":
             return HarnessResult(current, len(current.tool_results), True)
+        if current.next_step in ("review", "retry"):
+            # A route ends the slice: it is a decision for the Worker and a
+            # human, not another phase to run.
+            break
         if current.next_step == "model":
             current = _model_step(
                 current,
@@ -255,6 +356,7 @@ def run_model_harness(
                 pricing=pricing,
                 render_input=render_input,
                 now=now,
+                retry_backoff=limits.retry_backoff,
             )
             continue
         if current.next_step == "tool":

@@ -51,6 +51,19 @@ class ToolResultReference(ContractModel):
     artifact: ArtifactReference
 
 
+type RouteReason = Literal[
+    "model_budget_exhausted",
+    "tool_budget_exhausted",
+    "cost_budget_exhausted",
+    "deadline_passed",
+    "provider_retryable_error",
+    "provider_error",
+    "empty_turn",
+    "intent_rejected",
+    "executor_rejected",
+]
+
+
 class Checkpoint(RunScope):
     schema_version: SchemaVersion = 1
     checkpoint_version: PositiveInt
@@ -70,6 +83,10 @@ class Checkpoint(RunScope):
     action_ids: tuple[Identifier, ...] = ()
     remaining_budget: RemainingBudget
     next_step: Literal["model", "tool", "evaluate", "wait", "retry", "review", "complete"]
+    # A routed checkpoint says why it stopped.  Without it an operator sees a
+    # Run sitting in REVIEW with no way to tell a spent budget from a provider
+    # outage, and the answer decides whether releasing it is even useful.
+    route_reason: RouteReason | None = None
     # A tool phase must name the exact pending tool: a stateless deterministic
     # planner could re-derive it, but a model-driven plan cannot, so without
     # this a crash mid-tool would force a second paid model turn to find out
@@ -98,6 +115,8 @@ class Checkpoint(RunScope):
             raise ValueError("non-wait checkpoint must not contain an active wait")
         if (self.next_step == "retry") != (self.available_at is not None):
             raise ValueError("retry checkpoint needs available_at, other kinds must omit it")
+        if (self.next_step in ("review", "retry")) != (self.route_reason is not None):
+            raise ValueError("only a review or retry checkpoint carries a route reason")
         # A wait that resumes into the tool phase keeps its pending tool: a
         # model-driven plan cannot be re-derived after the wait, so dropping it
         # would force a second paid turn just to recover what was already asked.

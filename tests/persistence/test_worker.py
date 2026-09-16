@@ -4,6 +4,7 @@ import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from uuid import uuid4
 
 import pytest
@@ -12,8 +13,11 @@ from psycopg.conninfo import make_conninfo
 
 import aftercare_agent.runtime.worker as worker_module
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
-from aftercare_agent.domain.protocol import Checkpoint
+from aftercare_agent.domain.protocol import ArtifactReference, Checkpoint, ToolRequest
 from aftercare_agent.domain.runtime import CaseRecord, ExecutionClaim, RunRecord
+from aftercare_agent.model_adapters.budget import ModelPricing
+from aftercare_agent.model_adapters.responses import ResponsesAdapter, ToolSpec
+from aftercare_agent.model_adapters.transport import ProviderError
 from aftercare_agent.persistence import (
     AdmissionRepository,
     CheckpointRepository,
@@ -23,6 +27,8 @@ from aftercare_agent.persistence import (
 )
 from aftercare_agent.runtime import run_next, run_once
 from aftercare_agent.runtime.harness import HarnessResult
+from aftercare_agent.runtime.model_harness import HarnessLimits, run_model_harness
+from aftercare_agent.runtime.worker import Harness
 
 NOW = datetime(2026, 9, 12, 12, tzinfo=UTC)
 
@@ -324,3 +330,175 @@ def test_worker_refuses_slice_after_heartbeat_observes_takeover(
     assert error.value.code is ErrorCode.LEASE_LOST
     with db.connection() as connection:
         assert CheckpointRepository().get_latest(connection, tenant, run_id) is None
+
+
+ROUTE_TOOLS = (ToolSpec(name="lookup_order"),)
+ROUTE_PRICING = ModelPricing(input_microusd_per_token=1, output_microusd_per_token=1)
+
+
+class _RecordingProvider:
+    """Answer the n-th Responses call with one text envelope; earlier calls refuse."""
+
+    def __init__(self, text: str, *, failures: int = 0, status_code: int = 503) -> None:
+        self.responses = self
+        self.calls: list[dict[str, object]] = []
+        self._failures = failures
+        self._status_code = status_code
+        self._payload: dict[str, object] = {
+            "id": "resp-route",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": text}],
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+        }
+
+    def create(self, **kwargs: object) -> dict[str, object]:
+        self.calls.append(dict(kwargs))
+        if len(self.calls) <= self._failures:
+            raise ProviderError("provider refused the call", status_code=self._status_code)
+        return self._payload
+
+
+class _UnusedExecutor:
+    """A route test must never reach the tool phase, so a call here is a bug."""
+
+    def execute(self, request: ToolRequest, *, scope: object, now: datetime) -> ArtifactReference:
+        del scope, now
+        raise AssertionError(f"unexpected tool execution: {request.name}")
+
+
+def _model_harness(client: object, limits: HarnessLimits) -> Harness:
+    return partial(
+        run_model_harness,
+        adapter=ResponsesAdapter(client, allowed_tools=frozenset(t.name for t in ROUTE_TOOLS)),
+        model="deepseek-flash",
+        tools=ROUTE_TOOLS,
+        limits=limits,
+        executor=_UnusedExecutor(),
+        render_input=lambda checkpoint: "investigate",
+        pricing=ROUTE_PRICING,
+    )
+
+
+def test_a_spent_model_budget_parks_the_run_in_review_out_of_the_queue(db: Database) -> None:
+    tenant, case_id, run_id = "route-budget", "route-case", "route-run"
+    _seed(db, tenant, case_id, run_id)
+    client = _RecordingProvider("never asked")
+    limits = HarnessLimits(model_calls=0, tool_calls=1, cost_microusd=1_000, ttl=timedelta(hours=1))
+    result = run_next(
+        db,
+        tenant_id=tenant,
+        owner="worker-route",
+        now=datetime.now(UTC),
+        max_steps=4,
+        harness=_model_harness(client, limits),
+    )
+    assert result is not None and not result.completed
+    assert client.calls == [], "a Run that may not spend must not reach the provider"
+    assert result.checkpoint.route_reason == "model_budget_exhausted"
+    with db.connection() as connection:
+        stored = RunRepository().get(connection, tenant, run_id)
+        queued = connection.execute(
+            "SELECT 1 FROM aftercare_execution_queue WHERE tenant_id=%s AND run_id=%s",
+            (tenant, run_id),
+        ).fetchone()
+    # REVIEW is operator-visible, unlike RUNNING until lease expiry, and its
+    # missing queue row means nothing may re-dispatch it on its own.
+    assert stored is not None and stored.state == "REVIEW"
+    assert stored.available_at is None
+    assert queued is None
+    assert run_next(db, tenant_id=tenant, owner="worker-route", max_steps=4) is None
+
+
+def test_a_retryable_provider_failure_waits_for_its_available_at(db: Database) -> None:
+    tenant, case_id, run_id = "route-retry", "route-case", "route-run"
+    _seed(db, tenant, case_id, run_id)
+    backoff = timedelta(seconds=1)
+    limits = HarnessLimits(
+        model_calls=2,
+        tool_calls=1,
+        cost_microusd=1_000,
+        ttl=timedelta(hours=1),
+        retry_backoff=backoff,
+    )
+    client = _RecordingProvider("the parcel was delivered", failures=1)
+    harness = _model_harness(client, limits)
+    parked = run_next(
+        db,
+        tenant_id=tenant,
+        owner="worker-route",
+        now=datetime.now(UTC),
+        max_steps=2,
+        harness=harness,
+    )
+    assert parked is not None
+    assert parked.checkpoint.route_reason == "provider_retryable_error"
+    with db.connection() as connection:
+        stored = RunRepository().get(connection, tenant, run_id)
+        queued = connection.execute(
+            "SELECT state,available_at FROM aftercare_execution_queue "
+            "WHERE tenant_id=%s AND run_id=%s",
+            (tenant, run_id),
+        ).fetchone()
+    assert stored is not None and stored.state == "RETRY_AT"
+    assert stored.available_at == parked.checkpoint.available_at
+    # Run and wake-up row share one future instant: the database clock decides.
+    assert queued == ("READY", stored.available_at)
+    assert (
+        run_next(db, tenant_id=tenant, owner="worker-route", max_steps=2, harness=harness) is None
+    )
+    time.sleep(backoff.total_seconds() + 0.5)
+    resumed = run_next(db, tenant_id=tenant, owner="worker-route", max_steps=2, harness=harness)
+    assert resumed is not None and resumed.completed
+    assert resumed.checkpoint.route_reason is None
+    assert len(client.calls) == 2, "the released retry must reach the provider again"
+
+
+def test_an_operator_release_re_queues_a_review_run_and_it_finishes(db: Database) -> None:
+    tenant, case_id, run_id = "route-release", "route-case", "route-run"
+    _seed(db, tenant, case_id, run_id)
+    limits = HarnessLimits(model_calls=2, tool_calls=1, cost_microusd=1_000, ttl=timedelta(hours=1))
+    refused = _RecordingProvider("unreachable", failures=99, status_code=401)
+    parked = run_next(
+        db,
+        tenant_id=tenant,
+        owner="worker-route",
+        now=datetime.now(UTC),
+        max_steps=2,
+        harness=_model_harness(refused, limits),
+    )
+    assert parked is not None
+    assert parked.checkpoint.route_reason == "provider_error"
+    with db.connection() as connection:
+        stored = RunRepository().get(connection, tenant, run_id)
+    assert stored is not None and stored.state == "REVIEW"
+    with db.transaction() as connection:
+        RunRepository().transition(
+            connection,
+            ExecutionClaim(
+                tenant_id=tenant,
+                case_id=case_id,
+                run_id=run_id,
+                owner="operator",
+                fencing_token=stored.fencing_token,
+            ),
+            "READY",
+        )
+    resumed = run_next(
+        db,
+        tenant_id=tenant,
+        owner="worker-route",
+        now=datetime.now(UTC),
+        max_steps=2,
+        harness=_model_harness(_RecordingProvider("the parcel was delivered"), limits),
+    )
+    assert resumed is not None and resumed.completed
+    assert resumed.fencing_token == parked.fencing_token + 1
+    with db.connection() as connection:
+        final = RunRepository().get(connection, tenant, run_id)
+    assert final is not None and final.state == "COMPLETED"

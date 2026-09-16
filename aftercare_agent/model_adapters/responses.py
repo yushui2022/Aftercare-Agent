@@ -20,9 +20,16 @@ if TYPE_CHECKING:
 
 
 class ModelClient(Protocol):
-    """Provider transport boundary; implementations must not execute tools."""
+    """Provider transport boundary; implementations must not execute tools.
 
-    def create(self, request: Mapping[str, object]) -> Mapping[str, object]:
+    ``ResponsesAdapter`` calls ``create(model=..., input=..., store=...,
+    tools=...)``, which is the keyword shape both a provider SDK and this
+    repository's own HTTP transport expose.  Naming that boundary is what lets
+    a scripted stand-in and a real endpoint be swapped without the parser
+    noticing.
+    """
+
+    def create(self, **payload: object) -> Mapping[str, object]:
         """Return one provider response without mutating Aftercare state."""
 
 
@@ -87,10 +94,24 @@ class ResponsesInputItem(ContractModel):
 type ResponsesInput = str | tuple[ResponsesInputItem, ...]
 
 
+class ToolSpec(ContractModel):
+    """One provider-facing tool declaration.
+
+    The parameter schema is part of the declaration on purpose: a function
+    sent without properties can only ever be called with an empty argument
+    object, which makes it useless for something like ``lookup_order``.
+    """
+
+    name: Identifier
+    parameters: Mapping[str, object] = Field(
+        default_factory=lambda: {"type": "object", "additionalProperties": False}
+    )
+
+
 class ResponsesRequest(ContractModel):
     model: Identifier
     input: ResponsesInput
-    tools: tuple[Identifier, ...] = ()
+    tools: tuple[ToolSpec, ...] = ()
 
     @model_validator(mode="after")
     def input_is_present(self) -> Self:
@@ -196,6 +217,29 @@ def _function_call(
     )
 
 
+def _auditable(response: Mapping[str, object]) -> Mapping[str, object]:
+    """Return the envelope with chain-of-thought text removed.
+
+    ``native_json`` is persisted for audit and replay, so it must not become a
+    back door for the private reasoning that ``events`` deliberately drops.
+    The reasoning item itself survives, so an auditor can still see that the
+    provider reasoned before answering.
+    """
+
+    output = response.get("output")
+    if not isinstance(output, Sequence) or isinstance(output, (str, bytes)):
+        return response
+    if not any(isinstance(item, Mapping) and item.get("type") == "reasoning" for item in output):
+        return response
+    trimmed: list[object] = [
+        {key: value for key, value in item.items() if key != "content"}
+        if isinstance(item, Mapping) and item.get("type") == "reasoning"
+        else item
+        for item in output
+    ]
+    return {**response, "output": trimmed}
+
+
 def normalize_response(
     raw: Mapping[str, object], *, allowed_tools: frozenset[str] = frozenset()
 ) -> NormalizedResponse:
@@ -203,10 +247,12 @@ def normalize_response(
 
     response = _mapping(raw, "response")
     response_id = _string(response.get("id"), "id")
-    allowed_keys = {"id", "object", "created_at", "model", "status", "output", "usage", "error"}
-    unknown = set(response) - allowed_keys
-    if unknown:
-        raise ContractViolation(ErrorCode.INVALID_INPUT, "Responses contains unknown fields")
+    # A provider envelope carries plenty of metadata this runtime never reads
+    # (sampling knobs, moderation, cache hints, service tier...).  Rejecting
+    # unknown top-level keys made every real response unparseable, and a new
+    # envelope field is not a safety problem: the fields that matter are
+    # validated below, and an unrecognised *output* item still fails closed
+    # because it may be hiding a tool call.
     if response.get("status") not in (None, "completed"):
         raise ContractViolation(ErrorCode.INVALID_INPUT, "Responses response is not complete")
     output = response.get("output")
@@ -228,6 +274,11 @@ def normalize_response(
             event, tool_call = _function_call(item, allowed_tools)
             events.append(event)
             tool_calls.append(tool_call)
+        elif item_type == "reasoning":
+            # The provider reasoned before answering.  Record that it happened
+            # and drop the content: chain-of-thought is not business evidence,
+            # and this repository does not persist private reasoning.
+            events.append(ResponseEvent(kind="reasoning"))
         elif item_type in ("web_search_call", "file_search_call"):
             hosted.append(HostedToolEvent(type=item_type, payload=dict(item)))
         else:
@@ -241,7 +292,9 @@ def normalize_response(
         tool_calls=tuple(tool_calls),
         hosted_tool_events=tuple(hosted),
         usage=usage,
-        native_json=json.dumps(response, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        native_json=json.dumps(
+            _auditable(response), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ),
         events=tuple(events),
     )
 
@@ -271,7 +324,7 @@ class ResponsesAdapter:
         self._allowed_tools = allowed_tools
 
     def complete(self, request: ResponsesRequest) -> NormalizedResponse:
-        unknown_tools = set(request.tools) - self._allowed_tools
+        unknown_tools = {tool.name for tool in request.tools} - self._allowed_tools
         if unknown_tools:
             raise ContractViolation(ErrorCode.FORBIDDEN, "request contains an unallowed tool")
         endpoint = getattr(self._client, "responses", None)
@@ -287,11 +340,11 @@ class ResponsesAdapter:
             tools=[
                 {
                     "type": "function",
-                    "name": name,
+                    "name": tool.name,
                     "strict": True,
-                    "parameters": {"type": "object", "additionalProperties": False},
+                    "parameters": dict(tool.parameters),
                 }
-                for name in request.tools
+                for tool in request.tools
             ],
         )
         if not isinstance(payload, Mapping):

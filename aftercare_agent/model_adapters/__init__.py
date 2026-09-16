@@ -12,6 +12,7 @@ from .responses import (
     ResponsesRequest,
     ResponseUsage,
     ToolCall,
+    ToolSpec,
     normalize_error,
     normalize_response,
 )
@@ -20,6 +21,12 @@ from .transcript import (
     ResolvedTranscriptMessage,
     SessionTranscriptLoader,
     build_responses_input,
+)
+from .transport import (
+    DEFAULT_MODEL,
+    ProviderEndpoint,
+    ProviderError,
+    ResponsesHttpClient,
 )
 
 __all__ = [
@@ -32,9 +39,14 @@ __all__ = [
     "ResponsesInputItem",
     "ResponsesRequest",
     "ToolCall",
+    "ToolSpec",
     "HostedToolEvent",
     "normalize_error",
     "normalize_response",
+    "DEFAULT_MODEL",
+    "ProviderEndpoint",
+    "ProviderError",
+    "ResponsesHttpClient",
     "ModelPricing",
     "ModelUsageBudget",
     "ArtifactResolver",

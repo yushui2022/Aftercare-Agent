@@ -1,0 +1,96 @@
+{
+  "id": "3d00097e-2b1b-4a26-9250-538ab030b1d4",
+  "object": "response",
+  "created_at": 1789530158,
+  "status": "completed",
+  "background": false,
+  "completed_at": 1789530158,
+  "content_filters": null,
+  "error": null,
+  "frequency_penalty": 0.0,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": null,
+  "max_tool_calls": null,
+  "model": "deepseek-flash",
+  "moderation": null,
+  "output": [
+    {
+      "type": "reasoning",
+      "id": "68ef1c36-07b9-467a-b471-f99b0fcc5145",
+      "status": "completed",
+      "content": [
+        {
+          "type": "reasoning_text",
+          "text": "[reasoning text removed]"
+        }
+      ],
+      "summary": [],
+      "encrypted_content": "3d00097e-2b1b-4a26-9250-538ab030b1d4-0"
+    },
+    {
+      "type": "function_call",
+      "id": "a5f8f968-e7da-44ce-8a41-16562d8c60e3",
+      "status": "completed",
+      "arguments": "{\"order_id\": \"A-1001\"}",
+      "call_id": "call_00_SEpuamcyVwF5TrWToCeu1898",
+      "name": "lookup_order"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "presence_penalty": 0.0,
+  "previous_response_id": null,
+  "prompt_cache_key": null,
+  "prompt_cache_retention": null,
+  "reasoning": {
+    "effort": null,
+    "summary": null
+  },
+  "safety_identifier": null,
+  "service_tier": "default",
+  "store": false,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": null
+  },
+  "tool_choice": "auto",
+  "tools": [
+    {
+      "type": "function",
+      "name": "lookup_order",
+      "description": null,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "order_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id"
+        ],
+        "additionalProperties": false
+      },
+      "strict": true
+    }
+  ],
+  "top_logprobs": 0,
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 300,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 56,
+    "output_tokens_details": {
+      "reasoning_tokens": 13
+    },
+    "total_tokens": 356
+  },
+  "user": null,
+  "metadata": {}
+}

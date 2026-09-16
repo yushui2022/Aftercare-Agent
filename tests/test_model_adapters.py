@@ -10,6 +10,7 @@ from aftercare_agent.model_adapters.responses import (
     ResponsesAdapter,
     ResponsesInputItem,
     ResponsesRequest,
+    ToolSpec,
     normalize_error,
     normalize_response,
 )
@@ -100,11 +101,18 @@ def test_incomplete_unknown_or_invalid_tools_are_rejected(
     assert error.value.code is code
 
 
-def test_unknown_native_fields_and_incoherent_usage_are_rejected() -> None:
+def test_unknown_envelope_fields_are_ignored_and_incoherent_usage_is_rejected() -> None:
+    # Real providers send far more envelope metadata than this runtime reads,
+    # so an unrecognised top-level key must not make a response unparseable.
     payload = response(function_call())
     payload["new_provider_field"] = True
+    normalized = normalize_response(payload, allowed_tools=frozenset({"lookup_order"}))
+    assert normalized.tool_calls[0].name == "lookup_order"
+
+    # An unrecognised *output* item is different: it may be hiding a tool call,
+    # so it still fails closed instead of being skipped.
     with pytest.raises(ContractViolation) as error:
-        normalize_response(payload, allowed_tools=frozenset({"lookup_order"}))
+        normalize_response(response({"type": "brand_new_output_kind"}), allowed_tools=frozenset())
     assert error.value.code is ErrorCode.INVALID_INPUT
 
     with pytest.raises(ContractViolation):
@@ -132,7 +140,19 @@ def test_client_protocol_keeps_store_false_and_scoped_tool_names() -> None:
     client = FakeClient(response())
     adapter = ResponsesAdapter(client, allowed_tools=frozenset({"lookup_order"}))
     result = adapter.complete(
-        ResponsesRequest(model="model-1", input="inspect order", tools=("lookup_order",))
+        ResponsesRequest(
+            model="model-1",
+            input="inspect order",
+            tools=(
+                ToolSpec(
+                    name="lookup_order",
+                    parameters={
+                        "type": "object",
+                        "properties": {"order_id": {"type": "string"}},
+                    },
+                ),
+            ),
+        )
     )
     assert result.response_id == "resp_1"
     assert client.responses.kwargs is not None
@@ -140,6 +160,12 @@ def test_client_protocol_keeps_store_false_and_scoped_tool_names() -> None:
     tools = cast(list[dict[str, object]], client.responses.kwargs["tools"])
     assert tools[0]["name"] == "lookup_order"
     assert tools[0]["strict"] is True
+    # A declaration sent without its schema can only ever be called with an
+    # empty argument object, so the parameters must survive the round trip.
+    assert tools[0]["parameters"] == {
+        "type": "object",
+        "properties": {"order_id": {"type": "string"}},
+    }
 
 
 def test_verified_transcript_items_reach_the_client_as_provider_items() -> None:

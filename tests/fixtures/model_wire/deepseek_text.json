@@ -1,0 +1,84 @@
+{
+  "id": "af2c00b9-29a7-42a7-bc17-9d8dd699ce79",
+  "object": "response",
+  "created_at": 1789530156,
+  "status": "completed",
+  "background": false,
+  "completed_at": 1789530157,
+  "content_filters": null,
+  "error": null,
+  "frequency_penalty": 0.0,
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": null,
+  "max_tool_calls": null,
+  "model": "deepseek-flash",
+  "moderation": null,
+  "output": [
+    {
+      "type": "reasoning",
+      "id": "761f9d56-db08-4458-bbca-a6a03ac9ada2",
+      "status": "completed",
+      "content": [
+        {
+          "type": "reasoning_text",
+          "text": "[reasoning text removed]"
+        }
+      ],
+      "summary": [],
+      "encrypted_content": "af2c00b9-29a7-42a7-bc17-9d8dd699ce79-0"
+    },
+    {
+      "type": "message",
+      "id": "09544fde-d8ff-4faa-82a4-743d7c732aa4",
+      "status": "completed",
+      "content": [
+        {
+          "type": "output_text",
+          "annotations": [],
+          "logprobs": [],
+          "text": "ok"
+        }
+      ],
+      "phase": "final_answer",
+      "role": "assistant"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "presence_penalty": 0.0,
+  "previous_response_id": null,
+  "prompt_cache_key": null,
+  "prompt_cache_retention": null,
+  "reasoning": {
+    "effort": null,
+    "summary": null
+  },
+  "safety_identifier": null,
+  "service_tier": "default",
+  "store": false,
+  "temperature": 1.0,
+  "text": {
+    "format": {
+      "type": "text"
+    },
+    "verbosity": null
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "top_logprobs": 0,
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "usage": {
+    "input_tokens": 35,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 31,
+    "output_tokens_details": {
+      "reasoning_tokens": 29
+    },
+    "total_tokens": 66
+  },
+  "user": null,
+  "metadata": {}
+}

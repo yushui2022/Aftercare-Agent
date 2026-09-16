@@ -9,7 +9,11 @@ from typing import cast
 import pytest
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
-from aftercare_agent.model_adapters.responses import ResponsesAdapter, ResponsesRequest
+from aftercare_agent.model_adapters.responses import (
+    ResponsesAdapter,
+    ResponsesRequest,
+    ToolSpec,
+)
 from evals.loop import (
     PROPOSAL_TOOL,
     SYNTHETIC_PRICING,
@@ -84,7 +88,9 @@ def test_adapter_refuses_a_request_outside_its_tool_whitelist() -> None:
     client = ScriptedResponsesClient({"id": "resp", "status": "completed", "output": []})
     adapter = ResponsesAdapter(client, allowed_tools=frozenset({PROPOSAL_TOOL}))
     with pytest.raises(ContractViolation) as error:
-        adapter.complete(ResponsesRequest(model="m", input="i", tools=("lookup_order",)))
+        adapter.complete(
+            ResponsesRequest(model="m", input="i", tools=(ToolSpec(name="lookup_order"),))
+        )
     assert error.value.code is ErrorCode.FORBIDDEN
     assert not client.requests
 

@@ -35,6 +35,7 @@ from aftercare_agent.model_adapters.responses import (
     NormalizedResponse,
     ResponsesAdapter,
     ResponsesRequest,
+    ToolSpec,
 )
 from aftercare_agent.runtime.harness import run_fake_harness
 from evals.cases.catalog import NOW, POLICY, REGISTRY, SCOPE, catalogue
@@ -172,7 +173,9 @@ def scripted_model_call(case_id: str) -> tuple[NormalizedResponse, Mapping[str, 
     client = ScriptedResponsesClient(_payload(case_id, input_tokens, output_tokens))
     adapter = ResponsesAdapter(client, allowed_tools=frozenset({PROPOSAL_TOOL}))
     response, remaining = adapter.complete_with_budget(
-        ResponsesRequest(model=MODEL_ID, input=_prompt(case_id), tools=(PROPOSAL_TOOL,)),
+        ResponsesRequest(
+            model=MODEL_ID, input=_prompt(case_id), tools=(ToolSpec(name=PROPOSAL_TOOL),)
+        ),
         SYNTHETIC_BUDGET,
         SYNTHETIC_PRICING,
     )

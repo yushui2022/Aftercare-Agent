@@ -1,119 +1,151 @@
 # Aftercare Agent
 
-面向跨境电商售后场景的 Agent 参考架构，探索多租户并发、持久工作流、沙箱执行与故障恢复。
+面向真实跨境电商售后场景的企业级开源参考实现：把持久工作流、证据门、人工协作和受控业务动作组合成一套可审计、可恢复、可替换的业务内核。
 
-An after-sales agent architecture blueprint exploring durable workflows, sandboxed execution, and multi-tenant concurrency.
+Aftercare Agent is an open-source reference implementation for durable, evidence-gated after-sales operations. It separates business authority from model suggestions, memory adapters, external providers, and deployment infrastructure.
 
-> 当前能力：参考架构 + 可安装的 EGM 证据适配层。Python 版本、依赖锁和离线测试入口已建立；完整 Agent 服务、真实售后连接器、生产部署和性能压测仍未完成。
+![Aftercare evidence gate architecture](docs/assets/aftercare-evidence-gate.png)
 
-## 要解决什么问题
+> 当前版本定位为 `v0.1-alpha`：业务内核、开源文档和部署契约已经具备，真实供应商、身份系统和目标环境仍需按部署路线单独验收。Local profile 可以独立运行，但不代表某个生产环境已经上线。
 
-从买家反馈“未收到货”开始，一个售后任务可能需要查询订单和物流、分析附件证据、请求补充材料、提出处理建议、等待人工审批，并在数小时或数天后继续跟进。
+## 这个项目解决什么问题
 
-当多个商家的工单同时运行时，系统不仅要决定下一步调用什么工具，还要回答：
+一次售后处理通常要同时面对订单、物流、买方陈述、客服记录、附件和人工决定。真正困难的地方不是“让模型回答一句话”，而是让系统在信息不完整、证据冲突、Worker 崩溃、重复消息和外部接口超时的情况下仍然保持可解释、可恢复和可审计。
 
-- 哪个 Worker 当前有权继续执行？
-- 等待买家或人工审批时，是否还占用沙箱？
-- 工具已经成功、但 Worker 在保存回执前崩溃，怎样避免重复操作？
-- 如何隔离商家数据，并限制模型、工具与沙箱的资源使用？
+Aftercare 把这些责任拆开：
 
-Aftercare Agent 以这些问题为主线，而不是把聊天循环包装成一个已经成熟的企业平台。
+- **业务状态**由 Case、Run、Review、Approval 和 Action Ledger 管理；
+- **证据准入**由确定性证据规则和 EGM 适配层管理；
+- **模型**只提出受约束的语义建议，不能制造证据、改变租户边界或绕过审批；
+- **人工**可以接管冲突、缺证据和高风险动作；
+- **外部动作**必须经过授权、幂等、回执和对账；
+- **Worker**通过租约、fencing、检查点和持久等待恢复执行。
 
-## 从这里开始
+## 核心处理链
 
-| 文档 | 内容 |
-|---|---|
-| [当前工程状态与接手点](docs/project-status.md) | 压缩/换会话后先读：真实基线、任务状态、验证、未提交变化和下一步 |
-| [工程执行计划](docs/engineering-plan.md) | 稳定任务 ID、A0–A3/B/C/D 依赖、目标模块和验收条件 |
-| [技术栈与工程约定](docs/tech-stack.md) | Python/TypeScript/SQL、版本锁定、目录、测试和部署策略 |
-| [本地开发、测试与打包](docs/development.md) | 当前可执行的 uv 安装、质量检查、sdist/wheel 和仓库外安装验收 |
-| [运行时契约 v1](docs/contracts/runtime-v1.md) | 身份、Case/Run、执行权、检查点、工具请求、等待和事件的规则；PostgreSQL 执行实现见 persistence |
-| [调查证据契约 v1](docs/contracts/investigation-v1.md) | 订单/物流/买家陈述、可信来源、证据新鲜度、引用和人审边界；EGM 调查 schema 仍待固定 |
-| [A0-03 合成案件与确定性评测](docs/evals.md) | 12 个合成售后案件、固定预期和离线评测；不调用模型或真实业务系统 |
-| [PostgreSQL 持久化骨架](docs/persistence.md) | 迁移、租约/fencing、调度队列、检查点和调查观察账本；完整运行时仍未完成 |
-| [API 与认证边界](docs/api-auth.md) | FastAPI 受理、Run/事件读取、Review/Approval 控制面、JWT/JWKS Bearer、PostgreSQL CaseGrant、RFC 7662 撤销判定与 Case 授权管理面；真实 IdP 演练/RLS/管理 UI 仍待完成 |
-| [SSE 事件回放](docs/events.md) | A3-03 case-scoped SSE replay、`Last-Event-ID` 续传、持久事件游标与有界 PostgreSQL tail |
-| [Harness 运行说明](docs/harness.md) | A1-03 固定只读执行链、预算边界与检查点恢复；不调用真实模型或业务动作 |
-| [Human Review 边界](docs/reviews.md) | `HUMAN_REVIEW` 的持久请求、人工决定、恢复和取消语义 |
-| [Responses 模型适配边界](docs/model-adapters.md) | A3-01 严格解析、工具白名单、托管工具事件、provider 错误脱敏与 token/cost budget |
-| [Inbox/Outbox 说明](docs/events.md) | A2-01 PostgreSQL 事务内事件、来源幂等与消费者去重；外部 Broker 尚未接入 |
-| [Action Ledger 与审批门禁](docs/actions.md) | B-01 台账与 B-02 审批参数/身份/策略/有效期绑定；真实供应商尚未接入 |
-| [跨实例执行准入](docs/admission.md) | A2-03 全局/租户执行槽、数据库租约心跳和按 Run 重试预算 |
-| [本地 Compose](deploy/compose/README.md) | A1-04 开发环境：PostgreSQL + API，Worker 可选 profile；不含模型或真实动作 |
-| [合成 Aftercare 演示](deploy/compose/README.md#合成-aftercare-演示) | 一条命令运行受理、等待/唤醒、检查点恢复、证据评估和 fake 审批动作；只写合成数据 |
-| [运营工作台](web/README.md) | A3-03-a React+TypeScript 工作台：工单发现、Review/Approval 决定与事件时间线；开发者工具，不是生产管理面 |
-| [Agent 执行与恢复规则](AGENTS.md) | 恢复阅读顺序、状态维护和授权/安全边界 |
-| [工程总设计与 Mermaid 架构图](docs/system-design.md) | 下一步怎样建设：部署、Session/Run、并发、持久事件、沙箱、记忆与 API；区分已实现和目标设计 |
-| [完整技术文章](docs/architecture.md) | 从 Demo 到企业级：跨境电商售后 Agent 的并发、沙箱与故障恢复设计 |
-| [实现路线图](ROADMAP.md) | 分阶段目标、交付边界与验收条件 |
-| [EGM 0.6 嵌入式接入](docs/integrations/egm-embedded.md) | 当前默认方案：Worker 内嵌应用层、共享 PostgreSQL、事务和并发验证 |
-| [调查 EGM 适配](docs/integrations/egm-investigation.md) | A3-02 可信观察写入、PostgreSQL 观察账本、完整观察集确定性评估与模型字段边界 |
-| [沙箱控制面契约](docs/sandbox.md) | C-01 Fake Provider、分配幂等、fencing、产物预算和销毁确认 |
-| [可观测性边界](docs/observability.md) | C-03 OTel-friendly tracing、Outbox 发布 span、脱敏与审计边界 |
-| [嵌入式架构决策](docs/decisions/0002-embedded-egm.md) | 代码独立不等于服务独立；模块、存储、业务权威各自的边界 |
-| [Case 授权决策](docs/decisions/0003-case-grant-authorization.md) | Token 身份与 Case 资源授权分离；CaseGrant 是访问权威，每次使用都在短事务内判定 |
-| [授权管理面决策](docs/decisions/0004-case-grant-administration.md) | 开放 Case 授权管理 HTTP：租户级 grant scope、可授予闭集与委派上限 |
-| [访问管理发现决策](docs/decisions/0005-access-administration-discovery.md) | 只放宽控制面：`grant:read` 能看到租户工单清单，但打不开 Case 内容 |
-| [EGM 接入决策](docs/decisions/0001-evidence-gated-memory.md) | 有条件采用 Evidence-Gated-Memory，明确证据门控与业务权威的边界 |
-| [EGM 代码评估与验证](docs/research/evidence-gated-memory.md) | 固定提交的源码核查、65 项测试与三个合成边界探针 |
-| [EGM 0.5.0 服务接入](docs/integrations/egm-service.md) | 修复后的契约、认证、事务幂等、并发与离线集成验收；本地源码尚未发布 |
-| [沙箱与 Harness 研究](docs/research/sandbox-harness-grok.md) | E2B、Kubernetes Agent Sandbox、Harness 放置与 Grok Bot 的公开事实 |
-| [持久运行时研究](docs/research/durable-runtime.md) | 消息语义、Outbox、租约、fencing 与 OpenTelemetry |
-| [ACP 与记忆研究](docs/research/memory-acp.md) | 协议边界、Letta 与 TencentDB Agent Memory |
-
-## 参考架构的起点
-
-业务状态、审批和操作台账由服务端管理；Harness 在 Worker 中推进任务。受控业务 API 通过工具网关访问，需要浏览器、脚本或不可信附件处理时再申请沙箱。证据与事实准入优先评估 Evidence-Gated-Memory（EGM），通过受限 Adapter 使用，不把 EGM 的任务图当作业务主状态机。
-
-~~~text
+```text
 消息 / Webhook / 客服界面
-            │
-      工单接入与认证
-            │
-  持久状态、事件与待执行任务
-            │
-    调度器 → Worker + Harness
-                ├── 模型适配层
-                ├── 受控业务工具 → 核验后的证据
-                ├── Evidence Adapter → EGM 证据准入与解释图
-                └── 按需沙箱
-~~~
+          │
+          ▼
+认证与租户边界 ──► Case / Run / 持久事件
+                              │
+                              ▼
+                   订单、物流、买方证据
+                              │
+                              ▼
+              确定性证据门 + EGM 调查适配层
+                    │                  │
+                    │                  └── 证据不足/冲突 → 人工 Review
+                    ▼
+              模型语义建议（可替换）
+                              │
+                              ▼
+             Approval → Action Ledger → 受控 Provider
+```
 
-初始方案以 PostgreSQL 为持久化起点。E2B 与 Kubernetes Agent Sandbox 是按部署边界评估的候选方案；Kafka、NATS JetStream、Redis Streams、ACP 和完整记忆平台不是必须同时部署的依赖。
+证据门决定“哪些事实可以进入判断”；模型可以帮助解释和排序，但不能把高置信度输出直接变成退款、补发或通知。EGM 是证据记忆组件，不是 Aftercare 的业务状态机。
 
-EGM 0.6 源码支持 Worker 内嵌 EvidenceApplication：HTTP 只是可选入口，权限、对象绑定、幂等、revision 与审计不再依赖单独部署服务。多机 Worker 共享 PostgreSQL；同工单短事务串行，不同工单可以并发。Aftercare 已实现 aftercare_agent/evidence.py 的受控退款证据适配层及合成回执测试，并补有 Action 审批参数门禁。它不执行真实退款；业务来源认证、审批等待唤醒、租约与外部动作幂等仍需实现。源码版本尚未发布 PyPI。
+## 当前成熟度
 
-aftercare_agent/domain 已提供运行时与调查的 v1 类型、输入校验和确定性规则。它们能验证合法状态、引用和候选决策，但不执行数据库事务、创建 Worker 或调用模型；真正的多进程执行权、恢复与 EGM 调查接入仍按后续阶段实现。
+| 能力 | 当前状态 | 公开含义 |
+|---|---|---|
+| Case/Run、租约、fencing、等待/恢复、Inbox/Outbox | 已实现并持续加固 | 已有 PostgreSQL 持久语义和回归验证 |
+| 订单/物流/买方证据账本 | 已实现并持续加固 | 有来源、版本、新鲜度、撤回和引用边界 |
+| EGM 调查接缝 | 已接入 | Worker 内嵌受控 adapter；Aftercare 保留业务权威 |
+| Review/Approval/Action Ledger | 已实现 | 默认使用无副作用 provider；真实动作需另行接入 |
+| 模型适配与 Harness | 已有 provider-neutral 接口 | 模型版本、预算、延迟和降级仍需按环境评估 |
+| Local profile | 可运行 | 合成案例和可控连接器，用于开发、CI 和问题复现 |
+| Integration profile | 适配就绪 | 需要测试租户、真实 IdP/来源和供应商联调 |
+| Deployment profile | 参考配置已具备 | 目标 Kubernetes、PostgreSQL、Secret、备份和回滚仍需实测 |
 
-详细取舍、API 协议对比及故障处理见[技术文章](docs/architecture.md)。
+最新测试和未完成项以 [项目状态台账](docs/project-status.md) 为准。仓库不会把本地 Compose、静态 Kubernetes profile 或离线测试写成生产验收结论。
 
-## 边界
+## 三种运行配置
 
-- 这是售后业务参考项目，不是 Coding Agent，也不局限于承运商索赔。
-- 模型可以提出行动建议，业务权限、金额、审批与外部动作由确定性规则控制。
-- 退款、补发和对外承诺不得绕过必要授权；不确定的外部执行结果需要核对。
-- 沙箱降低执行风险，但不能代替租户权限、网络控制和凭证管理。
-- 文档中的数量与超时是说明方法的假设，不是推荐生产参数或实测结果。
-- EGM 测试和本仓库适配层测试不代表完整 Aftercare 服务已实现或通过生产验收。
+### Local profile
 
-## 本地阅读与开发
+使用合成 Case、可控 provider 和开发 Compose。它用于阅读代码、运行测试、复现故障、检查证据门和验证人工协作，不需要客户凭证，也不会执行真实退款或补发。
 
-~~~bash
-git clone git@github.com:yushui2022/Aftercare-Agent.git
+### Integration profile
+
+使用 PostgreSQL、测试租户、契约测试 provider 和可选的真实模型端点。它用于验证认证、连接器映射、EGM schema、模型预算、沙箱资源以及外部动作的失败、重试和 UNKNOWN 语义。
+
+### Deployment profile
+
+使用目标环境的 IdP、RLS、真实业务连接器、密钥托管、沙箱、观测和备份策略。迁移身份与运行身份分离，数据库连接要求 `sslmode=verify-full`，发布必须绑定 preflight、租户隔离和 PITR 等机器证据。
+
+详细边界见 [开源版与真实部署路线](docs/open-source-v0.1-readiness.md) 和 [Deployment profile](docs/deployment.md)。
+
+## 快速开始
+
+### 依赖
+
+- Python 3.13.15
+- [uv](https://docs.astral.sh/uv/)
+- Git
+- Docker（仅在运行 Compose 时需要）
+
+### 安装和测试
+
+```bash
+git clone https://github.com/yushui2022/Aftercare-Agent.git
 cd Aftercare-Agent
-~~~
-
-阅读文档不需要安装依赖。准备 Python 3.13.15、uv 和 Git 后，在仓库根目录运行：
-
-~~~bash
 uv sync --locked
 uv run --locked pytest -q
-~~~
+```
 
-依赖从 uv.lock 安装，EGM 固定为审核过的 Git 提交，无需并排克隆。首次安装需要网络；测试本身不需要模型 API Key 或真实业务凭证。Windows 的 G 盘缓存配置、解释器安装、Ruff/mypy 与打包验收见[开发指南](docs/development.md)，适配器用法见[嵌入式接入](docs/integrations/egm-embedded.md)。完整业务服务仍未交付；本地可用的合成纵向演示见 [Compose 文档](deploy/compose/README.md#合成-aftercare-演示)。
+测试不需要模型 API Key、客户凭证或真实业务系统。依赖版本、打包、Ruff、mypy 和仓库外 wheel 验收见 [开发指南](docs/development.md)。
 
-## 参与与许可
+### 启动本地 Compose
 
-欢迎提交针对架构、业务边界、资料准确性和故障场景的 Issue 或 Pull Request。提交前请阅读[贡献说明](CONTRIBUTING.md)。
+```powershell
+Copy-Item .env.example .env
+docker compose --env-file .env -f deploy/compose/docker-compose.yml up --build
+```
 
-开源许可证尚待确定。仓库公开不等同于授予某一种开源许可证；确定后会添加 LICENSE。
+`.env.example` 中的身份和密码只适用于开发 Compose。Local profile 的完整演示、Worker profile 和停止方式见 [Compose 文档](deploy/compose/README.md)。
+
+## 从哪里继续阅读
+
+| 目标 | 文档 |
+|---|---|
+| 了解当前真实进度 | [docs/project-status.md](docs/project-status.md) |
+| 了解开源版和生产路线 | [docs/open-source-v0.1-readiness.md](docs/open-source-v0.1-readiness.md) |
+| 了解整体设计 | [docs/system-design.md](docs/system-design.md) · [docs/architecture.md](docs/architecture.md) |
+| 了解执行计划 | [docs/engineering-plan.md](docs/engineering-plan.md) · [ROADMAP.md](ROADMAP.md) |
+| 了解运行时契约 | [docs/contracts/runtime-v1.md](docs/contracts/runtime-v1.md) |
+| 了解调查证据 | [docs/contracts/investigation-v1.md](docs/contracts/investigation-v1.md) |
+| 了解 EGM 接入 | [docs/integrations/egm-embedded.md](docs/integrations/egm-embedded.md) · [docs/integrations/egm-investigation.md](docs/integrations/egm-investigation.md) |
+| 了解模型边界 | [docs/model-adapters.md](docs/model-adapters.md) · [ADR-0011](docs/decisions/0011-model-provider-boundary.md) · [ADR-0013](docs/decisions/0013-versioned-model-strategy.md) |
+| 了解人工和动作 | [docs/reviews.md](docs/reviews.md) · [docs/actions.md](docs/actions.md) · [docs/integrations/action-provider.md](docs/integrations/action-provider.md) |
+| 了解真实部署 | [docs/deployment.md](docs/deployment.md) · [deploy/kubernetes/README.md](deploy/kubernetes/README.md) |
+| 了解备份、观测和密钥 | [PITR 验收](docs/operations/pitr-deployment.md) · [观测接入](docs/operations/observability.md) · [Secret rotation](docs/operations/secret-rotation.md) |
+| 贡献和安全 | [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) |
+
+## 面向真实部署的路线
+
+开源版和真实部署使用同一套业务契约，但按四个阶段推进：
+
+1. **冻结开源候选版本**：整理依赖、许可证、第三方声明、文档、镜像身份和安全扫描结果，形成可复现的 release candidate。
+2. **完成 integration 联调**：使用测试租户接入 IdP、订单/物流来源、EGM、模型和沙箱，验证验签、幂等、撤回、恢复和成本边界。
+3. **完成 staging 验收**：在选定的 Kubernetes + 托管 PostgreSQL 环境运行 migration/RLS Job、API、Worker、Secret rotation、PITR、回滚和恢复演练。
+4. **最后接入真实动作**：退款、补发、通知和支付动作必须具备稳定幂等键、UNKNOWN 对账、额度策略、人工审批和补偿路径。
+
+模型选择放在证据契约和 Harness 稳定之后。模型只能通过 provider-neutral 接缝进入 shadow 回放或受控任务，不能成为安全批准的唯一依据；JEV 不属于当前 Aftercare 或 EGM 主线。
+
+## 明确边界
+
+- 默认配置不连接客户系统，也不执行真实退款、补发、支付或外发通知。
+- 合成数据和模拟连接器是可复现的运行配置，不代表业务内核只能处理演示案例。
+- 模型、沙箱和连接器不能持有数据库连接、裸 EGM 对象、高权限 Principal 或供应商主密钥。
+- EGM 负责受控证据记忆；Case、Approval、Action Ledger 和外部动作权威属于 Aftercare。
+- 本地测试通过不等于目标环境已经通过容量、RPO/RTO、身份、网络和供应商验收。
+- 当前迁移只有向前路径；破坏性 schema 变更需要先完成 expand/contract 和跨版本兼容矩阵。
+
+## 贡献、许可和安全
+
+欢迎围绕业务边界、证据语义、恢复故障、适配器契约和部署验收提交 Issue 或 Pull Request。提交前请阅读 [贡献说明](CONTRIBUTING.md)，安全问题请按照 [SECURITY.md](SECURITY.md) 联系维护者。
+
+项目使用 [MIT License](LICENSE)。运行依赖和前端直接依赖的版本化许可清单见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；EGM 使用固定、已审核的 Git 提交，并保留独立许可证和版本来源记录。
+
+版本变更和已知限制记录在 [CHANGELOG.md](CHANGELOG.md)。

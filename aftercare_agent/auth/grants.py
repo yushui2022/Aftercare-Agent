@@ -27,7 +27,15 @@ from aftercare_agent.domain.common import (
 #: may persist: an unrecognized string would otherwise sit in the ACL matching
 #: nothing today and possibly something after a later release.
 GRANTABLE_CASE_PERMISSIONS: frozenset[str] = frozenset(
-    {"case:read", "review:read", "review:decide", "approval:read", "approval:decide"}
+    {
+        "case:read",
+        "review:read",
+        "review:decide",
+        "review:override",
+        "strategy:migrate",
+        "approval:read",
+        "approval:decide",
+    }
 )
 
 #: Tenant-level scopes for reading and changing Case grants.

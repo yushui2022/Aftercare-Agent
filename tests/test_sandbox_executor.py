@@ -11,11 +11,13 @@ import pytest
 from aftercare_agent.artifacts import ContentAddressedArtifactStore
 from aftercare_agent.connectors import CommerceConnector, CommerceSources, load_commerce_dataset
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, RunScope
-from aftercare_agent.domain.protocol import ToolRequest
+from aftercare_agent.domain.protocol import Checkpoint, ToolRequest
 from aftercare_agent.model_adapters import ModelPricing, ResponsesAdapter
+from aftercare_agent.runtime.harness import HarnessResult
 from aftercare_agent.runtime.model_harness import HarnessLimits, run_model_harness
 from aftercare_agent.runtime.sandbox_executor import (
     MATERIAL_DRAFT_SCHEMA,
+    AnswerObserver,
     SandboxedToolExecutor,
     StaticCaseBinding,
 )
@@ -42,7 +44,11 @@ PRICING = ModelPricing(input_microusd_per_token=1, output_microusd_per_token=2)
 
 
 def _parts(
-    tmp_path: Path, *, order_id: str = "A-1001", capacity: int = 1
+    tmp_path: Path,
+    *,
+    order_id: str = "A-1001",
+    capacity: int = 1,
+    observer: AnswerObserver | None = None,
 ) -> tuple[SandboxedToolExecutor, ContentAddressedArtifactStore, SandboxManager]:
     store = ContentAddressedArtifactStore(tmp_path / "artifacts")
     manager = SandboxManager(FakeSandboxProvider(capacity=capacity), TIERS, lease=LEASE)
@@ -53,6 +59,7 @@ def _parts(
         bindings=StaticCaseBinding(order_id=order_id),
         tiers=TOOL_TIERS,
         owner="worker-a",
+        observer=observer,
     )
     return executor, store, manager
 
@@ -157,33 +164,79 @@ def test_a_material_draft_is_pure_and_bounded(tmp_path: Path) -> None:
     assert MATERIAL_DRAFT_SCHEMA in body
 
 
+def test_a_buyer_lookup_reaches_the_observer_as_buyer_evidence(tmp_path: Path) -> None:
+    seen: list[dict[str, object]] = []
+
+    def observe(**payload: object) -> None:
+        seen.append(payload)
+
+    executor, _, _ = _parts(tmp_path, observer=observe)
+    executor.execute(_request("lookup_buyer_message"), scope=SCOPE, now=NOW)
+    assert len(seen) == 1
+    answer = seen[0]["answer"]
+    assert getattr(answer, "tool", None) == "lookup_buyer_message"
+
+
 def test_the_harness_drives_the_model_through_a_sandboxed_tool(tmp_path: Path) -> None:
     executor, store, manager = _parts(tmp_path)
     binding = StaticCaseBinding(order_id="A-1001")
-    client = _ScriptedClient([_tool_call("lookup_order"), _answer("The carrier reports delivery.")])
-    result = run_model_harness(
-        tenant_id=SCOPE.tenant_id,
-        case_id=SCOPE.case_id,
-        run_id=SCOPE.run_id,
-        now=NOW,
-        adapter=ResponsesAdapter(
-            client, allowed_tools=frozenset(tool.name for tool in INVESTIGATION_TOOLS)
-        ),
-        model="scripted-model",
-        tools=INVESTIGATION_TOOLS,
-        limits=HarnessLimits(
-            model_calls=4, tool_calls=2, cost_microusd=1_000, ttl=timedelta(minutes=5)
-        ),
-        executor=executor,
-        render_input=make_render_input(store, binding),
-        pricing=PRICING,
+    client = _ScriptedClient(
+        [
+            _tool_call("lookup_order"),
+            _answer(
+                '{"schema_version":1,"claims":[{"claim":"order_recorded",'
+                '"evidence_refs":["evidence-1"]}]}'
+            ),
+        ]
     )
-    assert result.completed
+    context_scopes: list[RunScope] = []
+
+    def evidence_context(scope: RunScope) -> str:
+        context_scopes.append(scope)
+        return '{"schema":"aftercare.investigation-evidence-context.v1","observations":[]}'
+
+    adapter = ResponsesAdapter(
+        client, allowed_tools=frozenset(tool.name for tool in INVESTIGATION_TOOLS)
+    )
+    limits = HarnessLimits(
+        model_calls=4, tool_calls=2, cost_microusd=1_000, ttl=timedelta(minutes=5)
+    )
+    render_input = make_render_input(store, binding, evidence_context=evidence_context)
+
+    def run(checkpoint: Checkpoint | None = None) -> HarnessResult:
+        return run_model_harness(
+            tenant_id=SCOPE.tenant_id,
+            case_id=SCOPE.case_id,
+            run_id=SCOPE.run_id,
+            checkpoint=checkpoint,
+            now=NOW,
+            adapter=adapter,
+            model="scripted-model",
+            tools=INVESTIGATION_TOOLS,
+            limits=limits,
+            executor=executor,
+            render_input=render_input,
+            pricing=PRICING,
+        )
+
+    proposed = run()
+    assert proposed.checkpoint.next_step == "tool"
+    observed = run(proposed.checkpoint)
+    assert observed.checkpoint.next_step == "model"
+    proposed = run(observed.checkpoint)
+    assert proposed.checkpoint.next_step == "evaluate"
+    result = run(proposed.checkpoint)
+    assert not result.completed
+    assert result.proposal is not None
     assert result.tool_calls == 1
     checkpoint = result.checkpoint
-    assert checkpoint.next_step == "complete"
+    assert checkpoint.next_step == "evaluate"
     assert checkpoint.remaining_budget.model_calls == 2
     assert checkpoint.remaining_budget.tool_calls == 1
+    assert context_scopes == [SCOPE, SCOPE]
+    first_input = client.requests[0]["input"]
+    assert isinstance(first_input, list)
+    assert "evidence_context_json" in str(first_input[-1]["content"])
     # The evidence reached the model through the store, not through a shortcut.
     second_input = client.requests[1]["input"]
     assert isinstance(second_input, list)

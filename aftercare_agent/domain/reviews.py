@@ -1,11 +1,13 @@
 """Pure contracts for durable human review decisions."""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
 from .common import (
+    ContractModel,
     Identifier,
+    NonNegativeInt,
     PositiveInt,
     RunScope,
     SchemaVersion,
@@ -14,6 +16,8 @@ from .common import (
 )
 
 type ReviewDecision = Literal["CONTINUE", "CANCEL"]
+
+MAX_OVERRIDE_DEADLINE_EXTENSION_SECONDS = 7 * 24 * 60 * 60
 
 
 class ReviewRequest(RunScope):
@@ -31,6 +35,58 @@ class ReviewRequest(RunScope):
     policy_version: Identifier
     requested_by: Identifier
     input_version: PositiveInt
+
+
+class ReviewOverrideRequest(ContractModel):
+    """One operator-authorized budget/deadline change for a blocked Review.
+
+    Values are additions to the latest checkpoint, rather than replacement
+    values.  This keeps the operation monotonic and makes a stale operator
+    screen unable to silently lower a Run's remaining budget.
+    """
+
+    checkpoint_version: PositiveInt
+    model_calls_add: NonNegativeInt = 0
+    tool_calls_add: NonNegativeInt = 0
+    cost_microusd_add: NonNegativeInt = 0
+    deadline_extension_seconds: Annotated[
+        int,
+        Field(
+            strict=True,
+            ge=0,
+            le=MAX_OVERRIDE_DEADLINE_EXTENSION_SECONDS,
+        ),
+    ] = 0
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def has_effect(self) -> Self:
+        if not any(
+            (
+                self.model_calls_add,
+                self.tool_calls_add,
+                self.cost_microusd_add,
+                self.deadline_extension_seconds,
+            )
+        ):
+            raise ValueError("review override must add budget or extend the deadline")
+        return self
+
+
+class ReviewOverrideRecord(RunScope):
+    """Immutable audit record for one applied Review override."""
+
+    review_id: Identifier
+    override_id: Identifier
+    checkpoint_version: PositiveInt
+    model_calls_add: NonNegativeInt
+    tool_calls_add: NonNegativeInt
+    cost_microusd_add: NonNegativeInt
+    deadline_extension_seconds: NonNegativeInt
+    reason: str = Field(min_length=1, max_length=2000)
+    created_by: Identifier
+    idempotency_key: Identifier
+    created_at: UtcDatetime
 
 
 class ReviewRecord(ReviewRequest):
@@ -58,4 +114,11 @@ class ReviewRecord(ReviewRequest):
         return self
 
 
-__all__ = ["ReviewDecision", "ReviewRecord", "ReviewRequest"]
+__all__ = [
+    "MAX_OVERRIDE_DEADLINE_EXTENSION_SECONDS",
+    "ReviewDecision",
+    "ReviewOverrideRecord",
+    "ReviewOverrideRequest",
+    "ReviewRecord",
+    "ReviewRequest",
+]

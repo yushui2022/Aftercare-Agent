@@ -7,7 +7,6 @@ network connector, or performs a refund. The output is a compact JSON report.
 
 import argparse
 import json
-import os
 import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -15,6 +14,7 @@ from uuid import uuid4
 
 import psycopg
 
+from aftercare_agent.config import environment_secret
 from aftercare_agent.domain.common import ContractViolation
 from aftercare_agent.domain.investigation import DeliveryStatus
 from aftercare_agent.domain.recommendations import assessment_digest
@@ -58,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--message", default="buyer reports non-receipt", help="Synthetic customer message"
     )
+    parser.add_argument(
+        "--skip-migrate",
+        action="store_true",
+        help="Do not attempt schema migration (use a runtime role after a migration Job)",
+    )
     return parser
 
 
@@ -81,20 +86,27 @@ def _new_case(*, tenant_id: str, case_id: str | None, order_id: str | None) -> S
 
 
 def _existing_run(database: Database, case: SyntheticCase) -> bool:
-    with database.transaction() as connection:
+    with database.transaction(tenant_id=case.tenant_id) as connection:
         return RunRepository().get(connection, case.tenant_id, case.run_id) is not None
 
 
 def _run_state(database: Database, tenant_id: str, run_id: str) -> str | None:
-    with database.transaction() as connection:
+    with database.transaction(tenant_id=tenant_id) as connection:
         run = RunRepository().get(connection, tenant_id, run_id)
     return run.state if run is not None else None
 
 
-def run_demo(database: Database, case: SyntheticCase, *, message: str) -> dict[str, object]:
+def run_demo(
+    database: Database,
+    case: SyntheticCase,
+    *,
+    message: str,
+    migrate_schema: bool = True,
+) -> dict[str, object]:
     """Execute one complete, fresh synthetic demo and return JSON-safe data."""
-    with database.transaction() as connection:
-        migrate(connection)
+    if migrate_schema:
+        with database.transaction() as connection:
+            migrate(connection)
     if _existing_run(database, case):
         raise ValueError(
             f"run {case.run_id!r} already exists; choose a new --case-id instead of resetting data"
@@ -144,7 +156,7 @@ def run_demo(database: Database, case: SyntheticCase, *, message: str) -> dict[s
     provider_reference = flow.approve_and_confirm_refund(
         approval, now=datetime.now(UTC), decision_key=f"{case.case_id}-approve"
     )
-    with database.transaction() as connection:
+    with database.transaction(tenant_id=case.tenant_id) as connection:
         action = connection.execute(
             "SELECT state FROM aftercare_actions WHERE tenant_id=%s AND action_id=%s",
             (case.tenant_id, case.action_id),
@@ -200,13 +212,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point used by ``python -m aftercare_agent.demo``."""
     parser = build_parser()
     args = parser.parse_args(argv)
-    dsn = args.database_url or os.environ.get("DATABASE_URL", "")
+    dsn = args.database_url or environment_secret("DATABASE_URL") or ""
     if not dsn:
         parser.error("DATABASE_URL is required (or pass --database-url)")
     case = _new_case(tenant_id=args.tenant_id, case_id=args.case_id, order_id=args.order_id)
     database = Database(dsn)
     try:
-        report = run_demo(database, case, message=args.message)
+        report = run_demo(
+            database,
+            case,
+            message=args.message,
+            migrate_schema=not args.skip_migrate,
+        )
     except (ContractViolation, ValueError, RuntimeError) as exc:
         print(
             json.dumps(

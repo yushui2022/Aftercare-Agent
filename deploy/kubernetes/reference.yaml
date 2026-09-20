@@ -1,0 +1,241 @@
+# Platform reference only. Replace the image digest and ConfigMap values before
+# applying to a cluster. Secret objects are intentionally created separately.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aftercare
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aftercare
+  namespace: aftercare
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aftercare-runtime-config
+  namespace: aftercare
+data:
+  AFTERCARE_OIDC_ISSUER: https://idp.example/
+  AFTERCARE_OIDC_AUDIENCE: aftercare-api
+  AFTERCARE_OIDC_JWKS_URL: https://idp.example/.well-known/jwks.json
+  # Deploy one tenant-pinned Worker replica until a cross-tenant dispatcher
+  # has its own RLS and recovery acceptance.
+  AFTERCARE_TENANT_ID: replace-with-tenant-id
+  AFTERCARE_METRICS_BACKEND: logging
+  AFTERCARE_POOL_METRICS: "1"
+  AFTERCARE_QUEUE_METRICS: "1"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aftercare-api
+  namespace: aftercare
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: aftercare-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aftercare-api
+  namespace: aftercare
+  labels:
+    app.kubernetes.io/name: aftercare-api
+    app.kubernetes.io/component: api
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aftercare-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aftercare-api
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: aftercare
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: registry.example/aftercare-agent@sha256:replace-me
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DATABASE_URL_FILE
+              value: /run/secrets/aftercare_database_url
+            - name: AFTERCARE_REQUIRE_DATABASE_TLS
+              value: "1"
+            - name: AFTERCARE_AUTO_MIGRATE
+              value: "0"
+            - name: AFTERCARE_ALLOW_SYNTHETIC_IDENTITY
+              value: "0"
+            - name: AFTERCARE_DB_POOL_MIN_SIZE
+              value: "1"
+            - name: AFTERCARE_DB_POOL_MAX_SIZE
+              value: "8"
+            - name: AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS
+              value: "5"
+          envFrom:
+            - configMapRef:
+                name: aftercare-runtime-config
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            # Starting values only; replace after a measured capacity run.
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          volumeMounts:
+            - name: runtime-database-url
+              mountPath: /run/secrets
+              readOnly: true
+      volumes:
+        - name: runtime-database-url
+          secret:
+            secretName: aftercare-runtime-database-url
+            defaultMode: 256
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aftercare-worker
+  namespace: aftercare
+  labels:
+    app.kubernetes.io/name: aftercare-worker
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aftercare-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aftercare-worker
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: aftercare
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: registry.example/aftercare-agent@sha256:replace-me
+          imagePullPolicy: IfNotPresent
+          command: [aftercare-worker]
+          env:
+            - name: DATABASE_URL_FILE
+              value: /run/secrets/aftercare_database_url
+            - name: AFTERCARE_REQUIRE_DATABASE_TLS
+              value: "1"
+            - name: AFTERCARE_AUTO_MIGRATE
+              value: "0"
+            - name: AFTERCARE_WORKER_DAEMON
+              value: "1"
+            - name: AFTERCARE_WORKER_REQUIRE_TENANT
+              value: "1"
+            - name: AFTERCARE_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: AFTERCARE_MAX_STEPS
+              value: "8"
+            - name: AFTERCARE_LEASE_SECONDS
+              value: "30"
+            - name: AFTERCARE_IDLE_SLEEP_SECONDS
+              value: "1"
+            - name: AFTERCARE_DB_POOL_MIN_SIZE
+              value: "1"
+            - name: AFTERCARE_DB_POOL_MAX_SIZE
+              value: "4"
+            - name: AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS
+              value: "5"
+          envFrom:
+            - configMapRef:
+                name: aftercare-runtime-config
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            # Starting values only; replace after a measured capacity run.
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: runtime-database-url
+              mountPath: /run/secrets
+              readOnly: true
+      volumes:
+        - name: runtime-database-url
+          secret:
+            secretName: aftercare-runtime-database-url
+            defaultMode: 256

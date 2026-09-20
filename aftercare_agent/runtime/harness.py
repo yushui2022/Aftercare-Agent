@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
+from aftercare_agent.domain.investigation import InvestigationProposal
 from aftercare_agent.domain.protocol import (
     ArtifactReference,
     BoundLookupArguments,
@@ -40,6 +41,7 @@ class HarnessResult:
     checkpoint: Checkpoint
     tool_calls: int
     completed: bool
+    proposal: InvestigationProposal | None = None
 
 
 def _artifact(checkpoint: Checkpoint, call_id: str) -> ArtifactReference:

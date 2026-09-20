@@ -183,7 +183,11 @@ class SandboxedToolExecutor:
         reference = self._store.put(
             scope, reference_id=f"tool-result:{request.call_id}", content=content
         )
-        if answer is not None and self._observer is not None:
+        if (
+            answer is not None
+            and self._observer is not None
+            and not (answer.tool == "lookup_buyer_message" and answer.body.get("message") is None)
+        ):
             # Inside the lease and after the artifact exists: a fact that cannot
             # be recorded as evidence fails the step instead of being used
             # unaudited, and a replay re-derives the same evidence rather than
@@ -216,6 +220,9 @@ class SandboxedToolExecutor:
         if request.name == "lookup_tracking":
             tracking = self._connector.lookup_tracking(tenant_id=tenant_id, order_id=order_id)
             return tracking.content(), tracking
+        if request.name == "lookup_buyer_message":
+            buyer = self._connector.lookup_buyer_message(tenant_id=tenant_id, order_id=order_id)
+            return buyer.content(), buyer
         raise ContractViolation(ErrorCode.FORBIDDEN, "tool has no connector binding")
 
     def _release_after_failure(self, allocation: SandboxAllocation) -> None:

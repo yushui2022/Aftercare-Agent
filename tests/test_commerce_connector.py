@@ -1,19 +1,25 @@
+from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
 
 from aftercare_agent.connectors import (
+    BUYER_FACTS_SCHEMA,
     MAX_TRACKING_EVENTS,
     ORDER_FACTS_SCHEMA,
     TRACKING_FACTS_SCHEMA,
+    BuyerMessage,
+    BuyerMessagePage,
     CommerceConnector,
     CommerceDataset,
     CommerceSources,
     load_commerce_dataset,
 )
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
+from aftercare_agent.domain.investigation import BuyerAssertion
 
 SAMPLE = Path(str(files("aftercare_agent.connectors").joinpath("data/commerce-sample.json")))
 TENANT = "tenant-demo"
@@ -37,6 +43,78 @@ def test_the_shipped_export_parses_and_answers_both_tools() -> None:
     latest = shipment["latest_event"]
     assert isinstance(latest, dict)
     assert latest["code"] == "delivered"
+
+
+def test_the_connector_returns_the_newest_buyer_statement_with_stable_identity() -> None:
+    connector = _connector()
+    first = connector.lookup_buyer_message(tenant_id=TENANT, order_id="A-1001")
+    second = _connector().lookup_buyer_message(tenant_id=TENANT, order_id="A-1001")
+    assert first.body["schema"] == BUYER_FACTS_SCHEMA
+    message = first.body["message"]
+    assert isinstance(message, dict)
+    assert message["assertion"] == "not_received"
+    assert first.content() == second.content()
+    assert first.source_event_id == second.source_event_id
+
+
+def test_buyer_message_pages_are_chronological_and_cursored() -> None:
+    dataset = load_commerce_dataset(SAMPLE)
+    order = dataset.orders[0]
+    messages = (
+        BuyerMessage(
+            message_id="msg-1000",
+            channel="in_app",
+            received_at=datetime(2026, 8, 20, tzinfo=UTC),
+            assertion=BuyerAssertion.RECEIVED,
+            text="I received the parcel.",
+        ),
+        BuyerMessage(
+            message_id="msg-2000",
+            channel="in_app",
+            received_at=datetime(2026, 8, 20, tzinfo=UTC),
+            assertion=BuyerAssertion.NOT_RECEIVED,
+            text="I did not receive the parcel.",
+        ),
+        order.messages[0],
+    )
+    paged = CommerceConnector(
+        CommerceDataset(
+            tenant_id=dataset.tenant_id,
+            source=dataset.source,
+            orders=(order.model_copy(update={"messages": messages}), *dataset.orders[1:]),
+        ),
+        sources=SOURCES,
+    )
+    first = paged.lookup_buyer_messages(tenant_id=TENANT, order_id="A-1001", limit=2)
+    assert isinstance(first, BuyerMessagePage)
+    assert [
+        cast(dict[str, object], item.body["message"])["message_id"] for item in first.items
+    ] == [
+        "msg-1000",
+        "msg-2000",
+    ]
+    assert first.last_message_id == "msg-2000"
+    assert first.next_cursor == "msg-2000"
+    second = paged.lookup_buyer_messages(
+        tenant_id=TENANT, order_id="A-1001", after_message_id=first.next_cursor
+    )
+    assert [
+        cast(dict[str, object], item.body["message"])["message_id"] for item in second.items
+    ] == ["msg-3001"]
+    assert second.last_message_id == "msg-3001"
+    assert second.next_cursor is None
+
+
+def test_buyer_message_cursor_and_page_limit_fail_closed() -> None:
+    connector = _connector()
+    with pytest.raises(ContractViolation) as unknown:
+        connector.lookup_buyer_messages(
+            tenant_id=TENANT, order_id="A-1001", after_message_id="missing"
+        )
+    assert unknown.value.code is ErrorCode.INVALID_INPUT
+    with pytest.raises(ContractViolation) as invalid_limit:
+        connector.lookup_buyer_messages(tenant_id=TENANT, order_id="A-1001", limit=0)
+    assert invalid_limit.value.code is ErrorCode.INVALID_INPUT
 
 
 def test_the_same_question_answers_with_identical_bytes() -> None:

@@ -19,6 +19,7 @@ from aftercare_agent.domain.runtime import (
     StepRecord,
     validate_transition,
 )
+from aftercare_agent.persistence.queue_metrics import QueueStats
 
 _RUN_FIELDS = (
     "tenant_id",
@@ -200,6 +201,39 @@ class RunRepository:
             owner=owner,
             fencing_token=updated[3],
         )
+
+    def queue_stats(
+        self,
+        connection: psycopg.Connection[Any],
+        tenant: str | None = None,
+    ) -> QueueStats:
+        """Read runnable queue depth and age without locking or claiming rows.
+
+        This is a diagnostic snapshot only.  It deliberately uses the same
+        READY/available and Run-state predicates as dispatch, but never takes
+        a row lock, updates fairness, or changes a lease.  The caller owns a
+        short transaction and must not use the result as an authorization or
+        scheduling decision.
+        """
+        params: tuple[Any, ...] = () if tenant is None else (tenant,)
+        tenant_clause = "" if tenant is None else " AND q.tenant_id=%s"
+        row = connection.execute(
+            "SELECT count(*), COALESCE(EXTRACT(EPOCH FROM "
+            "(clock_timestamp()-MIN(q.enqueued_at))),0) "
+            "FROM aftercare_execution_queue q "
+            "JOIN aftercare_runs r ON r.tenant_id=q.tenant_id AND r.case_id=q.case_id "
+            "AND r.run_id=q.run_id "
+            "WHERE ((q.state='READY' AND q.available_at <= clock_timestamp()) OR "
+            "(q.state='IN_FLIGHT' AND r.state='RUNNING' "
+            "AND r.lease_until <= clock_timestamp())) "
+            "AND (r.state='READY' OR (r.state='RETRY_AT' AND "
+            "r.available_at <= clock_timestamp()) OR (r.state='RUNNING' "
+            "AND r.lease_until <= clock_timestamp()))" + tenant_clause,
+            params,
+        ).fetchone()
+        if row is None:
+            raise ContractViolation(ErrorCode.RETRYABLE, "queue stats query returned no row")
+        return QueueStats(runnable=int(row[0]), oldest_age_seconds=max(float(row[1]), 0.0))
 
     def renew(
         self, connection: psycopg.Connection[Any], claim: ExecutionClaim, lease: timedelta
@@ -671,3 +705,17 @@ class CheckpointRepository:
             if row is None
             else Checkpoint.model_validate_json(json.dumps(row[0], ensure_ascii=False))
         )
+
+    def latest_for_case(
+        self, connection: psycopg.Connection[Any], tenant: str, case_id: str
+    ) -> dict[str, Checkpoint]:
+        """Load one latest checkpoint per Run without an operator-view N+1 query."""
+        rows = connection.execute(
+            "SELECT DISTINCT ON (run_id) run_id,payload FROM aftercare_checkpoints "
+            "WHERE tenant_id=%s AND case_id=%s ORDER BY run_id,checkpoint_version DESC",
+            (tenant, case_id),
+        ).fetchall()
+        return {
+            row[0]: Checkpoint.model_validate_json(json.dumps(row[1], ensure_ascii=False))
+            for row in rows
+        }

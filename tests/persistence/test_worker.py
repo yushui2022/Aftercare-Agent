@@ -7,12 +7,19 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from uuid import uuid4
 
+import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 import aftercare_agent.runtime.worker as worker_module
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
+from aftercare_agent.domain.investigation import (
+    InvestigationAssessment,
+    InvestigationDisposition,
+    InvestigationProposal,
+    MissingMaterial,
+)
 from aftercare_agent.domain.protocol import ArtifactReference, Checkpoint, ToolRequest
 from aftercare_agent.domain.runtime import CaseRecord, ExecutionClaim, RunRecord
 from aftercare_agent.model_adapters.budget import ModelPricing
@@ -22,15 +29,44 @@ from aftercare_agent.persistence import (
     AdmissionRepository,
     CheckpointRepository,
     Database,
+    InvestigationAssessmentRepository,
     RunRepository,
     migrate,
 )
 from aftercare_agent.runtime import run_next, run_once
 from aftercare_agent.runtime.harness import HarnessResult
 from aftercare_agent.runtime.model_harness import HarnessLimits, run_model_harness
-from aftercare_agent.runtime.worker import Harness
+from aftercare_agent.runtime.worker import AssessmentEvaluator, Harness
 
 NOW = datetime(2026, 9, 12, 12, tzinfo=UTC)
+VALID_PROPOSAL = (
+    '{"schema_version":1,"claims":[{"claim":"order_recorded","evidence_refs":["evidence-1"]}]}'
+)
+
+
+def _assessment_evaluator(
+    connection: psycopg.Connection[object],
+    checkpoint: Checkpoint,
+    proposal: InvestigationProposal,
+    now: datetime,
+) -> InvestigationAssessment:
+    del connection, proposal
+    return InvestigationAssessment(
+        tenant_id=checkpoint.tenant_id,
+        case_id=checkpoint.case_id,
+        order_id="order-1",
+        policy_id="worker-test-policy",
+        policy_version=1,
+        evaluated_at=now,
+        disposition=InvestigationDisposition.NEEDS_MATERIAL,
+        decisions=(),
+        missing=(MissingMaterial.ORDER_SNAPSHOT,),
+        conflicts=(),
+        unavailable=(),
+    )
+
+
+ASSESS: AssessmentEvaluator = _assessment_evaluator
 
 
 @pytest.fixture()
@@ -51,6 +87,9 @@ def queue_db(db: Database) -> Iterator[Database]:
 
 def _seed(db: Database, tenant: str, case_id: str, run_id: str) -> None:
     with db.transaction() as connection:
+        connection.execute(
+            "DELETE FROM aftercare_investigation_assessments WHERE tenant_id=%s", (tenant,)
+        )
         connection.execute("DELETE FROM aftercare_checkpoints WHERE tenant_id=%s", (tenant,))
         connection.execute("DELETE FROM aftercare_runs WHERE tenant_id=%s", (tenant,))
         connection.execute("DELETE FROM aftercare_cases WHERE tenant_id=%s", (tenant,))
@@ -426,7 +465,7 @@ def test_a_retryable_provider_failure_waits_for_its_available_at(db: Database) -
         ttl=timedelta(hours=1),
         retry_backoff=backoff,
     )
-    client = _RecordingProvider("the parcel was delivered", failures=1)
+    client = _RecordingProvider(VALID_PROPOSAL, failures=1)
     harness = _model_harness(client, limits)
     parked = run_next(
         db,
@@ -435,6 +474,7 @@ def test_a_retryable_provider_failure_waits_for_its_available_at(db: Database) -
         now=datetime.now(UTC),
         max_steps=2,
         harness=harness,
+        assessment_evaluator=ASSESS,
     )
     assert parked is not None
     assert parked.checkpoint.route_reason == "provider_retryable_error"
@@ -450,12 +490,36 @@ def test_a_retryable_provider_failure_waits_for_its_available_at(db: Database) -
     # Run and wake-up row share one future instant: the database clock decides.
     assert queued == ("READY", stored.available_at)
     assert (
-        run_next(db, tenant_id=tenant, owner="worker-route", max_steps=2, harness=harness) is None
+        run_next(
+            db,
+            tenant_id=tenant,
+            owner="worker-route",
+            max_steps=2,
+            harness=harness,
+            assessment_evaluator=ASSESS,
+        )
+        is None
     )
     time.sleep(backoff.total_seconds() + 0.5)
-    resumed = run_next(db, tenant_id=tenant, owner="worker-route", max_steps=2, harness=harness)
-    assert resumed is not None and resumed.completed
-    assert resumed.checkpoint.route_reason is None
+    resumed = run_next(
+        db,
+        tenant_id=tenant,
+        owner="worker-route",
+        max_steps=2,
+        harness=harness,
+        assessment_evaluator=ASSESS,
+    )
+    assert resumed is not None and resumed.checkpoint.next_step == "evaluate"
+    finalized = run_next(
+        db,
+        tenant_id=tenant,
+        owner="worker-route",
+        max_steps=2,
+        harness=harness,
+        assessment_evaluator=ASSESS,
+    )
+    assert finalized is not None and finalized.completed
+    assert finalized.checkpoint.route_reason is None
     assert len(client.calls) == 2, "the released retry must reach the provider again"
 
 
@@ -495,10 +559,26 @@ def test_an_operator_release_re_queues_a_review_run_and_it_finishes(db: Database
         owner="worker-route",
         now=datetime.now(UTC),
         max_steps=2,
-        harness=_model_harness(_RecordingProvider("the parcel was delivered"), limits),
+        harness=_model_harness(_RecordingProvider(VALID_PROPOSAL), limits),
+        assessment_evaluator=ASSESS,
     )
-    assert resumed is not None and resumed.completed
+    assert resumed is not None and resumed.checkpoint.next_step == "evaluate"
+    finalized = run_next(
+        db,
+        tenant_id=tenant,
+        owner="worker-route",
+        now=datetime.now(UTC),
+        max_steps=2,
+        harness=_model_harness(_RecordingProvider(VALID_PROPOSAL), limits),
+        assessment_evaluator=ASSESS,
+    )
+    assert finalized is not None and finalized.completed
     assert resumed.fencing_token == parked.fencing_token + 1
     with db.connection() as connection:
         final = RunRepository().get(connection, tenant, run_id)
+        assessment = InvestigationAssessmentRepository().get_latest(
+            connection, tenant_id=tenant, case_id=case_id, run_id=run_id
+        )
     assert final is not None and final.state == "COMPLETED"
+    assert assessment is not None
+    assert assessment.assessment.disposition is InvestigationDisposition.NEEDS_MATERIAL

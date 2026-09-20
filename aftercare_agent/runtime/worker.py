@@ -16,30 +16,39 @@ from typing import Any, Literal
 import psycopg
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
+from aftercare_agent.domain.investigation import parse_investigation_proposal
 from aftercare_agent.domain.protocol import Checkpoint
 from aftercare_agent.domain.runtime import ExecutionClaim
 from aftercare_agent.persistence import (
     AdmissionRepository,
+    CaseRepository,
     CheckpointRepository,
     Database,
+    InvestigationAssessmentRepository,
     RunRepository,
     SlotReservation,
+    set_transaction_context,
 )
 
 from .harness import HarnessResult
 from .harness import run_fake_harness as run_fake_harness
+from .judgment import JudgmentGate
 
 # One bounded execution slice.  The default is the deterministic fake Harness;
 # a caller that owns a provider adapter, a tool executor and a budget injects
 # ``functools.partial`` of another one instead.  The Worker builds neither, so
 # it never holds credentials or business connectors itself.
 type Harness = Callable[..., HarnessResult]
+# Kept as a compatibility alias for integrations written against the original
+# name.  New provider adapters should depend on the provider-neutral gate.
+type AssessmentEvaluator = JudgmentGate
 
 __all__ = [
     "LeaseHeartbeat",
     "WorkerLoopResult",
     "WorkerResult",
     "Harness",
+    "JudgmentGate",
     "run_daemon",
     "run_fake_harness",
     "run_next",
@@ -174,6 +183,16 @@ class LeaseHeartbeat:
         if connection is None:
             connection = self._connection = self._database.open()
         with connection.transaction():
+            # Lightweight unit-test doubles model only the transaction
+            # boundary; real psycopg connections always expose ``execute``.
+            # Keep the production RLS binding while allowing those doubles to
+            # exercise lease semantics without pretending to be SQL drivers.
+            if hasattr(connection, "execute"):
+                set_transaction_context(
+                    connection,
+                    tenant_id=self._claim.tenant_id,
+                    subject_id=self._claim.owner,
+                )
             RunRepository().renew(connection, self._claim, self._lease)
             if self._slot is not None:
                 AdmissionRepository().renew_slot(connection, self._claim, self._lease)
@@ -243,6 +262,7 @@ def _execute_claim(
     max_steps: int,
     lease: timedelta,
     harness: Harness | None = None,
+    assessment_evaluator: AssessmentEvaluator | None = None,
     heartbeat_interval: timedelta | None = None,
     slot: SlotReservation | None = None,
     resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
@@ -307,10 +327,63 @@ def _execute_claim(
     if heartbeat.failure is not None:
         raise ContractViolation(ErrorCode.LEASE_LOST, "lease heartbeat failed")
     checkpoint = result.checkpoint.model_copy(update={"saved_fencing_token": claim.fencing_token})
-    target = _run_state_for(checkpoint)
     runs = RunRepository()
     checkpoints = CheckpointRepository()
-    with database.transaction() as connection:
+    with database.transaction(tenant_id=claim.tenant_id, subject_id=claim.owner) as connection:
+        # Keep the repository-wide Case→Run lock order.  Without this, saving
+        # a checkpoint would lock Run first and transition() would later lock
+        # Case, allowing a concurrent Case-scoped writer to form a deadlock.
+        CaseRepository().lock_order_id(connection, claim.tenant_id, claim.case_id)
+        if result.proposal is not None:
+            if checkpoint.next_step != "evaluate":
+                raise ContractViolation(
+                    ErrorCode.CONFLICT, "proposal result is not in the evaluate phase"
+                )
+            payload = checkpoint.pending_proposal_json
+            if payload is None or parse_investigation_proposal(payload) != result.proposal:
+                raise ContractViolation(
+                    ErrorCode.CONFLICT, "proposal result changed from its checkpoint"
+                )
+            if assessment_evaluator is None:
+                checkpoint = checkpoint.model_copy(
+                    update={
+                        "checkpoint_version": checkpoint.checkpoint_version + 1,
+                        "next_step": "review",
+                        "route_reason": "assessment_rejected",
+                        "pending_proposal_json": None,
+                    }
+                )
+            else:
+                try:
+                    assessment = assessment_evaluator(
+                        connection, checkpoint, result.proposal, execution_time
+                    )
+                except ContractViolation:
+                    checkpoint = checkpoint.model_copy(
+                        update={
+                            "checkpoint_version": checkpoint.checkpoint_version + 1,
+                            "next_step": "review",
+                            "route_reason": "assessment_rejected",
+                            "pending_proposal_json": None,
+                        }
+                    )
+                else:
+                    InvestigationAssessmentRepository().put(
+                        connection,
+                        tenant_id=claim.tenant_id,
+                        case_id=claim.case_id,
+                        run_id=claim.run_id,
+                        assessment=assessment,
+                    )
+                    checkpoint = checkpoint.model_copy(
+                        update={
+                            "checkpoint_version": checkpoint.checkpoint_version + 1,
+                            "next_step": "complete",
+                            "route_reason": None,
+                            "pending_proposal_json": None,
+                        }
+                    )
+        target = _run_state_for(checkpoint)
         checkpoints.save(connection, checkpoint, claim)
         # The checkpoint decides where the Run goes, not the HarnessResult: a
         # bounded slice that ran out of steps is READY again, while a slice
@@ -332,7 +405,7 @@ def _execute_claim(
         owner=claim.owner,
         fencing_token=claim.fencing_token,
         checkpoint=checkpoint,
-        completed=result.completed,
+        completed=checkpoint.next_step == "complete",
     )
 
 
@@ -348,6 +421,7 @@ def run_once(
     heartbeat_interval: timedelta | None = None,
     resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
     harness: Harness | None = None,
+    assessment_evaluator: AssessmentEvaluator | None = None,
 ) -> WorkerResult:
     """Claim one Run, execute a bounded Fake Harness slice, and persist it.
 
@@ -361,7 +435,7 @@ def run_once(
     execution_time = now or datetime.now(UTC)
     runs = RunRepository()
     checkpoints = CheckpointRepository()
-    with database.transaction() as connection:
+    with database.transaction(tenant_id=tenant_id, subject_id=owner) as connection:
         claim = runs.claim(connection, tenant_id, run_id, owner, lease)
         slot = AdmissionRepository().acquire_slot(connection, claim, lease)
         previous = checkpoints.get_latest(connection, tenant_id, run_id)
@@ -377,6 +451,7 @@ def run_once(
         slot=slot,
         resume_next_step=resume_next_step,
         harness=harness,
+        assessment_evaluator=assessment_evaluator,
     )
 
 
@@ -391,6 +466,7 @@ def run_next(
     heartbeat_interval: timedelta | None = None,
     resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
     harness: Harness | None = None,
+    assessment_evaluator: AssessmentEvaluator | None = None,
 ) -> WorkerResult | None:
     """Claim and execute one runnable Run, or return ``None`` when idle.
 
@@ -403,10 +479,22 @@ def run_next(
     execution_time = now or datetime.now(UTC)
     runs = RunRepository()
     checkpoints = CheckpointRepository()
-    with database.transaction() as connection:
+    # A tenant-pinned worker can establish the RLS context before the queue
+    # query.  A cross-tenant dispatcher intentionally leaves it unset and is
+    # only safe with a dedicated dispatch mechanism/role (see ADR-0015).
+    transaction = (
+        database.transaction(tenant_id=tenant_id, subject_id=owner)
+        if tenant_id is not None
+        else database.transaction()
+    )
+    with transaction as connection:
         claim = runs.claim_next(connection, tenant_id, owner, lease)
         if claim is None:
             return None
+        # Queue dispatch is intentionally cross-tenant for fairness.  Once a
+        # claim is locked, bind the rest of this transaction to its tenant
+        # before touching tenant-scoped state.
+        set_transaction_context(connection, tenant_id=claim.tenant_id, subject_id=claim.owner)
         slot = AdmissionRepository().acquire_slot(connection, claim, lease)
         previous = checkpoints.get_latest(connection, claim.tenant_id, claim.run_id)
     return _execute_claim(
@@ -420,6 +508,7 @@ def run_next(
         slot=slot,
         resume_next_step=resume_next_step,
         harness=harness,
+        assessment_evaluator=assessment_evaluator,
     )
 
 
@@ -437,6 +526,7 @@ def run_daemon(
     on_error: Callable[[Exception], None] | None = None,
     resume_next_step: Literal["model", "tool", "evaluate"] | None = None,
     harness: Harness | None = None,
+    assessment_evaluator: AssessmentEvaluator | None = None,
 ) -> WorkerLoopResult:
     """Poll runnable Runs until stopped, with bounded idle backoff.
 
@@ -468,6 +558,7 @@ def run_daemon(
                 heartbeat_interval=heartbeat_interval,
                 resume_next_step=resume_next_step,
                 harness=harness,
+                assessment_evaluator=assessment_evaluator,
             )
             if result is None:
                 idle_polls += 1

@@ -44,6 +44,34 @@ def test_pooled_units_of_work_reuse_backends(dsn: str) -> None:
         database.close()
 
 
+def test_transaction_tenant_context_does_not_leak_through_pool(dsn: str) -> None:
+    """Tenant and subject settings are visible only inside their transaction."""
+    database = Database(dsn, min_size=1, max_size=1)
+    try:
+        with database.transaction(tenant_id="tenant-a", subject_id="subject-a") as connection:
+            row = connection.execute(
+                "SELECT current_setting('aftercare.tenant_id', true), "
+                "current_setting('aftercare.subject_id', true)"
+            ).fetchone()
+            assert row == ("tenant-a", "subject-a")
+
+        with database.transaction(tenant_id="tenant-b") as connection:
+            row = connection.execute(
+                "SELECT current_setting('aftercare.tenant_id', true), "
+                "current_setting('aftercare.subject_id', true)"
+            ).fetchone()
+            assert row == ("tenant-b", "")
+
+        with database.transaction() as connection:
+            row = connection.execute(
+                "SELECT current_setting('aftercare.tenant_id', true), "
+                "current_setting('aftercare.subject_id', true)"
+            ).fetchone()
+            assert row == ("", "")
+    finally:
+        database.close()
+
+
 def test_direct_database_opens_one_connection_per_unit_of_work(dsn: str) -> None:
     """The unpooled mode keeps every unit of work on its own connection."""
     database = Database.direct(dsn)

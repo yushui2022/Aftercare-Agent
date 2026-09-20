@@ -1,0 +1,69 @@
+# Run this Job after replacing the image digest and creating the migration
+# Secret. Delete the previous Job before re-running it for a new release.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: aftercare-migrate
+  namespace: aftercare
+  labels:
+    app.kubernetes.io/name: aftercare-migrate
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aftercare-migrate
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: aftercare
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: registry.example/aftercare-agent@sha256:replace-me
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - >-
+              aftercare-migrate && aftercare-rls harden
+              --runtime-role "$AFTERCARE_RUNTIME_DATABASE_ROLE"
+              --image "$AFTERCARE_IMAGE"
+          env:
+            - name: DATABASE_URL_FILE
+              value: /run/secrets/aftercare_database_url
+            - name: AFTERCARE_REQUIRE_DATABASE_TLS
+              value: "1"
+            # Keep this value byte-for-byte equal to the image reference above.
+            - name: AFTERCARE_IMAGE
+              value: registry.example/aftercare-agent@sha256:replace-me
+            - name: AFTERCARE_RUNTIME_DATABASE_ROLE
+              value: aftercare_runtime
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: migration-database-url
+              mountPath: /run/secrets
+              readOnly: true
+      volumes:
+        - name: migration-database-url
+          secret:
+            secretName: aftercare-migration-database-url
+            defaultMode: 256

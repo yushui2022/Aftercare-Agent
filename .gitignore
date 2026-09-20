@@ -15,7 +15,9 @@ secrets/
 /sandbox-workspaces/
 /tmp/
 /temp/
+.integration-evidence/
 *.log
+gitleaks.sarif
 
 # Python
 .venv/

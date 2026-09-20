@@ -26,11 +26,12 @@ def test_tenant_level_scopes_are_not_delegable_through_a_case_grant() -> None:
 
 
 def test_a_valid_delegation_returns_its_canonical_permissions() -> None:
-    actor = frozenset({"grant:admin", "case:read", "review:decide"})
+    actor = frozenset({"grant:admin", "case:read", "review:decide", "review:override"})
     granted = authorize_case_grant(
-        actor_permissions=actor, requested=frozenset({"review:decide", "case:read"})
+        actor_permissions=actor,
+        requested=frozenset({"review:decide", "review:override", "case:read"}),
     )
-    assert granted == frozenset({"case:read", "review:decide"})
+    assert granted == frozenset({"case:read", "review:decide", "review:override"})
     assert isinstance(granted, frozenset)
 
 

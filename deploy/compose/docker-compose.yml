@@ -21,6 +21,7 @@ services:
       dockerfile: deploy/Dockerfile
     environment:
       DATABASE_URL: postgresql://aftercare:local-only-aftercare@postgres:5432/aftercare
+      AFTERCARE_AUTO_MIGRATE: "1"
       # Synthetic identity is intentionally enabled only for local development.
       AFTERCARE_ALLOW_SYNTHETIC_IDENTITY: "1"
       # Bounded pool, one per process: the API serves requests concurrently,
@@ -32,6 +33,7 @@ services:
       # There is no exporter yet, so the log is the sink a deployment gets.
       AFTERCARE_POOL_METRICS: "${AFTERCARE_POOL_METRICS:-1}"
       AFTERCARE_POOL_METRICS_INTERVAL_SECONDS: "${AFTERCARE_POOL_METRICS_INTERVAL_SECONDS:-10}"
+      AFTERCARE_METRICS_BACKEND: "${AFTERCARE_METRICS_BACKEND:-logging}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,6 +54,7 @@ services:
     command: ["python", "-m", "aftercare_agent.runtime.worker_cli"]
     environment:
       DATABASE_URL: postgresql://aftercare:local-only-aftercare@postgres:5432/aftercare
+      AFTERCARE_AUTO_MIGRATE: "1"
       AFTERCARE_TENANT_ID: "${AFTERCARE_TENANT_ID:-}"
       AFTERCARE_RUN_ID: "${AFTERCARE_RUN_ID:-}"
       AFTERCARE_WORKER_ID: "${AFTERCARE_WORKER_ID:-worker-compose}"
@@ -66,6 +69,9 @@ services:
       AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS: "${AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS:-5}"
       AFTERCARE_POOL_METRICS: "${AFTERCARE_POOL_METRICS:-1}"
       AFTERCARE_POOL_METRICS_INTERVAL_SECONDS: "${AFTERCARE_POOL_METRICS_INTERVAL_SECONDS:-10}"
+      AFTERCARE_QUEUE_METRICS: "${AFTERCARE_QUEUE_METRICS:-1}"
+      AFTERCARE_QUEUE_METRICS_INTERVAL_SECONDS: "${AFTERCARE_QUEUE_METRICS_INTERVAL_SECONDS:-10}"
+      AFTERCARE_METRICS_BACKEND: "${AFTERCARE_METRICS_BACKEND:-logging}"
     depends_on:
       api:
         condition: service_healthy

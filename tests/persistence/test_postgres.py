@@ -23,6 +23,7 @@ from aftercare_agent.persistence import (
     CheckpointRepository,
     Database,
     RunRepository,
+    assert_schema_current,
     migrate,
 )
 
@@ -78,6 +79,19 @@ def test_migrations_pin_and_reject_historical_sql_drift(db: Database) -> None:
         connection.execute(
             "UPDATE aftercare_schema_migrations SET checksum=%s WHERE version=1", (checksum,)
         )
+
+
+def test_runtime_schema_check_fails_closed_on_a_pending_migration(db: Database) -> None:
+    with db.transaction() as connection:
+        latest = connection.execute(
+            "SELECT max(version) FROM aftercare_schema_migrations"
+        ).fetchone()
+        assert latest is not None
+        connection.execute("DELETE FROM aftercare_schema_migrations WHERE version=%s", (latest[0],))
+        with pytest.raises(RuntimeError, match="pending migration versions"):
+            assert_schema_current(connection)
+        migrate(connection)
+        assert_schema_current(connection)
 
 
 def test_concurrent_claim_has_one_winner(db: Database) -> None:

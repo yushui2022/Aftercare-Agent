@@ -24,7 +24,6 @@ units at the same concurrency.
 import argparse
 import json
 import math
-import os
 import platform
 import sys
 from collections.abc import Sequence
@@ -37,6 +36,7 @@ from typing import Any
 
 import psycopg
 
+from aftercare_agent.config import environment_secret
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.persistence import Database, PoolStats
 
@@ -536,7 +536,7 @@ def _parse_workloads(
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    dsn = args.dsn or os.environ.get("DATABASE_URL", "")
+    dsn = args.dsn or environment_secret("DATABASE_URL") or ""
     if not dsn:
         print("DATABASE_URL or --dsn is required", file=sys.stderr)
         return 2

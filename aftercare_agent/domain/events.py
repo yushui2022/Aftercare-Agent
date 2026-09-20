@@ -28,6 +28,7 @@ type EventType = Literal[
     "approval.expired",
     "review.requested",
     "review.decided",
+    "review.strategy_migrated",
     "case_grant.granted",
     "case_grant.revoked",
 ]
@@ -57,6 +58,7 @@ class DomainEventDraft(CaseScope):
                 "investigation.proposed",
                 "review.requested",
                 "review.decided",
+                "review.strategy_migrated",
             )
             and self.run_id is None
         ):

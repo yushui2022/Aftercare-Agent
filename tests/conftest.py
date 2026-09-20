@@ -9,6 +9,7 @@ shadows the one here.
 """
 
 import os
+from collections.abc import Iterator
 
 import pytest
 
@@ -24,12 +25,15 @@ def dsn() -> str:
 
 
 @pytest.fixture()
-def database(dsn: str) -> Database:
+def database(dsn: str) -> Iterator[Database]:
     """A connection to the configured server, with migrations applied."""
     value = Database(dsn)
     with value.transaction() as connection:
         migrate(connection)
-    return value
+    try:
+        yield value
+    finally:
+        value.close()
 
 
 @pytest.fixture()

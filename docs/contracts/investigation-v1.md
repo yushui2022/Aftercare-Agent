@@ -97,9 +97,11 @@ A0 实现：版本化类型、输入/范围/来源约束、确定性新鲜度、
 出处、缺材料和两类矛盾规则，配合合成正反例。
 
 A0 纯契约没有实现：来源签名、对象存储读取校验、权限变更缓存失效、模型事实抽取效果、
-EGM 调查投影、Run 恢复、多进程防竞争和生产参数调优。A3-02 已增加独立 PostgreSQL
-观察账本与撤回持久化，但不等于 EGM schema 或真实来源认证已经完成。
+Run 恢复、多进程防竞争和生产参数调优。A3-02 已增加独立 PostgreSQL 观察账本、撤回持久化、
+调查 EGM schema、Worker provider 接缝以及开发连接器的 `lookup_buyer_message` →
+`BuyerStatement` 桥；当前 Aftercare 账本和 EGM 投影是两个短事务，真实 PostgreSQL Worker
+端到端、并发 revision、撤回投影、恢复矩阵和来源认证仍未完成。
 
-A0-03 根据这些契约组织更完整合成案件；A3-02 再实现受限 EGM 调查适配和必要的独立
-EGM Schema 变更，保留现有退款适配回归。join、Run fencing、EGM revision、业务动作
-幂等仍是不同边界。当前代码通过纯契约测试不能写成“调查 EGM 接入已完成”。
+A0-03 根据这些契约组织更完整合成案件；A3-02 以独立调查 schema 实现受限 EGM 适配，
+保留现有退款适配回归。join、Run fencing、EGM revision、业务动作幂等仍是不同边界。
+当前代码通过 SQLite 和纯契约测试，不能写成“目标环境调查 EGM 接入已完成”。

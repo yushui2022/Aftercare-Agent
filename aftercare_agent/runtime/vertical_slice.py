@@ -11,7 +11,7 @@ import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from aftercare_agent.actions import ActionIntent
+from aftercare_agent.actions import ActionIntent, ActionProvider, SyntheticActionProvider
 from aftercare_agent.domain.approvals import ApprovalRecord, ApprovalRequest
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.investigation import (
@@ -99,9 +99,16 @@ class SyntheticAftercareFlow:
     webhook/ACP consumer would use; the model never supplies its scope.
     """
 
-    def __init__(self, database: Database, case: SyntheticCase) -> None:
+    def __init__(
+        self,
+        database: Database,
+        case: SyntheticCase,
+        *,
+        action_provider: ActionProvider | None = None,
+    ) -> None:
         self.database = database
         self.case = case
+        self.action_provider = action_provider or SyntheticActionProvider()
 
     @property
     def investigation_scope(self) -> InvestigationScope:
@@ -157,7 +164,7 @@ class SyntheticAftercareFlow:
                 delivery_status=delivery_status,
             ),
         )
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             for evidence in observations:
                 accepted = ingest_observation(
                     scope,
@@ -180,7 +187,7 @@ class SyntheticAftercareFlow:
             message_ref=f"message-{self.case.case_id}",
             message_sha256=digest,
         )
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             AdmissionRepository().open(
                 conn,
                 AdmissionKey(tenant_id=self.case.tenant_id, idempotency_key=self.case.case_id),
@@ -212,7 +219,7 @@ class SyntheticAftercareFlow:
         runs = RunRepository()
         waits = WaitRepository()
         checkpoints = CheckpointRepository()
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             claim = runs.claim(
                 conn,
                 self.case.tenant_id,
@@ -231,7 +238,7 @@ class SyntheticAftercareFlow:
             now=now,
             max_steps=2,
         )
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             wait = WaitRecord(
                 tenant_id=self.case.tenant_id,
                 case_id=self.case.case_id,
@@ -294,7 +301,7 @@ class SyntheticAftercareFlow:
                 sha256=hashlib.sha256(event_id.encode("utf-8")).hexdigest(),
             ),
         )
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             resolved = WaitRepository().receive_and_resolve(conn, signal)
             if resolved is None:
                 raise RuntimeError("synthetic wait was not found")
@@ -345,7 +352,7 @@ class SyntheticAftercareFlow:
             carrier_max_age_seconds=86_400,
             buyer_max_age_seconds=86_400,
         )
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             observations = InvestigationObservationRepository().list_case(conn, scope=scope)
         if proposal is None:
             # Bind the default demo proposal to the actual ledger IDs.  A
@@ -393,7 +400,7 @@ class SyntheticAftercareFlow:
             policy,
             now=now,
         )
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             InvestigationAssessmentRepository().put(
                 conn,
                 tenant_id=self.case.tenant_id,
@@ -460,7 +467,7 @@ class SyntheticAftercareFlow:
         runs = RunRepository()
         waits = WaitRepository()
         approvals = ApprovalRepository()
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             assessment = InvestigationAssessmentRepository().get_latest(
                 conn,
                 tenant_id=self.case.tenant_id,
@@ -527,9 +534,7 @@ class SyntheticAftercareFlow:
         approvals = ApprovalRepository()
         runs = RunRepository()
         actions = ActionRepository()
-        provider_reference = f"synthetic-refund:{approval.action_id}"
-        result_sha = hashlib.sha256(provider_reference.encode("utf-8")).hexdigest()
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             decided = approvals.decide(
                 conn,
                 self.case.tenant_id,
@@ -542,16 +547,12 @@ class SyntheticAftercareFlow:
             assert decided.decision == "APPROVED"
             existing = actions.get(conn, self.case.tenant_id, approval.action_id)
             if existing is not None and existing.state == "CONFIRMED":
-                if (
-                    existing.provider_reference != provider_reference
-                    or existing.result_sha256 != result_sha
-                ):
-                    raise ContractViolation(ErrorCode.CONFLICT, "confirmed provider result changed")
-                return provider_reference
+                assert existing.provider_reference is not None
+                return existing.provider_reference
         # The provider call is outside the transaction in production.  This
         # deterministic connector returns a stable reference and is safe to
         # replay only through the same Action idempotency key.
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             claim = runs.claim(
                 conn,
                 self.case.tenant_id,
@@ -566,17 +567,21 @@ class SyntheticAftercareFlow:
                 approval_id=approval.approval_id,
                 policy_version="refund-v1",
             )
-        with self.database.transaction() as conn:
-            actions.mark_result(
-                conn,
-                approval.action_id,
-                claim,
-                state="CONFIRMED",
-                provider_reference=provider_reference,
-                result_sha256=result_sha,
-            )
+            action = actions.get(conn, self.case.tenant_id, approval.action_id)
+            assert action is not None
+        # The provider call is outside the transaction in production.  The
+        # synthetic provider is deterministic and has no external side effect.
+        receipt = self.action_provider.request(action)
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
+            result = actions.mark_receipt(conn, receipt, claim)
+            if result.state != "CONFIRMED":
+                runs.transition(conn, claim, "REVIEW")
+                raise ContractViolation(
+                    ErrorCode.RETRYABLE, "provider outcome is unknown and needs reconciliation"
+                )
             runs.transition(conn, claim, "COMPLETED")
-        return provider_reference
+        assert result.provider_reference is not None
+        return result.provider_reference
 
     def reject_approval_to_review(
         self, approval: ApprovalSlice, *, decision_key: str = "reject-1"
@@ -591,7 +596,7 @@ class SyntheticAftercareFlow:
             raise ContractViolation(ErrorCode.FORBIDDEN, "approval slice scope mismatch")
         approvals = ApprovalRepository()
         runs = RunRepository()
-        with self.database.transaction() as conn:
+        with self.database.transaction(tenant_id=self.case.tenant_id) as conn:
             decision = approvals.decide(
                 conn,
                 self.case.tenant_id,

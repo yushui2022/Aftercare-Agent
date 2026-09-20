@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from aftercare_agent.actions import ActionIntent
+from aftercare_agent.actions import ActionIntent, ProviderReceipt
 from aftercare_agent.domain.approvals import ApprovalRequest
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
@@ -190,18 +190,29 @@ def test_result_requires_current_claim_and_unknown_is_not_retried(db: Database) 
         )
         provider = SyntheticProvider()
         receipt, digest = provider.request(action)
-        unknown = ledger.mark_result(conn, action.action_id, claim, state="UNKNOWN")
+        unknown = ledger.mark_receipt(
+            conn,
+            ProviderReceipt(
+                action_id=action.action_id,
+                provider_idempotency_key=action.provider_idempotency_key,
+                state="UNKNOWN",
+            ),
+            claim,
+        )
         assert unknown.state == "UNKNOWN"
         assert unknown.amount_minor == "2500"
         # An UNKNOWN result has no blind retry transition.  Reconciliation can
         # use the same claim to confirm the original operation.
-        confirmed = ledger.mark_result(
+        confirmed = ledger.mark_receipt(
             conn,
-            action.action_id,
+            ProviderReceipt(
+                action_id=action.action_id,
+                provider_idempotency_key=action.provider_idempotency_key,
+                state="CONFIRMED",
+                provider_reference=receipt,
+                result_sha256=digest,
+            ),
             claim,
-            state="CONFIRMED",
-            provider_reference=receipt,
-            result_sha256=digest,
         )
         assert confirmed.state == "CONFIRMED"
         assert confirmed.fencing_token == claim.fencing_token

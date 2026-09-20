@@ -8,9 +8,9 @@
 
 ## 1. 工程目标与首版范围
 
-首个端到端版本只处理“订单未收到，但物流可能显示签收”的调查：受理 → 查模拟订单/物流 → 形成待核实事实 → 生成补充资料草稿 → 持久等待 → Worker 被停止 → 收到模拟回复 → 另一 Worker 恢复 → 输出有来源的建议。
+首个端到端版本先用“订单未收到，但物流可能显示签收”这条调查作为纵向切片：受理 → 查订单/物流 provider → 形成待核实事实 → 生成补充资料草稿 → 持久等待 → Worker 被停止 → 收到回复 → 另一 Worker 恢复 → 输出有来源的建议。Local profile 使用合成 provider；真实 provider 通过同一契约接入。
 
-阶段 A 的完成含义是“调查建议已生成，仍可交人工判断”，不是退款成功或 Case 自动关闭。通知只保存在工作台/模拟连接器，不向真实客户发送；不真实退款、补发、操作商家账号或处理任意可执行附件。A0–A2 不依赖真实模型 API Key。
+阶段 A 的完成含义是“调查建议已生成，仍可交人工判断”，不是退款成功或 Case 自动关闭。通知和外部动作必须经过对应 provider、审批与幂等门禁；Local profile 默认不向真实客户发送、不退款、不补发、不操作商家账号，也不处理任意可执行附件。A0–A2 不依赖真实模型 API Key。
 
 阶段总顺序是 A0 → A1 → A2 → A3。B 的台账可在 A2 后开展，完整业务闭环验收依赖 A3；C 的隔离工具可在 A2 后与 B 并行，真实业务副作用试点必须经过 B 的对应门禁。D 按实际启用的功能验收，不为“齐全”强制安装所有候选组件。
 
@@ -31,7 +31,23 @@ DONE 需要同时满足：目标文件可定位、对应验收有实际证据、
 - 目标：不依赖聊天摘要即可知道技术方向、事实状态与下一步。
 - 文件：根 AGENTS.md、本文、tech-stack.md、project-status.md，以及 README/ROADMAP/贡献指南的入口对齐。
 - 验收：本地链接、任务 ID/状态引用、文档一致性和 Git whitespace 检查；已有架构 Mermaid 语法不被改坏。
+
+### DOC-002 — 定义开源版 v0.1 准入门禁
+
+- 依赖：DOC-001、A0-01；可与 A3-02 的实现切片并行，但不得把生产部署或真实业务动作默认为本任务范围。
+- 目标：把 Aftercare 作为真实售后场景开源参考实现的交付边界、三种运行配置、适配器路线、仓库整理、可复现安装、开发容器、测试/CI、安全、许可证和后续部署缺口写成一份可执行的准入文档，并让 README 指向它。
+- 文件：docs/open-source-v0.1-readiness.md、README.md、docs/project-status.md；如后续落实许可证、安全政策或容器改动，分别建立独立切片和验证记录。
+- 验收：文档能区分 local/integration/deployment profile 及其验收门槛；每项缺口有状态、目标文件、验证方式和真实风险；README 不把适配就绪误写成环境已验收；明确当前尚未完成的生产部署、真实供应商联调和 EGM 调查 schema，而不缩小业务内核的目标范围。
 - 边界：这项完成不表示任何业务运行时任务完成。
+
+### DOC-003 — 收敛模型与真实部署路线
+
+- 依赖：DOC-002、A0-02；不替代 A3/B/C/D 的实现任务。
+- 目标：在模型 provider 可替换的前提下，按“业务契约 → 调查证据闭环 → 人工与动作台账 → 集成环境 → 目标环境部署”的顺序推进成熟度；具体模型不进入关键路径，直到 Harness、权限、降级和成本/延迟验收完成。
+- 文件：`docs/decisions/0011-model-provider-boundary.md`、`docs/open-source-v0.1-readiness.md`、`docs/project-status.md`；运行时只在对应 A3/B/C/D 切片中实现。
+- 验收：主线不依赖特定模型；local profile 可离线运行；integration profile 有可替换 provider 和失败语义；deployment profile 的身份、连接器、EGM、沙箱、备份、观测和回滚都有目标环境证据。
+- 顺序：先完成 A3-02 调查 EGM schema 与来源桥接，再完成 A3-04 业务 Harness，随后推进 B-02/B-03 人工和外部动作闭环，最后推进 C/D 的部署、恢复、容量和运营验收。
+- 风险：如果过早把模型表现当成产品完成度，会掩盖证据、权限和外部动作的故障；如果只做 local profile，又无法证明目标环境可部署。每个阶段都必须分别记录代码完成、适配就绪和环境验收。
 
 ## 4. A0：工程基线与业务契约
 
@@ -105,7 +121,7 @@ A2 出口：不调用真实模型，也能重复证明受理、等待、重投�
 | ID | 目标与文件/模块 | 依赖 | 验收 |
 |---|---|---|---|
 | A3-01 | model_adapters/：Responses、完整调用校验、原生协议保存、错误和用量归一化 | A2-02、A0-02 | 半截参数不执行；未知/越权工具拒绝；Fake 回归保持；真实调用另受凭证/预算/数据门禁 |
-| A3-02 | investigation/：订单/物流/买家材料的受限 EGM 接入；必要时另行修改 EGM schema | A2-01、A0-02、A0-03 | 来源不能冒充；订单/租户/时间错配拒绝；“报告签收”不升级为实际收货；保持退款回归兼容 |
+| A3-02 | investigation/：订单/物流/买家材料的受限 EGM 接入；固定调查 schema、Case→EGM node 绑定和 revision/operation 投影 | A2-01、A0-02、A0-03 | 来源不能冒充；订单/租户/时间错配拒绝；“报告签收”不升级为实际收货；重复观察与 EGM operation 可恢复；真实 PostgreSQL Worker、撤回/恢复矩阵和来源认证分别验收；保持退款回归兼容 |
 | A3-03 | web/、api/SSE、events/projection：React/TS 工作台与授权进度 | A1-02、A2-01 | 一致快照与续传；Case 事件乱序不倒退；权限变化重建范围；不泄露模型密钥或后台凭证 |
 | A3-04 | evals/、集成说明：有限调查 Harness 的完整业务评测 | A2-03、A3-01、A3-02、A3-03 | 同一闭环可复现；建议有来源；不确定结果转复核；分别报告离线工程测试和真实模型效果/成本 |
 
@@ -137,7 +153,7 @@ B-02 按以下可验证切片推进，避免把“审批台账”误当成完整
 |---|---|---|---|
 | C-01 | sandbox/：Fake Provider、allocation_id、资源租约、预算、产物、Reconciler | A2-02、沙箱接口评审 | 创建响应丢失可找回；重复分配可核对；销毁确认前不盲目释放容量 |
 | C-02 | 选一个真实后端、模板、隔离、出口和短期能力 | C-01、驻留/权限/预算确认 | 不触达数据库和主密钥；租户隔离、OOM/失联、过期回收与脏环境不复用经过验证 |
-| C-03 | 对象存储、OTel、发布与回滚、按需要的 K8s 配置 | A3-03、试点环境确认；启用沙箱时还必须完成 C-02 | 文件授权与留存明确；诊断不替代审计；能在选定环境发布/回滚且不谎报业务回滚 |
+| C-03 | 对象存储、OTel、发布与回滚、按需要的 K8s 配置；`deploy/deployment_preflight.py` 负责启动前配置形状检查，`deploy/deployment_acceptance.py` 固定目标环境九项验收记录（含租户隔离与 PITR，见 [ADR-0012](decisions/0012-pitr-as-deployment-gate.md)），`deploy/release_evidence.py`、`deploy/release_policy.py` 与 CI `release-evidence` Job 维护发布证据及晋级判定 | A3-03、试点环境确认；启用沙箱时还必须完成 C-02 | 文件授权与留存明确；诊断不替代审计；能在选定环境发布/回滚且不谎报业务回滚；启动前配置错误 fail closed，目标环境九项检查均需外部证据，PITR 必须绑定物理基线与恢复报告，镜像身份、SBOM/provenance、依赖与 secret 扫描结果可归档，未完成签名/目标仓库复扫/目标环境验收时晋级判定为 hold |
 
 最小 Compose 计划在 A1 交付；C 才增加隔离执行与试点配套。K8s 不是本阶段无条件必选项。无文件/脚本能力的首个试点可以不启用沙箱，必须如实限定功能；启用不可信执行则不能跳过 C 验收。
 
@@ -145,6 +161,7 @@ B-02 按以下可验证切片推进，避免把“审批台账”误当成完整
 
 | ID | 目标 | 验收 |
 |---|---|---|
+| D-01-13 | 参考部署环境与 RLS 边界（[ADR-0015](decisions/0015-target-deployment-and-rls-boundary.md)）：固定 Kubernetes + 托管 PostgreSQL 参考路径、migration/runtime/backup 角色分层、事务本地租户上下文和 RLS 实施顺序；镜像提供 `aftercare-rls harden/verify`，integration 结果写入可归档 JSON，由 `verify_rls_evidence.py` 归一化并由 `bind_deployment_evidence.py` 写回验收记录；通过记录还必须保留归一化来源的 `hardened` 标记和两份原始报告摘要 | 先完成统一租户上下文接缝；integration PostgreSQL 以 runtime 角色验证正确/错误/空上下文、连接池借还、owner `FORCE RLS` 和跨租户读写，并保存、归一化、绑定 harden/verify 产物；API Bearer、CaseGrant、Worker claim、SSE polling 都走同一接缝；RLS 策略与目标环境角色属性有可复核证据；未完成目标 Job 实际运行前不把参考 YAML 或本机 Compose 宣称为生产隔离 |
 | D-01 | 真实认证/授权、密钥、渠道/数据审查、人工接管与生产变更规则 | 仅授权人员和任务可执行对应动作；测试身份禁用；明确可用范围与操作留痕 |
 | D-01-01 | auth/oidc.py：provider-neutral JWT/JWKS 验签与 claims 映射；静态 HTTPS JWKS、算法/typ 白名单、短期缓存、未知 kid 单次冷却刷新 | A1-02 | 验签失败、过期/未生效、超长寿命、错误 iss/aud、`none`/HMAC 混淆、非签名用途 key 一律 fail-closed；claims 映射出的 AuthContext 不可由请求体覆盖 |
 | D-01-02 | api/：`Authorization: Bearer` 认证入口；Bearer 优先于合成身份且验签失败不回退 | D-01-01 | 携带 Bearer 时合成 Header 被忽略；配置真实 verifier 后合成身份强制关闭；缺认证 `401` 且带 `WWW-Authenticate` |
@@ -153,9 +170,16 @@ B-02 按以下可验证切片推进，避免把“审批台账”误当成完整
 | D-01-05 | auth/grants.py、persistence/、api/：Case 授权管理面；租户级 grant scope、可授予闭集与委派上限、乐观并发替换/撤销、同事务审计事件 | D-01-03、D-01-04 | 管理员能把他人工单移交给另一主体并由其真实决策 Review；撤销后重新 `403`；重放或过期 revision 返回 `409`；非管理员 `403` 且无写入；闭集外权限 `400` 且不落库；不能授出自己没有的权限；每次变更在同一事务写入 `case_grant.granted`/`case_grant.revoked` 与完整快照 |
 | D-01-06 | web/：单工单访问管理工作台；闭集/委派上限的界面映射、revision 乐观并发、审计事件回显 | D-01-05、A3-03 | 授权后可在他人持有的工单上完成授予、撤销与替换，并在事件时间线看到 case_grant.granted/case_grant.revoked；越权、越界权限与过期 revision 都给出可读错误；前端单测、`tsc --noEmit` 与生产构建通过，并有真实浏览器的端到端冒烟 |
 | D-01-07 | auth/grants.py、persistence/、api/：面向 `grant:read` 的租户工单发现；控制面清单、清单投影闭集与授权台账的调用者字段 | D-01-05 | 持 `grant:read` 的管理员能列出本租户工单标识，并据此移交一件自己未参与的工单；清单只含标识与进度，不含 Case 内容、Run、Review、Approval 或事件流，内容路由仍逐工单判定；清单 `permissions` 只报调用者自己的管理 scope，绝不复用逐 Case 投影；token `case_ids` 只收窄清单；台账返回 `delegable`/`can_administer` 并由服务端裁决；非管理员 `403`，跨租户不可见 |
-| D-02 | PostgreSQL/对象备份恢复、保留删除、RPO/RTO、版本升级；已交付 `aftercare-backup`（[ADR-0008](decisions/0008-backup-and-restore-drills.md)、[ADR-0009](decisions/0009-backup-freshness-and-drill-records.md)、[ADR-0010](decisions/0010-wal-archive-checks.md)）：`create` 在同一次 `REPEATABLE READ` + `pg_export_snapshot()` 里读 schema/行数并让 `pg_dump --snapshot` 导出，dump 与清单描述同一时刻；`verify` 离线核对摘要、字节数与迁移漂移；`drill` 把 dump 恢复到新建临时库后逐表比对行数、可选跑 `migrate()` 演练升级、最后删除副本，并在 dump 旁边写一条 `<name>.drill.json`（失败也写，且不掩盖原异常）；`status` 按部署给出的 RPO/演练预算判定"最新恢复点多老、最近一次成功演练多老"，预算没有默认值、未配置只报告不判定；`wal` 检查恢复点**之后**的 WAL 归档是不是连续、归档器还在不在推进、有没有覆盖最新那份 dump，滞后预算同样没有默认值，`--dsn` 可选（服务器不可用时正是最需要查归档的时候）；`retention` 先出计划再由 `--apply` 执行、永不删空并连同演练记录一起删；`reconcile` 从 `aftercare_actions` 列出 `UNKNOWN` 与恢复点之后被更新的 Action（默认留 60 s 安全边界）。本机实测（临时 PostgreSQL 16.13）：111,950 字节 dump、31 张表全部还原且行数一致、RTO 1.012 s（restore 0.703 + verify 0.158 + upgrade 0.151）；新鲜度链路实测 `status` 在演练前退出 1、演练后按 86400/604800 秒预算退出 0；归档链路在真实 `archive_mode` 集群上实测：覆盖判定退出 0、破坏 `archive_command` 后退出 1、删掉中间段后退出 1，报告见[运维文档](operations/backup-restore.md) | 实际恢复演练、恢复点之后外部动作核对；不是只检查备份任务显示成功。演练、演练记录与新鲜度检查都已可复现，并有真实 PostgreSQL 集成测试（缺客户端时带原因跳过）；仍未完成：按时间点的 PITR 演练本身、对象存储与异地副本、备份加密与密钥托管、按部署目标给出的 RPO/RTO **数值**、调度接线（只在文档里给出示例，未在目标环境执行过）、多租户级选择性恢复 |
-| D-03 | 稳态/突发/集中唤醒压测、成本、资源限额和扩容；已交付 `aftercare-capacity` 池容量 sweep 与池指标（[ADR-0007](decisions/0007-pool-metrics-and-capacity.md)）：steady/burst/wake 三种形状、按 `max_size` 扫描、以 p95 预算为判据、`--service-time-ms` 与 `--min-size` 分别建模“工作单元占槽多久”和“突发要不要付握手”，退出码 0/1 可直接用于 CI；每个进程默认每 10 s 发布 `aftercare.db.pool.*`（`AFTERCARE_POOL_METRICS=0` 关闭）。本机实测（16 并发、10 ms 单元、p95 预算 50 ms）：懒增长 `min_size=1` 时 1–32 没有尺寸达标（steady 的 p95 124–262 ms，上限 8→32 时 in_use 峰值只从 8 升到 10）；预热 `min_size=16` 时 16 达标（p95 31.3–39.1 ms、池排队 0 ms）且 32 无差别；纯 `SELECT 1` 对照下 1/8/16 都达标。结论是突发并发先撞握手与懒增长、不是上限，因此默认值不变（API 1/8、Worker 1/4） | 公布版本、工作负载、失败率、延迟/队列年龄和资源成本，不拿样例参数当 SLA；方法、口径与本机报告已给出（[容量报告](capacity/README.md)），仍缺容器/CI 复跑、面向业务的队列年龄指标、OTel 导出器（C-03）与生产容量结论 |
+| D-01-08 | Review 恢复控制面：`review:override`、预算/deadline 增量契约、不可变 override 审计表、checkpoint 与 `REVIEW→READY` 原子提交 | A3-01、D-01-05 | 普通 `CONTINUE` 不能绕过耗尽门；仅有额外权限且 checkpoint 版本匹配时才能按耗尽维度增加预算或延长 deadline；旧 Worker/重复幂等键/跨 Case 记录被拒绝；事件快照、回归和 API 文档能证明操作者、理由、增量和新 checkpoint 版本；模型策略切换另立任务，不在本切片伪装完成 |
+| D-01-09 | 真实身份边界验收：真实 JWT/JWKS 验签、数据库 CaseGrant、撤销后的 API 重新授权闭环 | D-01-01、D-01-03、D-01-05 | 使用实际 `JwtJwksVerifier`（不是 stub）和 PostgreSQL CaseGrant，通过 API 验证无授权→拒绝、授权→成功、撤销→再次拒绝；token claim 只能收窄数据库授权；验收不连接生产 IdP，但保留可替换 provider 接缝和明确的目标环境待办 |
+| D-01-10 | 版本化模型策略边界（[ADR-0013](decisions/0013-versioned-model-strategy.md)）：`ModelStrategy`、checkpoint 配置版本和策略漂移 fail-closed | D-01-08、D-01-09、DOC-003 | 新 Run 记录 strategy/model/config/policy/tool schema 身份；恢复时版本不一致在任何模型调用前进入 `model_strategy_changed → REVIEW`；普通 Review/预算 override 不能绕过；策略热切换、迁移和回滚入口另立任务并保留旧 Run 的审计可追溯性 |
+| D-01-11 | 策略迁移控制面：`strategy:migrate`、`022_strategy_migrations.sql`、显式旧/新身份契约、checkpoint 迁移与不可变事件；迁移后仍必须由普通 Review 决定是否继续 | D-01-10、D-01-05 | 只有 Case 授权的迁移操作者可在 `model_strategy_changed` 停止点按 checkpoint 版本执行一次迁移；同键重放返回同一审计记录，改参/跨 Case/无 pending Review/非策略漂移 fail closed；新 checkpoint 带 `strategy_migration_ready`，Run 仍是 REVIEW，后续 `CONTINUE` 才能进入 READY；迁移事件、离线契约回归和真实 PostgreSQL 事务回归通过 |
+| D-01-12 | 策略迁移真实身份验收：生产 `JwtJwksVerifier` + PostgreSQL CaseGrant + API 的无授权/授权/撤销闭环 | D-01-11、D-01-09 | 没有 CaseGrant 时策略迁移返回 `403`；授予 `strategy:migrate` 后同一 JWT 可成功迁移；撤销后同一 JWT 再次返回 `403`；验收使用实际签名 JWT、真实 JWKS verifier 和真实 PostgreSQL，不连接外部生产 IdP |
+| D-02 | PostgreSQL/对象备份恢复、保留删除、RPO/RTO、版本升级；已交付 `aftercare-backup`（[ADR-0008](decisions/0008-backup-and-restore-drills.md)、[ADR-0009](decisions/0009-backup-freshness-and-drill-records.md)、[ADR-0010](decisions/0010-wal-archive-checks.md)）以及物理 PITR 证据校验器和本机 Docker profile：`create` 在同一次 `REPEATABLE READ` + `pg_export_snapshot()` 里读 schema/行数并让 `pg_dump --snapshot` 导出，dump 与清单描述同一时刻；`verify` 离线核对摘要、字节数与迁移漂移；`drill` 把 dump 恢复到新建临时库后逐表比对行数、可选跑 `migrate()` 演练升级、最后删除副本，并在 dump 旁边写一条 `<name>.drill.json`（失败也写，且不掩盖原异常）；`status` 按部署给出的 RPO/演练预算判定"最新恢复点多老、最近一次成功演练多老"，预算没有默认值、未配置只报告不判定；`wal` 检查恢复点**之后**的 WAL 归档是不是连续、归档器还在不在推进、有没有覆盖最新那份 dump，滞后预算同样没有默认值，`--dsn` 可选（服务器不可用时正是最需要查归档的时候）；`pitr` 绑定物理 `pg_basebackup` 清单的文件摘要、字节数和 WAL 起止位置，只校验证据；`retention` 先出计划再由 `--apply` 执行、永不删空并连同演练记录一起删；`reconcile` 从 `aftercare_actions` 列出 `UNKNOWN` 与恢复点之后被更新的 Action（默认留 60 s 安全边界）。本机 Docker `postgres:17` 已真实完成物理基线 → WAL 前滚 → `restore_command` 时间点恢复，五项 PITR 检查通过；传统 dump 演练与新鲜度、归档链路也有真实 PostgreSQL 实测，报告见[运维文档](operations/backup-restore.md) | 实际恢复演练、恢复点之后外部动作核对；不是只检查备份任务显示成功。仍未完成：目标部署环境的 PITR、对象存储与异地副本、备份加密与密钥托管、按部署目标给出的 RPO/RTO **数值**、调度接线（只在文档里给出示例，未在目标环境执行过）、多租户级选择性恢复 |
+| D-03 | 稳态/突发/集中唤醒压测、成本、资源限额和扩容；已交付 `aftercare-capacity` 池容量 sweep 与池指标（[ADR-0007](decisions/0007-pool-metrics-and-capacity.md)）：steady/burst/wake 三种形状、按 `max_size` 扫描、以 p95 预算为判据、`--service-time-ms` 与 `--min-size` 分别建模“工作单元占槽多久”和“突发要不要付握手”，退出码 0/1 可直接用于 CI；每个进程默认每 10 s 发布 `aftercare.db.pool.*`（`AFTERCARE_POOL_METRICS=0` 关闭），Worker 另发布 runnable durable queue 的 `aftercare.queue.runnable_runs` 与 `aftercare.queue.oldest_age_seconds`（`AFTERCARE_QUEUE_METRICS=0` 关闭，查询只读短事务，唯一标签 `component`）。本机实测（16 并发、10 ms 单元、p95 预算 50 ms）：懒增长 `min_size=1` 时 1–32 没有尺寸达标（steady 的 p95 124–262 ms，上限 8→32 时 in_use 峰值只从 8 升到 10）；预热 `min_size=16` 时 16 达标（p95 31.3–39.1 ms、池排队 0 ms）且 32 无差别；纯 `SELECT 1` 对照下 1/8/16 都达标。结论是突发并发先撞握手与懒增长、不是上限，因此默认值不变（API 1/8、Worker 1/4） | 公布版本、工作负载、失败率、延迟/队列年龄和资源成本，不拿样例参数当 SLA；方法、口径与本机报告已给出（[容量报告](capacity/README.md)），仍缺容器/CI 复跑、OTel 导出器（C-03）、目标环境告警阈值与生产容量结论 |
 | D-04 | 按瓶颈评估扩展组件：已按测量启用有界连接池（[ADR-0006](decisions/0006-bounded-connection-pool.md)），Broker、暖池、ACP、长期记忆与额外供应商保留为候选 | 连接池：每工作单元仍按需借还，池有界（默认 min 1 / max 8，可用 `AFTERCARE_DB_POOL_*` 与环境超时覆盖）、借用有上限且超时 fail-closed、`startup()` 预热、心跳改为 `open()`/`release()` 借还并占一个槽、`Database.direct()` 保留无池对照。实测：25 个连续事务只落到 1 条物理连接、稳态 0.47 ms/事务（对照每事务建连 114.8 ms），同一批 509 个既有用例本机 79.0 s → 30.4 s，`PostgresEventTail` 每轮轮询不再付建连并有回归用例。未启用项各写触发条件。D-03 已给出定标方法与本机 sweep（见 D-03 行），池指标已接入并默认发布（ADR-0007）；仍缺容器/CI 复跑与生产环境定标 |
+
+D-01-13 的前置条件：参考部署与 RLS 边界见 [ADR-0015](decisions/0015-target-deployment-and-rls-boundary.md)。统一事务租户上下文接缝、迁移 023、runtime `NOBYPASSRLS`、镜像内 `aftercare-rls harden/verify` 和 integration PostgreSQL 正确/错误/空上下文、连接池借还、owner `FORCE RLS`、跨租户读写验收已完成；API Bearer、CaseGrant、Worker claim、SSE polling 已走同一接缝。剩余工作是目标 Linux/Kubernetes Job 实际运行、真实 IdP、备份/队列复核和 deployment acceptance，在此之前不把本机 Compose 宣称为生产隔离。
 
 D 的前置条件取决于启用功能，但生产调用不允许跳过真实身份与授权检查；含外部动作需 B 验收，含不可信工具需 C 验收。真实渠道身份/数据约束要在第一次真实接入前检查，不能等到最终上线日。
 

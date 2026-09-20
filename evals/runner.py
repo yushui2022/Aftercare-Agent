@@ -24,7 +24,7 @@ from aftercare_agent.domain.investigation import (
 from evals.cases.catalog import NOW, POLICY, REGISTRY, SCOPE, catalogue
 
 ROOT: Final = Path(__file__).parent
-EVALUATOR_VERSION: Final = "a0-03-v1"
+EVALUATOR_VERSION: Final = "a0-03-v1.1"
 
 
 @dataclass(frozen=True)

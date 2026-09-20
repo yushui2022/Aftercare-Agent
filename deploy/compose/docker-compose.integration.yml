@@ -1,0 +1,175 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: aftercare
+      POSTGRES_USER: aftercare_migrate
+      POSTGRES_PASSWORD: integration-only-migrate
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aftercare_migrate -d aftercare"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - aftercare-integration-postgres:/var/lib/postgresql/data
+      - ../postgres/integration-init.sql:/docker-entrypoint-initdb.d/010-integration-init.sql:ro
+
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    command: ["aftercare-migrate"]
+    environment:
+      DATABASE_URL: postgresql://aftercare_migrate:integration-only-migrate@postgres:5432/aftercare
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  grant-runtime:
+    image: postgres:17-alpine
+    command:
+      - psql
+      - -h
+      - postgres
+      - -U
+      - aftercare_migrate
+      - -d
+      - aftercare
+      - -v
+      - database_name=aftercare
+      - -v
+      - migration_role=aftercare_migrate
+      - -v
+      - runtime_role=aftercare_runtime
+      - -f
+      - /opt/aftercare/runtime-grants.sql
+    environment:
+      PGPASSWORD: integration-only-migrate
+    volumes:
+      - ../postgres/runtime-grants.sql:/opt/aftercare/runtime-grants.sql:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  force-rls:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    command:
+      - sh
+      - -ec
+      - >-
+        aftercare-rls harden --runtime-role aftercare_runtime
+        --image aftercare-integration@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        > /opt/aftercare/evidence/rls-harden.json
+    environment:
+      DATABASE_URL: postgresql://aftercare_migrate:integration-only-migrate@postgres:5432/aftercare
+    depends_on:
+      grant-runtime:
+        condition: service_completed_successfully
+    volumes:
+      - ${AFTERCARE_INTEGRATION_EVIDENCE_DIR:-../../.integration-evidence}:/opt/aftercare/evidence
+    restart: "no"
+
+  runtime-permissions:
+    image: postgres:17-alpine
+    command:
+      - sh
+      - -ec
+      - >-
+        if psql -v ON_ERROR_STOP=1 -h postgres -U aftercare_runtime -d aftercare
+        -c 'CREATE TABLE integration_runtime_must_not_create(id integer)'; then
+          echo 'runtime role unexpectedly has DDL permission' >&2; exit 1;
+        fi;
+        psql -v ON_ERROR_STOP=1 -h postgres -U aftercare_runtime -d aftercare
+        -c 'SELECT count(*) FROM aftercare_schema_migrations' >/dev/null;
+        psql -v ON_ERROR_STOP=1 -h postgres -U aftercare_runtime -d aftercare
+        -f /opt/aftercare/rls-runtime-check.sql >/dev/null
+    environment:
+      PGPASSWORD: integration-only-runtime
+    depends_on:
+      rls-seed:
+        condition: service_completed_successfully
+    volumes:
+      - ../postgres/rls-runtime-check.sql:/opt/aftercare/rls-runtime-check.sql:ro
+    restart: "no"
+
+  runtime-check:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    command:
+      - sh
+      - -ec
+      - >-
+        aftercare-rls verify --runtime-role aftercare_runtime
+        --image aftercare-integration@sha256:0000000000000000000000000000000000000000000000000000000000000000
+        > /opt/aftercare/evidence/rls-verify.json
+    environment:
+      DATABASE_URL: postgresql://aftercare_runtime:integration-only-runtime@postgres:5432/aftercare
+    depends_on:
+      runtime-permissions:
+        condition: service_completed_successfully
+    volumes:
+      - ${AFTERCARE_INTEGRATION_EVIDENCE_DIR:-../../.integration-evidence}:/opt/aftercare/evidence
+    restart: "no"
+
+  rls-seed:
+    image: postgres:17-alpine
+    command:
+      - psql
+      - -h
+      - postgres
+      - -U
+      - aftercare_migrate
+      - -d
+      - aftercare
+      - -f
+      - /opt/aftercare/rls-seed.sql
+    environment:
+      PGPASSWORD: integration-only-migrate
+    volumes:
+      - ../postgres/rls-seed.sql:/opt/aftercare/rls-seed.sql:ro
+    depends_on:
+      force-rls:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://aftercare_runtime:integration-only-runtime@postgres:5432/aftercare
+      AFTERCARE_AUTO_MIGRATE: "0"
+      AFTERCARE_ALLOW_SYNTHETIC_IDENTITY: "1"
+      AFTERCARE_DB_POOL_MIN_SIZE: "1"
+      AFTERCARE_DB_POOL_MAX_SIZE: "4"
+      AFTERCARE_METRICS_BACKEND: logging
+    depends_on:
+      runtime-check:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:${AFTERCARE_INTEGRATION_API_PORT:-18000}:8000"
+
+  smoke:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile
+    command: ["aftercare-demo", "--skip-migrate", "--tenant-id", "integration-tenant", "--case-id", "integration-smoke-001"]
+    environment:
+      DATABASE_URL: postgresql://aftercare_runtime:integration-only-runtime@postgres:5432/aftercare
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  aftercare-integration-postgres:

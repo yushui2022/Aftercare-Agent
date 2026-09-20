@@ -433,6 +433,18 @@ class AdmissionRepository:
 
 
 class CaseRepository:
+    def lock_order_id(
+        self, connection: psycopg.Connection[Any], tenant_id: str, case_id: str
+    ) -> str:
+        """Lock one Case in the global Case→Run ordering and return its order binding."""
+        row = connection.execute(
+            "SELECT order_id FROM aftercare_cases WHERE tenant_id=%s AND case_id=%s FOR UPDATE",
+            (tenant_id, case_id),
+        ).fetchone()
+        if row is None:
+            raise ContractViolation(ErrorCode.FORBIDDEN, "case not found")
+        return str(row[0])
+
     def update_version(
         self,
         connection: psycopg.Connection[Any],

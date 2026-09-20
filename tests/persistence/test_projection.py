@@ -1,6 +1,7 @@
 """PostgreSQL gap-buffer and ordered projection ledger tests."""
 
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
@@ -14,7 +15,7 @@ NOW = datetime(2026, 9, 12, 12, tzinfo=UTC)
 
 
 @pytest.fixture()
-def db() -> Database:
+def db() -> Iterator[Database]:
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         pytest.skip("DATABASE_URL is not configured")
@@ -27,7 +28,10 @@ def db() -> Database:
             "aftercare_projection_positions",
         ):
             connection.execute(f"DELETE FROM {table} WHERE tenant_id=%s", ("projection-tenant",))
-    return value
+    try:
+        yield value
+    finally:
+        value.close()
 
 
 def _event(

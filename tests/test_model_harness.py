@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
+from aftercare_agent.domain.common import ContractViolation, ErrorCode, RunScope
 from aftercare_agent.domain.protocol import ArtifactReference, Checkpoint, ToolRequest
 from aftercare_agent.model_adapters.budget import ModelPricing
 from aftercare_agent.model_adapters.responses import ResponsesAdapter, ToolSpec
@@ -32,6 +33,9 @@ TOOLS = (
         },
     ),
 )
+PROPOSAL = (
+    '{"schema_version":1,"claims":[{"claim":"order_recorded","evidence_refs":["evidence-1"]}]}'
+)
 
 
 def _envelope(*items: dict[str, object], usage: dict[str, int] | None = None) -> dict[str, object]:
@@ -43,10 +47,10 @@ def _envelope(*items: dict[str, object], usage: dict[str, int] | None = None) ->
     }
 
 
-def _tool_call(name: str, arguments: str) -> dict[str, object]:
+def _tool_call(name: str, arguments: str, *, call_id: str = "call_1") -> dict[str, object]:
     return {
         "type": "function_call",
-        "call_id": "call_1",
+        "call_id": call_id,
         "name": name,
         "arguments": arguments,
         "status": "completed",
@@ -121,6 +125,84 @@ def test_a_tool_turn_persists_the_exact_pending_tool_and_its_cost() -> None:
     assert executor.requests == [], "the model proposed; nothing may run before the tool phase"
 
 
+def test_before_run_syncs_the_bound_case_before_spending_model_budget() -> None:
+    scopes: list[RunScope] = []
+    client = ScriptedClient(_envelope(_text("done")))
+    result = _run(client, RecordingExecutor(), before_run=scopes.append, max_steps=1)
+    assert scopes == [RunScope(tenant_id="tenant-a", case_id="case-a", run_id="run-a")]
+    assert len(client.calls) == 1
+    assert result.checkpoint.remaining_budget.model_calls == LIMITS.model_calls - 1
+
+
+def test_a_final_turn_is_saved_as_a_proposal_before_it_can_be_assessed() -> None:
+    client = ScriptedClient(_envelope(_text(PROPOSAL)))
+    proposed = _run(client, RecordingExecutor(), max_steps=8)
+    assert proposed.checkpoint.next_step == "evaluate"
+    assert proposed.checkpoint.pending_proposal_json is not None
+    assert proposed.proposal is None
+    resumed = _run(client, RecordingExecutor(), checkpoint=proposed.checkpoint, max_steps=8)
+    assert len(client.calls) == 1, "assessment resume must not buy another model turn"
+    assert resumed.proposal is not None
+    assert resumed.proposal.claims[0].evidence_refs == ("evidence-1",)
+
+
+def test_resuming_with_a_changed_model_strategy_routes_to_review() -> None:
+    executor = RecordingExecutor()
+    client = ScriptedClient(_envelope(_tool_call("lookup_order", "{}")))
+    first = _run(client, executor, max_steps=1)
+    assert first.checkpoint.strategy_id == "aftercare-investigation"
+    changed = _run(
+        client,
+        executor,
+        checkpoint=first.checkpoint,
+        model="provider/model-b",
+        max_steps=1,
+    )
+    assert changed.checkpoint.next_step == "review"
+    assert changed.checkpoint.route_reason == "model_strategy_changed"
+    assert len(client.calls) == 1
+
+
+def test_free_form_final_text_routes_to_review_instead_of_bypassing_the_gate() -> None:
+    result = _run(
+        ScriptedClient(_envelope(_text("the parcel was delivered"))),
+        RecordingExecutor(),
+        max_steps=8,
+    )
+    assert result.checkpoint.next_step == "review"
+    assert result.checkpoint.route_reason == "proposal_rejected"
+
+
+def test_retryable_before_run_failure_routes_without_calling_the_model() -> None:
+    def fail(scope: RunScope) -> None:
+        del scope
+        raise ContractViolation(ErrorCode.RETRYABLE, "source unavailable")
+
+    client = ScriptedClient(_envelope(_text("must not run")))
+    result = _run(client, RecordingExecutor(), before_run=fail, max_steps=1)
+    assert client.calls == []
+    assert result.checkpoint.next_step == "retry"
+    assert result.checkpoint.route_reason == "executor_rejected"
+    assert result.checkpoint.available_at == NOW + BACKOFF
+    assert result.checkpoint.remaining_budget.model_calls == LIMITS.model_calls
+
+
+def test_input_render_failure_does_not_charge_a_model_call_that_never_happened() -> None:
+    def fail(checkpoint: Checkpoint) -> str:
+        del checkpoint
+        raise ContractViolation(ErrorCode.BUDGET_EXHAUSTED, "evidence context is too large")
+
+    client = ScriptedClient(_envelope(_text("must not run")))
+    result = _run(client, RecordingExecutor(), render_input=fail, max_steps=1)
+    assert client.calls == []
+    assert result.checkpoint.next_step == "review"
+    assert result.checkpoint.route_reason == "input_rejected"
+    budget = result.checkpoint.remaining_budget
+    assert budget.model_calls == LIMITS.model_calls
+    assert budget.tool_calls == LIMITS.tool_calls
+    assert budget.cost_microusd == LIMITS.cost_microusd
+
+
 def test_resuming_a_pending_tool_does_not_pay_for_a_second_model_turn() -> None:
     client = ScriptedClient(_envelope(_tool_call("lookup_order", "{}")), _envelope(_text("done")))
     executor = RecordingExecutor()
@@ -141,7 +223,9 @@ def test_a_tool_intent_that_violates_its_schema_never_reaches_the_executor() -> 
     # A trusted tool closure binds the order, so a model-supplied order_id is
     # not merely ignored: it is refused before any business call happens.
     client = ScriptedClient(_envelope(_tool_call("lookup_order", '{"order_id": "A-1001"}')))
-    result = _run(client, executor, max_steps=3)
+    proposed = _run(client, executor, max_steps=3)
+    assert proposed.checkpoint.next_step == "tool"
+    result = _run(client, executor, checkpoint=proposed.checkpoint, max_steps=3)
     assert executor.requests == []
     checkpoint = result.checkpoint
     # The refusal is a durable route, not an exception: the Run has to leave
@@ -155,8 +239,15 @@ def test_a_tool_intent_that_violates_its_schema_never_reaches_the_executor() -> 
 
 def test_a_spent_model_budget_routes_to_review_instead_of_raising() -> None:
     executor = RecordingExecutor()
-    client = ScriptedClient(_envelope(_tool_call("lookup_order", "{}")))
+    client = ScriptedClient(
+        _envelope(_tool_call("lookup_order", "{}", call_id="call_1")),
+        _envelope(_tool_call("lookup_order", "{}", call_id="call_2")),
+    )
     result = _run(client, executor, max_steps=9)
+    result = _run(client, executor, checkpoint=result.checkpoint, max_steps=9)
+    result = _run(client, executor, checkpoint=result.checkpoint, max_steps=9)
+    result = _run(client, executor, checkpoint=result.checkpoint, max_steps=9)
+    result = _run(client, executor, checkpoint=result.checkpoint, max_steps=9)
     assert len(client.calls) == LIMITS.model_calls
     checkpoint = result.checkpoint
     assert checkpoint.next_step == "review"

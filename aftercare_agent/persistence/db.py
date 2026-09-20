@@ -55,6 +55,33 @@ class PoolStats:
         return self.size - self.available
 
 
+def set_transaction_context(
+    connection: psycopg.Connection[Any],
+    *,
+    tenant_id: str,
+    subject_id: str | None = None,
+) -> None:
+    """Set the transaction-local identity consumed by deployment RLS policies.
+
+    The caller must already have derived these values from an authenticated
+    identity or a locked business scope.  ``set_config(..., true)`` is the
+    PostgreSQL equivalent of ``SET LOCAL`` and therefore cannot leak through a
+    pooled connection after commit or rollback.
+    """
+    if not tenant_id:
+        raise ValueError("tenant_id must not be empty")
+    if subject_id is not None and not subject_id:
+        raise ValueError("subject_id must not be empty")
+    connection.execute(
+        "SELECT set_config('aftercare.tenant_id', %s, true)",
+        (tenant_id,),
+    )
+    connection.execute(
+        "SELECT set_config('aftercare.subject_id', %s, true)",
+        (subject_id or "",),
+    )
+
+
 def _int_from_env(name: str, default: int) -> int:
     raw = os.environ.get(name, "")
     if not raw:
@@ -240,9 +267,35 @@ class Database:
             self.release(connection)
 
     @contextmanager
-    def transaction(self) -> Iterator[psycopg.Connection[Any]]:
+    def transaction(
+        self,
+        *,
+        tenant_id: str | None = None,
+        subject_id: str | None = None,
+    ) -> Iterator[psycopg.Connection[Any]]:
+        """Run one short transaction with an optional tenant-local context.
+
+        The context is deliberately transaction-local: pooled connections may
+        be handed to another tenant on the next borrow.  Callers must derive
+        these values from an authenticated identity or a locked business
+        scope; request/model fields must never be passed through unchecked.
+        RLS policies consume the same settings when enabled by a deployment.
+        """
+        if subject_id is not None and tenant_id is None:
+            raise ValueError("subject_id requires tenant_id")
         with self.connection() as connection:
             with connection.transaction():
+                if tenant_id is not None:
+                    set_transaction_context(connection, tenant_id=tenant_id, subject_id=subject_id)
+                else:
+                    # PostgreSQL exposes an unset custom GUC as an empty
+                    # string once the setting has existed on a pooled session.
+                    # Clear both values so a borrower never sees prior context.
+                    # RLS treats empty as absent with NULLIF(current_setting(...), '').
+                    connection.execute(
+                        "SELECT set_config('aftercare.tenant_id', '', true), "
+                        "set_config('aftercare.subject_id', '', true)"
+                    )
                 yield connection
 
     def open(self) -> psycopg.Connection[Any]:
@@ -304,6 +357,31 @@ def known_migrations() -> dict[int, str]:
 def latest_schema_version() -> int:
     """The highest migration version this build can apply."""
     return max(known_migrations())
+
+
+def assert_schema_current(connection: psycopg.Connection[Any]) -> None:
+    """Fail closed unless the database exactly matches this build's schema.
+
+    This check is deliberately read-only.  API and Worker processes can use it
+    with a runtime role that has no DDL privileges, leaving schema changes to a
+    short-lived migration job.
+    """
+    relation = connection.execute("SELECT to_regclass('aftercare_schema_migrations')").fetchone()
+    if relation is None or relation[0] is None:
+        raise RuntimeError("Aftercare database schema is not installed")
+
+    expected = known_migrations()
+    rows = connection.execute("SELECT version,checksum FROM aftercare_schema_migrations").fetchall()
+    applied = {int(version): checksum for version, checksum in rows}
+    if unknown := set(applied) - set(expected):
+        raise RuntimeError(f"unknown migration versions: {sorted(unknown)}")
+    if pending := set(expected) - set(applied):
+        raise RuntimeError(f"pending migration versions: {sorted(pending)}")
+    for version, checksum in applied.items():
+        if checksum is None:
+            raise RuntimeError(f"migration checksum is not pinned: {version}")
+        if checksum != expected[version]:
+            raise RuntimeError(f"migration checksum changed: {version}")
 
 
 def migrate(connection: psycopg.Connection[Any]) -> None:

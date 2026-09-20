@@ -1,0 +1,154 @@
+services:
+  migrate:
+    image: "${AFTERCARE_IMAGE:?set AFTERCARE_IMAGE to an immutable image reference}"
+    command: ["aftercare-migrate"]
+    restart: "no"
+    environment:
+      DATABASE_URL_FILE: /run/secrets/aftercare_database_url
+      AFTERCARE_REQUIRE_DATABASE_TLS: "${AFTERCARE_REQUIRE_DATABASE_TLS:?set database TLS enforcement}"
+    secrets:
+      - source: aftercare_migration_database_url
+        target: aftercare_database_url
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+
+  rls-harden:
+    image: "${AFTERCARE_IMAGE:?set AFTERCARE_IMAGE to an immutable image reference}"
+    restart: "no"
+    command:
+      - aftercare-rls
+      - harden
+      - --runtime-role
+      - "${AFTERCARE_RUNTIME_DATABASE_ROLE:-aftercare_runtime}"
+      - --image
+      - "${AFTERCARE_IMAGE}"
+    environment:
+      DATABASE_URL_FILE: /run/secrets/aftercare_database_url
+      AFTERCARE_REQUIRE_DATABASE_TLS: "${AFTERCARE_REQUIRE_DATABASE_TLS:?set database TLS enforcement}"
+    secrets:
+      - source: aftercare_migration_database_url
+        target: aftercare_database_url
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+
+  rls-check:
+    image: "${AFTERCARE_IMAGE:?set AFTERCARE_IMAGE to an immutable image reference}"
+    restart: "no"
+    command:
+      - aftercare-rls
+      - verify
+      - --runtime-role
+      - "${AFTERCARE_RUNTIME_DATABASE_ROLE:-aftercare_runtime}"
+      - --image
+      - "${AFTERCARE_IMAGE}"
+    environment:
+      DATABASE_URL_FILE: /run/secrets/aftercare_database_url
+      AFTERCARE_REQUIRE_DATABASE_TLS: "${AFTERCARE_REQUIRE_DATABASE_TLS:?set database TLS enforcement}"
+    secrets:
+      - source: aftercare_runtime_database_url
+        target: aftercare_database_url
+    depends_on:
+      rls-harden:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+
+  api:
+    image: "${AFTERCARE_IMAGE:?set AFTERCARE_IMAGE to an immutable image reference}"
+    restart: unless-stopped
+    environment:
+      DATABASE_URL_FILE: /run/secrets/aftercare_database_url
+      AFTERCARE_REQUIRE_DATABASE_TLS: "${AFTERCARE_REQUIRE_DATABASE_TLS:?set database TLS enforcement}"
+      AFTERCARE_AUTO_MIGRATE: "0"
+      AFTERCARE_ALLOW_SYNTHETIC_IDENTITY: "0"
+      AFTERCARE_OIDC_ISSUER: "${AFTERCARE_OIDC_ISSUER:?set the OIDC issuer}"
+      AFTERCARE_OIDC_AUDIENCE: "${AFTERCARE_OIDC_AUDIENCE:?set the OIDC audience}"
+      AFTERCARE_OIDC_JWKS_URL: "${AFTERCARE_OIDC_JWKS_URL:?set the static JWKS URL}"
+      AFTERCARE_DB_POOL_MIN_SIZE: "${AFTERCARE_API_POOL_MIN_SIZE:-1}"
+      AFTERCARE_DB_POOL_MAX_SIZE: "${AFTERCARE_API_POOL_MAX_SIZE:-8}"
+      AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS: "${AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS:-5}"
+      AFTERCARE_POOL_METRICS: "${AFTERCARE_POOL_METRICS:-1}"
+      AFTERCARE_POOL_METRICS_INTERVAL_SECONDS: "${AFTERCARE_POOL_METRICS_INTERVAL_SECONDS:-10}"
+      AFTERCARE_METRICS_BACKEND: "${AFTERCARE_METRICS_BACKEND:-logging}"
+    secrets:
+      - source: aftercare_runtime_database_url
+        target: aftercare_database_url
+    depends_on:
+      rls-check:
+        condition: service_completed_successfully
+    ports:
+      - "${AFTERCARE_BIND_ADDRESS:-127.0.0.1}:${AFTERCARE_API_PORT:-8000}:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  worker:
+    profiles: ["worker"]
+    image: "${AFTERCARE_IMAGE:?set AFTERCARE_IMAGE to an immutable image reference}"
+    command: ["aftercare-worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL_FILE: /run/secrets/aftercare_database_url
+      AFTERCARE_REQUIRE_DATABASE_TLS: "${AFTERCARE_REQUIRE_DATABASE_TLS:?set database TLS enforcement}"
+      AFTERCARE_AUTO_MIGRATE: "0"
+      AFTERCARE_WORKER_ID: "${AFTERCARE_WORKER_ID:-worker-deployment}"
+      AFTERCARE_WORKER_REQUIRE_TENANT: "1"
+      AFTERCARE_TENANT_ID: "${AFTERCARE_TENANT_ID:-}"
+      AFTERCARE_WORKER_DAEMON: "1"
+      AFTERCARE_MAX_STEPS: "${AFTERCARE_MAX_STEPS:-8}"
+      AFTERCARE_LEASE_SECONDS: "${AFTERCARE_LEASE_SECONDS:-30}"
+      AFTERCARE_IDLE_SLEEP_SECONDS: "${AFTERCARE_IDLE_SLEEP_SECONDS:-1}"
+      AFTERCARE_DB_POOL_MIN_SIZE: "${AFTERCARE_WORKER_POOL_MIN_SIZE:-1}"
+      AFTERCARE_DB_POOL_MAX_SIZE: "${AFTERCARE_WORKER_POOL_MAX_SIZE:-4}"
+      AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS: "${AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS:-5}"
+      AFTERCARE_POOL_METRICS: "${AFTERCARE_POOL_METRICS:-1}"
+      AFTERCARE_POOL_METRICS_INTERVAL_SECONDS: "${AFTERCARE_POOL_METRICS_INTERVAL_SECONDS:-10}"
+      AFTERCARE_QUEUE_METRICS: "${AFTERCARE_QUEUE_METRICS:-1}"
+      AFTERCARE_QUEUE_METRICS_INTERVAL_SECONDS: "${AFTERCARE_QUEUE_METRICS_INTERVAL_SECONDS:-10}"
+      AFTERCARE_METRICS_BACKEND: "${AFTERCARE_METRICS_BACKEND:-logging}"
+    secrets:
+      - source: aftercare_runtime_database_url
+        target: aftercare_database_url
+    depends_on:
+      rls-check:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+    stop_grace_period: 45s
+
+secrets:
+  aftercare_migration_database_url:
+    file: "${AFTERCARE_MIGRATION_DATABASE_URL_FILE:?set the host path to the migration-role DSN secret}"
+  aftercare_runtime_database_url:
+    file: "${AFTERCARE_RUNTIME_DATABASE_URL_FILE:?set the host path to the runtime-role DSN secret}"

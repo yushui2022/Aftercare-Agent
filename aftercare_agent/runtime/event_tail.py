@@ -63,7 +63,7 @@ class PostgresEventTail:
         cursor = after_case_seq
         deadline = monotonic() + wait_seconds
         while True:
-            with self.database.transaction() as connection:
+            with self.database.transaction(tenant_id=tenant_id) as connection:
                 events = EventRepository().list_case_events(
                     connection,
                     tenant_id=tenant_id,
@@ -129,7 +129,7 @@ class PostgresEventTail:
         self, tenant_id: str, case_id: str, cursor: int, limit: int
     ) -> tuple[DomainEvent, ...]:
         """Read one bounded batch in a short transaction (thread target)."""
-        with self.database.transaction() as connection:
+        with self.database.transaction(tenant_id=tenant_id) as connection:
             return EventRepository().list_case_events(
                 connection,
                 tenant_id=tenant_id,

@@ -1,43 +1,196 @@
 """Command-line entry point for one slice or a long-lived Worker."""
 
 import json
+import logging
 import math
 import os
 import signal
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import timedelta
 from threading import Event
 from types import FrameType
 
-from aftercare_agent.domain.common import ContractViolation
-from aftercare_agent.observability import LoggingMetrics
-from aftercare_agent.persistence import Database, sampler_from_environment
+from aftercare_agent.artifacts import ContentAddressedArtifactStore
+from aftercare_agent.config import environment_secret
+from aftercare_agent.connectors import CommerceConnector
+from aftercare_agent.domain.common import ContractViolation, ErrorCode, RunScope
+from aftercare_agent.domain.investigation import (
+    FreshnessPolicy,
+)
+from aftercare_agent.investigation import (
+    RunScopedEvidenceRecorder,
+    build_investigation_application,
+)
+from aftercare_agent.observability import metrics_from_environment
+from aftercare_agent.persistence import (
+    CaseRepository,
+    Database,
+    QueueStats,
+    RunRepository,
+    assert_schema_current,
+    queue_sampler_from_environment,
+    sampler_from_environment,
+)
+from aftercare_agent.persistence import migrate as migrate_aftercare
+from aftercare_agent.persistence.migrate_cli import assert_egm_schema_current
 
-from .sandbox_executor import StaticCaseBinding
+from .judgment import DeterministicEvidenceJudgmentGate, JudgmentGate
 from .wiring import harness_from_environment
-from .worker import Harness, WorkerLoopResult, WorkerResult, run_daemon, run_next, run_once
+from .worker import (
+    Harness,
+    WorkerLoopResult,
+    WorkerResult,
+    run_daemon,
+    run_next,
+    run_once,
+)
 
 
-def _model_harness(owner: str, max_steps: int) -> Harness | None:
+@dataclass(frozen=True)
+class _ModelComponents:
+    harness: Harness | None
+    assessment_evaluator: JudgmentGate | None
+
+
+@dataclass(frozen=True)
+class _PersistedCaseBinding:
+    """Resolve the immutable order binding from the admitted Case.
+
+    A daemon may claim Runs for many tenants and orders, so an environment-wide
+    order id cannot be authoritative.  The lookup stays lazy because the model
+    Harness is assembled before a Run is claimed, and each lookup uses a short
+    transaction from the Worker's bounded pool.
+    """
+
+    database: Database
+
+    def order_id_for(self, scope: RunScope) -> str:
+        with self.database.transaction() as connection:
+            return CaseRepository().lock_order_id(connection, scope.tenant_id, scope.case_id)
+
+
+@dataclass(frozen=True)
+class _QueueStatsSource:
+    """Read queue diagnostics through the Worker's bounded pool."""
+
+    database: Database
+    tenant: str | None
+
+    def queue_stats(self) -> QueueStats:
+        with self.database.transaction() as connection:
+            return RunRepository().queue_stats(connection, self.tenant)
+
+
+def _model_components(
+    owner: str,
+    max_steps: int,
+    database: Database,
+    *,
+    auto_migrate: bool = True,
+) -> _ModelComponents:
     """Build the model-driven Harness only when a deployment asks for it.
 
     The default stays the deterministic fake plan, so an unconfigured worker
     cannot start spending provider budget or reaching a sandbox by accident.
     """
     if not _flag(os.environ.get("AFTERCARE_HARNESS_MODEL", "")):
-        return None
-    order_id = os.environ.get("AFTERCARE_ORDER_ID", "").strip()
-    if not order_id:
-        raise SystemExit("AFTERCARE_ORDER_ID is required for the model Harness")
+        return _ModelComponents(None, None)
+    _ensure_egm_schema(database, auto_migrate=auto_migrate)
+    recorder: RunScopedEvidenceRecorder | None = None
+    policy = _investigation_policy()
+
+    def recorder_for(connector: CommerceConnector) -> RunScopedEvidenceRecorder:
+        nonlocal recorder
+        if recorder is None:
+            recorder = RunScopedEvidenceRecorder(
+                database=database,
+                connector=connector,
+                application_for=lambda registered: build_investigation_application(
+                    _egm_provider(database), registered
+                ),
+            )
+        return recorder
+
+    def before_run_for(
+        connector: CommerceConnector, store: ContentAddressedArtifactStore
+    ) -> Callable[[RunScope], None]:
+        def import_history(scope: RunScope) -> None:
+            recorder_for(connector).import_buyer_history(scope=scope, store=store)
+
+        return import_history
+
+    def evidence_context_for(connector: CommerceConnector) -> Callable[[RunScope], str]:
+        return recorder_for(connector).evidence_context
+
+    def recorder_for_scope(scope: RunScope) -> RunScopedEvidenceRecorder:
+        # The gate is assembled before a Run is claimed; recorder resolution
+        # therefore stays lazy and remains bound to the admitted Case.
+        if recorder is None:
+            raise ContractViolation(ErrorCode.CONFLICT, "evidence recorder is not initialized")
+        return recorder
+
     try:
-        return harness_from_environment(
-            owner=owner, case_binding=StaticCaseBinding(order_id=order_id), max_steps=max_steps
+        return _ModelComponents(
+            harness=harness_from_environment(
+                owner=owner,
+                case_binding=_PersistedCaseBinding(database),
+                max_steps=max_steps,
+                # Bound here rather than left to a deployment flag: an answer the
+                # model was shown reaches the evidence ledger in the same slice, or
+                # the audit trail is only as good as that flag.
+                observer_for=recorder_for,
+                before_run_for=before_run_for,
+                evidence_context_for=evidence_context_for,
+            ),
+            assessment_evaluator=DeterministicEvidenceJudgmentGate(
+                recorder_for=recorder_for_scope,
+                policy=policy,
+            ),
         )
     except (ContractViolation, ValueError) as error:
         raise SystemExit(f"model Harness is not configured: {error}") from error
 
 
+def _model_harness(owner: str, max_steps: int, database: Database) -> Harness | None:
+    """Compatibility seam used by focused composition tests."""
+    return _model_components(owner, max_steps, database).harness
+
+
+def _egm_provider(database: Database) -> object:
+    """Use the worker's bounded pool for the embedded EGM application."""
+    from evidence_gated_memory.storage.postgres import PostgresProvider
+
+    return PostgresProvider(database.connection)  # type: ignore[no-untyped-call]
+
+
+def _ensure_aftercare_schema(database: Database, *, auto_migrate: bool) -> None:
+    """Apply or read-only verify the application schema before claiming work."""
+    with database.transaction() as connection:
+        if auto_migrate:
+            migrate_aftercare(connection)
+        assert_schema_current(connection)
+
+
+def _ensure_egm_schema(database: Database, *, auto_migrate: bool) -> None:
+    """Apply or read-only verify EGM before a model Run can write evidence."""
+    from evidence_gated_memory.storage.postgres import migrate
+
+    with database.transaction() as connection:
+        if auto_migrate:
+            migrate(connection)  # type: ignore[no-untyped-call]
+        assert_egm_schema_current(connection)
+
+
 def _flag(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _auto_migrate() -> bool:
+    value = os.environ.get("AFTERCARE_AUTO_MIGRATE", "1")
+    if value not in {"0", "1"}:
+        raise SystemExit("AFTERCARE_AUTO_MIGRATE must be 0 or 1")
+    return value == "1"
 
 
 def _seconds(name: str, default: str) -> timedelta:
@@ -60,8 +213,30 @@ def _positive_int(name: str, default: str) -> int:
     return value
 
 
+def _required(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(f"{name} is required for the model Harness")
+    return value
+
+
+def _investigation_policy() -> FreshnessPolicy:
+    return FreshnessPolicy(
+        policy_id=_required("AFTERCARE_INVESTIGATION_POLICY_ID"),
+        policy_version=_positive_int("AFTERCARE_INVESTIGATION_POLICY_VERSION", ""),
+        order_max_age_seconds=_positive_int("AFTERCARE_ORDER_MAX_AGE_SECONDS", ""),
+        carrier_max_age_seconds=_positive_int("AFTERCARE_CARRIER_MAX_AGE_SECONDS", ""),
+        buyer_max_age_seconds=_positive_int("AFTERCARE_BUYER_MAX_AGE_SECONDS", ""),
+    )
+
+
 def main() -> int:
-    dsn = os.environ.get("DATABASE_URL", "")
+    # Uvicorn configures API logging, but the standalone Worker has no host
+    # logger.  Install a minimal stderr handler only when the process has none
+    # so JSON diagnostics from LoggingMetrics are visible by default and an
+    # embedding deployment can keep its own logging configuration.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    dsn = environment_secret("DATABASE_URL") or ""
     tenant_id = os.environ.get("AFTERCARE_TENANT_ID", "")
     run_id = os.environ.get("AFTERCARE_RUN_ID", "")
     owner = os.environ.get("AFTERCARE_WORKER_ID", "worker-local")
@@ -69,16 +244,33 @@ def main() -> int:
         raise SystemExit(
             "DATABASE_URL is required; AFTERCARE_TENANT_ID is required when running a specific Run"
         )
+    if _flag(os.environ.get("AFTERCARE_WORKER_REQUIRE_TENANT", "")) and not tenant_id:
+        raise SystemExit(
+            "AFTERCARE_TENANT_ID is required when AFTERCARE_WORKER_REQUIRE_TENANT is enabled"
+        )
     max_steps = _positive_int("AFTERCARE_MAX_STEPS", "8")
     lease = _seconds("AFTERCARE_LEASE_SECONDS", "30")
     heartbeat_text = os.environ.get("AFTERCARE_HEARTBEAT_SECONDS", "")
     heartbeat = _seconds("AFTERCARE_HEARTBEAT_SECONDS", heartbeat_text) if heartbeat_text else None
     database = Database(dsn)
-    sampler = sampler_from_environment(database, LoggingMetrics(), component="worker")
-    harness = _model_harness(owner, max_steps)
+    metrics = metrics_from_environment()
+    sampler = sampler_from_environment(database, metrics, component="worker")
+    queue_sampler = queue_sampler_from_environment(
+        _QueueStatsSource(database, tenant_id or None), metrics, component="worker"
+    )
     try:
+        auto_migrate = _auto_migrate()
+        _ensure_aftercare_schema(database, auto_migrate=auto_migrate)
+        components = _model_components(
+            owner,
+            max_steps,
+            database,
+            auto_migrate=auto_migrate,
+        )
         if sampler is not None:
             sampler.start()
+        if queue_sampler is not None:
+            queue_sampler.start()
         return _run(
             database,
             tenant_id=tenant_id,
@@ -87,11 +279,14 @@ def main() -> int:
             max_steps=max_steps,
             lease=lease,
             heartbeat=heartbeat,
-            harness=harness,
+            harness=components.harness,
+            assessment_evaluator=components.assessment_evaluator,
         )
     finally:
         if sampler is not None:
             sampler.stop()
+        if queue_sampler is not None:
+            queue_sampler.stop()
         # A slice, and more so a daemon loop, borrows a pooled connection per
         # unit of work.  Closing the pool here returns them and stops the pool
         # threads before the process exits.
@@ -108,6 +303,7 @@ def _run(
     lease: timedelta,
     heartbeat: timedelta | None,
     harness: Harness | None,
+    assessment_evaluator: JudgmentGate | None,
 ) -> int:
     if _flag(os.environ.get("AFTERCARE_WORKER_DAEMON", "")):
         stop = Event()
@@ -142,6 +338,7 @@ def _run(
                     )
                 ),
                 harness=harness,
+                assessment_evaluator=assessment_evaluator,
             )
         finally:
             signal.signal(signal.SIGINT, old_int)
@@ -171,16 +368,18 @@ def _run(
             max_steps=max_steps,
             heartbeat_interval=heartbeat,
             harness=harness,
+            assessment_evaluator=assessment_evaluator,
         )
     else:
         slice_result = run_next(
             database,
-            tenant_id=tenant_id,
+            tenant_id=tenant_id or None,
             owner=owner,
             lease=lease,
             max_steps=max_steps,
             heartbeat_interval=heartbeat,
             harness=harness,
+            assessment_evaluator=assessment_evaluator,
         )
         if slice_result is None:
             print(json.dumps({"status": "idle"}))

@@ -43,6 +43,7 @@ import psycopg
 from psycopg import sql
 from pydantic import Field, ValidationError, model_validator
 
+from aftercare_agent.config import environment_secret
 from aftercare_agent.domain.common import NonNegativeInt, Sha256, UtcDatetime
 from aftercare_agent.observability import LoggingMetrics
 from aftercare_agent.ops.drill_records import (
@@ -942,7 +943,7 @@ def apply_retention(directory: Path, plan: RetentionPlan) -> tuple[Path, ...]:
 
 
 def _require_dsn(value: str | None) -> str:
-    dsn = value or os.environ.get("DATABASE_URL", "")
+    dsn = value or environment_secret("DATABASE_URL") or ""
     if not dsn:
         raise OpsError("a database URL is required: pass --dsn or set DATABASE_URL")
     return dsn
@@ -1068,6 +1069,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     wal.add_argument("--emit-metrics", action="store_true", help="log one JSON line per metric")
     wal.add_argument("--json", default=None, type=Path)
+
+    pitr = actions.add_parser(
+        "pitr",
+        help="validate an external point-in-time recovery report against a backup manifest",
+    )
+    pitr.add_argument("--base-manifest", required=True, type=Path)
+    pitr.add_argument("--evidence", required=True, type=Path)
+    pitr.add_argument("--json", default=None, type=Path)
     return parser
 
 
@@ -1206,6 +1215,18 @@ def _wal_command(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _pitr_command(args: argparse.Namespace) -> int:
+    """Validate, but never invent, a platform-specific PITR rehearsal."""
+    from .pitr import verify_pitr_file
+
+    result = verify_pitr_file(args.base_manifest, args.evidence)
+    serialized = json.dumps(result, indent=2, sort_keys=True) + "\n"
+    if args.json:
+        args.json.write_text(serialized, encoding="utf-8", newline="\n")
+    print(serialized, end="")
+    return 0 if result["decision"] == "pass" else 1
+
+
 def _status_command(args: argparse.Namespace) -> int:
     directory: Path = args.directory
     budget = StatusBudget(
@@ -1287,6 +1308,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _status_command(args)
         if args.action == "wal":
             return _wal_command(args)
+        if args.action == "pitr":
+            return _pitr_command(args)
         return _reconcile_command(args)
     except OpsError as exc:
         print(f"aftercare-backup: {exc}", file=sys.stderr)

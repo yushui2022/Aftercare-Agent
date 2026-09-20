@@ -13,6 +13,20 @@ export type RunState =
   | "COMPLETED"
   | "CANCELLED";
 
+export type RouteReason =
+  | "deadline_passed"
+  | "model_budget_exhausted"
+  | "tool_budget_exhausted"
+  | "cost_budget_exhausted"
+  | "provider_retryable_error"
+  | "provider_error"
+  | "intent_rejected"
+  | "input_rejected"
+  | "proposal_rejected"
+  | "assessment_rejected"
+  | "executor_rejected"
+  | "empty_turn";
+
 export interface CaseSummary {
   case_id: string;
   order_id: string;
@@ -36,6 +50,7 @@ export interface RunSummary {
   wait_generation: number | null;
   available_at: string | null;
   lease_until: string | null;
+  route_reason: RouteReason | null;
 }
 
 export interface CaseDetail extends CaseSummary {

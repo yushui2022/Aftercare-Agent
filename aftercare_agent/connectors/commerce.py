@@ -16,15 +16,23 @@ from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
 
-from aftercare_agent.domain.common import ContractModel, Identifier, utc
+from aftercare_agent.domain.common import (
+    ContractModel,
+    ContractViolation,
+    ErrorCode,
+    Identifier,
+    utc,
+)
 
-from .dataset import CommerceDataset, Money, Shipment, TrackingEvent
+from .dataset import BuyerMessage, CommerceDataset, Money, Shipment, TrackingEvent
 
 ORDER_FACTS_SCHEMA = "aftercare.commerce.order.v1"
 TRACKING_FACTS_SCHEMA = "aftercare.commerce.tracking.v1"
+BUYER_FACTS_SCHEMA = "aftercare.commerce.buyer.v1"
 # Bounded on purpose: the model sees the tail of a long delivery history, not
 # an export of it, so one answer cannot quietly become the whole context.
 MAX_TRACKING_EVENTS = 10
+MAX_BUYER_MESSAGE_PAGE_SIZE = 16
 
 
 class CommerceSources(ContractModel):
@@ -52,6 +60,15 @@ class ConnectorAnswer:
 
     def digest(self) -> str:
         return sha256(self.content()).hexdigest()
+
+
+@dataclass(frozen=True)
+class BuyerMessagePage:
+    """A deterministic, host-only page over one order's buyer messages."""
+
+    items: tuple[ConnectorAnswer, ...]
+    last_message_id: str | None
+    next_cursor: str | None
 
 
 def _iso(value: datetime) -> str:
@@ -189,11 +206,112 @@ class CommerceConnector:
             body=body,
         )
 
+    def lookup_buyer_message(self, *, tenant_id: str, order_id: str) -> ConnectorAnswer:
+        """Return the newest buyer statement without letting the caller pick one.
+
+        A later slice can add a cursor for a long conversation.  This bounded
+        adapter deliberately exposes one deterministic message per call so a
+        model cannot select a convenient historical statement or invent a
+        message identifier.
+        """
+        order = self._dataset.require_order(order_id, tenant_id=tenant_id)
+        message = max(
+            order.messages, key=lambda item: (item.received_at, item.message_id), default=None
+        )
+        body: dict[str, object] = {
+            "schema": BUYER_FACTS_SCHEMA,
+            "dataset_digest": self._dataset.digest(),
+            "order_id": order.order_id,
+            "message": None,
+        }
+        if message is not None:
+            return self._buyer_answer(order_id=order.order_id, message=message)
+        return ConnectorAnswer(
+            tool="lookup_buyer_message",
+            source_id=self._sources.buyer_channel,
+            source_event_id=_event_id("buyer-message:none", body),
+            observed_at=order.placed_at,
+            body=body,
+        )
+
+    def lookup_buyer_messages(
+        self,
+        *,
+        tenant_id: str,
+        order_id: str,
+        after_message_id: str | None = None,
+        limit: int = MAX_BUYER_MESSAGE_PAGE_SIZE,
+    ) -> BuyerMessagePage:
+        """Read a stable chronological page for a trusted host.
+
+        The cursor is a message ID from this same export and is deliberately
+        not exposed as a model-controlled tool argument.  Ordering ties by
+        message ID, so retries and page boundaries remain deterministic.
+        """
+        if type(limit) is not int or not 1 <= limit <= MAX_BUYER_MESSAGE_PAGE_SIZE:
+            raise ContractViolation(
+                ErrorCode.INVALID_INPUT, "buyer message page limit is out of range"
+            )
+        order = self._dataset.require_order(order_id, tenant_id=tenant_id)
+        messages = tuple(
+            sorted(order.messages, key=lambda item: (item.received_at, item.message_id))
+        )
+        start = 0
+        if after_message_id is not None:
+            if not after_message_id or after_message_id not in {
+                item.message_id for item in messages
+            }:
+                raise ContractViolation(ErrorCode.INVALID_INPUT, "buyer message cursor is unknown")
+            start = (
+                next(
+                    index
+                    for index, item in enumerate(messages)
+                    if item.message_id == after_message_id
+                )
+                + 1
+            )
+        selected = messages[start : start + limit]
+        answers = tuple(
+            self._buyer_answer(order_id=order.order_id, message=message) for message in selected
+        )
+        last_message_id = selected[-1].message_id if selected else None
+        next_cursor = last_message_id if start + len(selected) < len(messages) else None
+        return BuyerMessagePage(
+            items=answers,
+            last_message_id=last_message_id,
+            next_cursor=next_cursor,
+        )
+
+    def _buyer_answer(self, *, order_id: str, message: BuyerMessage) -> ConnectorAnswer:
+        """Render one trusted BuyerMessage as the existing evidence answer."""
+        # The dataset validator guarantees this shape; keeping the helper
+        # private prevents callers from injecting a message object.
+        body: dict[str, object] = {
+            "schema": BUYER_FACTS_SCHEMA,
+            "dataset_digest": self._dataset.digest(),
+            "order_id": order_id,
+            "message": {
+                "message_id": message.message_id,
+                "channel": message.channel,
+                "received_at": _iso(message.received_at),
+                "assertion": message.assertion,
+                "text": message.text,
+            },
+        }
+        return ConnectorAnswer(
+            tool="lookup_buyer_message",
+            source_id=self._sources.buyer_channel,
+            source_event_id=_event_id("buyer-message", body["message"]),
+            observed_at=message.received_at,
+            body=body,
+        )
+
     def registered_sources(self) -> Mapping[str, str]:
         """The source identities this connector is allowed to speak for."""
         return {
             "lookup_order": self._sources.order_ledger,
             "lookup_tracking": self._sources.carrier,
+            "lookup_buyer_message": self._sources.buyer_channel,
         }
 
 
@@ -201,6 +319,9 @@ __all__ = [
     "CommerceConnector",
     "CommerceSources",
     "ConnectorAnswer",
+    "BUYER_FACTS_SCHEMA",
+    "BuyerMessagePage",
+    "MAX_BUYER_MESSAGE_PAGE_SIZE",
     "MAX_TRACKING_EVENTS",
     "ORDER_FACTS_SCHEMA",
     "TRACKING_FACTS_SCHEMA",

@@ -22,7 +22,7 @@ RESERVED ──> REQUESTED ──> CONFIRMED
 - `CONFIRMED`：需要供应商回执引用和回执摘要。
 - `FAILED`：需要受控的失败代码；失败不是“可以随便换键重试”的授权。
 
-`ActionRepository.mark_requested()` 和 `mark_result()` 必须拿当前 `ExecutionClaim`。仓储按 Case → Run → Action → Approval 锁顺序核验 owner、lease、fencing token 和审批；高风险动作缺少匹配的 `APPROVED`、参数摘要或当前策略版本时 fail closed。结果更新也写入当时的 fencing token，便于审计。网络调用必须在事务外完成，回执再以短事务写回。
+`ActionRepository.mark_requested()` 和 `mark_receipt()` 必须拿当前 `ExecutionClaim`。仓储按 Case → Run → Action → Approval 锁顺序核验 owner、lease、fencing token 和审批；高风险动作缺少匹配的 `APPROVED`、参数摘要或当前策略版本时 fail closed。结果更新也写入当时的 fencing token，便于审计。网络调用必须在事务外完成，回执再以短事务写回。底层 `mark_result()` 只保留为已校验回执的状态机入口，provider 适配器应使用 `mark_receipt()`。
 
 ## 审批台账（B-02-01）
 
@@ -54,15 +54,16 @@ approval, _ = approvals.request(connection, ApprovalRequest(
     expires_at=expiry_from_trusted_policy,
 ))
 # 另一个具备审批权限的服务完成 decide() 并提交后：
-ledger.mark_requested(
+requested = ledger.mark_requested(
     connection, reservation.action.action_id, current_claim,
     approval_id=approval.approval_id, policy_version="refund-v1",
 )
-# 提交事务后调用供应商；响应丢失则：
-ledger.mark_result(connection, reservation.action.action_id, current_claim, state="UNKNOWN")
+# 提交事务后在事务外调用 ActionProvider；响应丢失则构造 UNKNOWN 回执：
+receipt = provider.request(requested)
+ledger.mark_receipt(connection, receipt, current_claim)
 ```
 
-`reserve()` 返回 `ActionReservation(action, replayed)`。跨 Case 复用业务键时，返回第一次登记的 Action；调用方应把它当作引用，而不是修改该行的 Case/订单字段。支付账户聚合、退款余额预留、审批等待联动和真实供应商对账仍是后续工作，不能由本表的唯一键代替。
+`reserve()` 返回 `ActionReservation(action, replayed)`。跨 Case 复用业务键时，返回第一次登记的 Action；调用方应把它当作引用，而不是修改该行的 Case/订单字段。`SyntheticActionProvider` 仅用于 local/integration profile，支持稳定回执和 UNKNOWN 后的 `lookup()`，不产生外部副作用。支付账户聚合、退款余额预留、审批等待联动和真实供应商对账仍是后续工作，不能由本表的唯一键代替。
 
 ## 迁移与验证
 

@@ -7,16 +7,26 @@ the same row instead of creating another external operation.
 
 from .ledger import (
     ActionIntent,
+    ActionProvider,
     ActionRecord,
     ActionReservation,
     ActionState,
+    ProviderReceipt,
+    ProviderReceiptState,
     action_parameters_digest,
+    validate_provider_receipt,
 )
+from .providers import SyntheticActionProvider
 
 __all__ = [
     "ActionIntent",
     "ActionRecord",
     "ActionReservation",
+    "ActionProvider",
     "ActionState",
     "action_parameters_digest",
+    "ProviderReceipt",
+    "ProviderReceiptState",
+    "validate_provider_receipt",
+    "SyntheticActionProvider",
 ]

@@ -10,6 +10,7 @@ from aftercare_agent.observability import (
     LoggingMetrics,
     MetricRecord,
     OpenTelemetryMetrics,
+    metrics_from_environment,
 )
 
 
@@ -24,6 +25,34 @@ def test_in_memory_tracer_records_bounded_success_and_error() -> None:
     assert tracer.spans[1].status == "error"
     assert tracer.spans[1].error_type == "RuntimeError"
     assert "synthetic" not in str(tracer.spans[1].__dict__)
+
+
+def test_diagnostic_attributes_are_allowlisted_and_length_bounded() -> None:
+    tracer = InMemoryTracer()
+    with tracer.span(
+        "aftercare.run",
+        {
+            "tenant_id": "tenant-1",
+            "prompt": "customer text must not be recorded",
+            "run_id": "r" * 200,
+            "credential": "secret",
+            "nul": "bad\x00value",
+        },
+    ):
+        pass
+    assert tracer.spans[0].attributes == {"tenant_id": "tenant-1", "run_id": "r" * 128}
+
+
+def test_metric_attributes_only_keep_the_component_label() -> None:
+    metrics = InMemoryMetrics()
+    metrics.record(
+        MetricRecord(
+            "aftercare.queue.age_seconds",
+            3.0,
+            attributes={"component": "worker", "case_id": "case-1", "prompt": "secret"},
+        )
+    )
+    assert metrics.metrics[0].attributes == {"component": "worker"}
 
 
 def test_in_memory_metrics_keeps_the_newest_values_within_its_limit() -> None:
@@ -61,6 +90,12 @@ def test_logging_metrics_writes_one_bounded_json_line(
         "metric": "aftercare.db.pool.connections.in_use",
         "value": 3.0,
     }
+
+
+def test_metrics_backend_defaults_to_logging_and_rejects_unknown_values() -> None:
+    assert isinstance(metrics_from_environment(environ={}), LoggingMetrics)
+    with pytest.raises(RuntimeError, match="must be logging or otel"):
+        metrics_from_environment(environ={"AFTERCARE_METRICS_BACKEND": "vendor"})
 
 
 def test_the_otel_bridge_is_optional() -> None:

@@ -26,7 +26,7 @@ from evals.loop import (
 
 def test_every_case_passes_through_the_model_boundary() -> None:
     report = evaluate_loop()
-    assert len(report.results) == 12
+    assert len(report.results) == 14
     assert all(result.passed for result in report.results)
 
 
@@ -42,7 +42,7 @@ def test_loop_digest_is_stable_within_and_across_processes() -> None:
 def test_recommendations_are_cited_and_uncertainty_routes_to_review() -> None:
     report = evaluate_loop()
     assert report.recommendations == 1
-    assert report.routed_to_review == 6
+    assert report.routed_to_review == 8
     for result in report.results:
         assert not result.uncited_acceptances
         assert not result.unknown_citations

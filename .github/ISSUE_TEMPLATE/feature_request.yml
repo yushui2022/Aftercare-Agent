@@ -1,0 +1,47 @@
+name: 功能建议
+description: 提出可验证的能力、契约或部署改进
+title: "[proposal] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请描述要解决的问题和验收方式。Aftercare 的模型输出不能直接改变证据门或执行外部动作；涉及这些边界的建议需要同时说明人工接管和幂等策略。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 谁遇到什么问题？当前行为的限制是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议的行为
+      description: 描述输入、输出、状态变化和失败路径，不要只写一个组件名称。
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: 边界与风险
+      description: 说明租户隔离、证据新鲜度、重试/未知结果、人工审批、数据驻留或部署条件的影响。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收证据
+      description: 建议需要哪些合成案例、PostgreSQL 故障测试、部署演练或文档更新才能认为完成？
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 这不是一个公开报告真实凭证或客户数据的渠道。
+          required: true
+        - label: 我没有把模型宣传、示例结果或本机通过当作生产能力证据。
+          required: true

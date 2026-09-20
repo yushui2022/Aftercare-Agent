@@ -15,6 +15,8 @@ from aftercare_agent.actions.ledger import (
     ActionRecord,
     ActionReservation,
     ActionState,
+    ProviderReceipt,
+    validate_provider_receipt,
 )
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
 from aftercare_agent.domain.runtime import ExecutionClaim
@@ -300,6 +302,34 @@ class ActionRepository:
             provider_reference=provider_reference,
             result_sha256=result_sha256,
             failure_code=failure_code,
+        )
+
+    def mark_receipt(
+        self,
+        conn: psycopg.Connection[Any],
+        receipt: ProviderReceipt,
+        claim: ExecutionClaim,
+    ) -> ActionRecord:
+        """Persist a provider-neutral receipt under the current Run fence.
+
+        Provider I/O must happen before this call and outside the database
+        transaction.  The locked Action is checked against the receipt before
+        delegating to the existing state-transition guard, so a receipt from a
+        different Action or provider idempotency key cannot be attached.
+        """
+        self._claim_valid(conn, claim)
+        current = self._locked(conn, claim.tenant_id, receipt.action_id)
+        if current.case_id != claim.case_id:
+            raise ContractViolation(ErrorCode.FORBIDDEN, "action scope does not match claim")
+        validate_provider_receipt(current, receipt)
+        return self.mark_result(
+            conn,
+            receipt.action_id,
+            claim,
+            state=receipt.state,
+            provider_reference=receipt.provider_reference,
+            result_sha256=receipt.result_sha256,
+            failure_code=receipt.failure_code,
         )
 
     def _update_state(

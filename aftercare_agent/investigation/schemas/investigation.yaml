@@ -1,0 +1,102 @@
+name: aftercare_investigation
+description: >-
+  Evidence contract for the bounded Aftercare investigation slice. It records
+  order, carrier and buyer observations; it does not authorize refunds,
+  replacements, messages or case closure.
+
+allowed_node_types: [investigation]
+require_terminal_state_gate: true
+
+entities:
+  - name: order
+    metadata_fields: [tenant_id, case_id, order_id]
+
+evidence_types:
+  order_record:
+    stale_after: PT15M
+    expired_after: PT1H
+    source_systems: [order_ledger]
+  logistics_observation:
+    stale_after: PT15M
+    expired_after: PT1H
+    source_systems: [carrier]
+  buyer_statement:
+    stale_after: PT1H
+    expired_after: P1D
+    source_systems: [buyer_channel]
+
+claim_types:
+  order_recorded:
+    required_evidence: [order_record]
+    requires_fresh_evidence: true
+  carrier_reported_delivered:
+    required_evidence: [logistics_observation]
+    requires_fresh_evidence: true
+  carrier_reported_in_transit:
+    required_evidence: [logistics_observation]
+    requires_fresh_evidence: true
+  buyer_reported_not_received:
+    required_evidence: [buyer_statement]
+    requires_fresh_evidence: true
+  buyer_reported_received:
+    required_evidence: [buyer_statement]
+    requires_fresh_evidence: true
+
+gates:
+  - name: investigation_order_contract
+    when: {claim_type: order_recorded}
+    require:
+      freshness: fresh
+      evidence_contracts:
+        order_record:
+          required_fields: [tenant_id, case_id, order_id, kind]
+          field_types: {tenant_id: string, case_id: string, order_id: string, kind: string}
+          field_values: {kind: [order_snapshot]}
+          field_bindings: {tenant_id: tenant_id, case_id: case_id, order_id: order_id}
+  - name: investigation_logistics_contract
+    when: {claim_type: carrier_reported_delivered}
+    require:
+      freshness: fresh
+      evidence_contracts:
+        logistics_observation:
+          required_fields: [tenant_id, case_id, order_id, kind, delivery_status]
+          field_types: {tenant_id: string, case_id: string, order_id: string, kind: string, delivery_status: string}
+          field_values: {kind: [logistics_observation], delivery_status: [delivered]}
+          field_bindings: {tenant_id: tenant_id, case_id: case_id, order_id: order_id}
+  - name: investigation_transit_contract
+    when: {claim_type: carrier_reported_in_transit}
+    require:
+      freshness: fresh
+      evidence_contracts:
+        logistics_observation:
+          required_fields: [tenant_id, case_id, order_id, kind, delivery_status]
+          field_types: {tenant_id: string, case_id: string, order_id: string, kind: string, delivery_status: string}
+          field_values: {kind: [logistics_observation], delivery_status: [in_transit]}
+          field_bindings: {tenant_id: tenant_id, case_id: case_id, order_id: order_id}
+  - name: investigation_buyer_contract
+    when: {claim_type: buyer_reported_not_received}
+    require:
+      freshness: fresh
+      evidence_contracts:
+        buyer_statement:
+          required_fields: [tenant_id, case_id, order_id, kind, assertion]
+          field_types: {tenant_id: string, case_id: string, order_id: string, kind: string, assertion: string}
+          field_values: {kind: [buyer_statement], assertion: [not_received]}
+          field_bindings: {tenant_id: tenant_id, case_id: case_id, order_id: order_id}
+  - name: investigation_buyer_received_contract
+    when: {claim_type: buyer_reported_received}
+    require:
+      freshness: fresh
+      evidence_contracts:
+        buyer_statement:
+          required_fields: [tenant_id, case_id, order_id, kind, assertion]
+          field_types: {tenant_id: string, case_id: string, order_id: string, kind: string, assertion: string}
+          field_values: {kind: [buyer_statement], assertion: [received]}
+          field_bindings: {tenant_id: tenant_id, case_id: case_id, order_id: order_id}
+
+state_gates:
+  - name: investigation_done_requires_complete_snapshot
+    when: {node_type: investigation, to_status: done}
+    require:
+      freshness: fresh
+      evidence_types: [order_record, logistics_observation, buyer_statement]

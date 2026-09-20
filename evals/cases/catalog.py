@@ -115,9 +115,26 @@ def catalogue() -> dict[str, tuple[object, tuple[InvestigationEvidence, ...]]]:
             claim(InvestigationClaim.CARRIER_REPORTED_DELIVERED, "carrier"),
             (order(), carrier(status=DeliveryStatus.DELIVERED), buyer()),
         ),
+        "conflicting-buyer-statements": (
+            claim(InvestigationClaim.BUYER_REPORTED_NOT_RECEIVED, "buyer"),
+            (
+                order(),
+                carrier(),
+                buyer(),
+                buyer(evidence_id="buyer-2", assertion=BuyerAssertion.RECEIVED),
+            ),
+        ),
         "stale-order": (
             claim(InvestigationClaim.ORDER_RECORDED, "order"),
             (order(stale=True), carrier(), buyer()),
+        ),
+        "stale-buyer": (
+            claim(InvestigationClaim.BUYER_REPORTED_NOT_RECEIVED, "buyer"),
+            (
+                order(),
+                carrier(),
+                buyer().model_copy(update={"observed_at": NOW - timedelta(seconds=181)}),
+            ),
         ),
         "other-order": (
             claim(InvestigationClaim.CARRIER_REPORTED_IN_TRANSIT, "carrier"),

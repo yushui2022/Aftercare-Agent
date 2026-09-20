@@ -58,8 +58,13 @@ type RouteReason = Literal[
     "deadline_passed",
     "provider_retryable_error",
     "provider_error",
+    "model_strategy_changed",
+    "strategy_migration_ready",
     "empty_turn",
     "intent_rejected",
+    "input_rejected",
+    "proposal_rejected",
+    "assessment_rejected",
     "executor_rejected",
 ]
 
@@ -77,6 +82,7 @@ class Checkpoint(RunScope):
     tool_schema_version: Identifier
     model_config_version: Identifier
     protocol_version: Identifier
+    strategy_id: Identifier = "legacy"
     protocol_ref: ArtifactReference | None = None
     tool_results: tuple[ToolResultReference, ...] = ()
     evidence_refs: tuple[ArtifactReference, ...] = ()
@@ -92,6 +98,10 @@ class Checkpoint(RunScope):
     # this a crash mid-tool would force a second paid model turn to find out
     # what was asked.
     pending_tool: ToolRequest | None = None
+    # A model final turn is a constrained proposal, not a business decision.
+    # Keep its canonical JSON in the checkpoint so a crash cannot force a
+    # second paid turn before the deterministic evidence assessment runs.
+    pending_proposal_json: str | None = Field(default=None, max_length=65_536)
     # New wait checkpoints persist the exact phase to resume.  ``None`` is
     # accepted for schema-v1 checkpoints written before this field existed;
     # the Worker fails closed unless its caller supplies the legacy override.
@@ -127,6 +137,9 @@ class Checkpoint(RunScope):
             r.call_id == self.pending_tool.call_id for r in self.tool_results
         ):
             raise ValueError("pending tool already has a recorded result")
+        resumes_evaluate = self.next_step == "evaluate" or self.resume_next_step == "evaluate"
+        if self.pending_proposal_json is not None and not resumes_evaluate:
+            raise ValueError("a pending proposal is only valid for an evaluate phase")
         refs = [r.artifact for r in self.tool_results] + list(self.evidence_refs)
         if self.protocol_ref is not None:
             refs.append(self.protocol_ref)
@@ -241,7 +254,12 @@ def validate_tool_request(
     """Produce validated arguments only. This function never invokes a tool."""
     if stream_complete is not True:
         raise ContractViolation(ErrorCode.INVALID_INPUT, "partial tool call cannot execute")
-    known_tools = {"lookup_order", "lookup_tracking", "request_material_draft"}
+    known_tools = {
+        "lookup_order",
+        "lookup_tracking",
+        "lookup_buyer_message",
+        "request_material_draft",
+    }
     if request.name not in known_tools or request.name not in allowed_tools:
         raise ContractViolation(ErrorCode.FORBIDDEN, "tool unavailable in this execution scope")
     if budget.tool_calls == 0 or utc(now) >= budget.deadline:

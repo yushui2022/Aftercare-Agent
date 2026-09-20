@@ -6,10 +6,12 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from aftercare_agent.actions import ActionIntent
 from aftercare_agent.api.app import create_app
 from aftercare_agent.domain.approvals import ApprovalRequest
+from aftercare_agent.domain.protocol import Checkpoint, RemainingBudget
 from aftercare_agent.domain.reviews import ReviewRequest
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
 from aftercare_agent.persistence import (
@@ -27,7 +29,7 @@ def client(db: Database) -> Iterator[TestClient]:
         yield value
 
 
-def _review_fixture(db: Database) -> tuple[str, str, str]:
+def _review_fixture(db: Database, *, exhausted: bool = False) -> tuple[str, str, str]:
     tenant = f"operator-review-{uuid4().hex[:12]}"
     case_id = "case-1"
     run_id = "run-1"
@@ -63,6 +65,41 @@ def _review_fixture(db: Database) -> tuple[str, str, str]:
                 input_version=1,
             ),
         )
+        if exhausted:
+            checkpoint = Checkpoint(
+                tenant_id=tenant,
+                case_id=case_id,
+                run_id=run_id,
+                checkpoint_version=4,
+                input_version=1,
+                case_version=1,
+                saved_fencing_token=1,
+                definition_version="v1",
+                policy_version="policy-v1",
+                tool_schema_version="tools-v1",
+                model_config_version="model-v1",
+                protocol_version="runtime-v1",
+                remaining_budget=RemainingBudget(
+                    model_calls=0,
+                    tool_calls=1,
+                    cost_microusd=100,
+                    deadline=datetime.now(UTC) - timedelta(minutes=1),
+                ),
+                next_step="review",
+                route_reason="model_budget_exhausted",
+            )
+            connection.execute(
+                "INSERT INTO aftercare_checkpoints(tenant_id,case_id,run_id,checkpoint_version,"
+                "saved_fencing_token,payload) VALUES (%s,%s,%s,%s,%s,%s)",
+                (
+                    tenant,
+                    case_id,
+                    run_id,
+                    checkpoint.checkpoint_version,
+                    checkpoint.saved_fencing_token,
+                    Jsonb(checkpoint.model_dump(mode="json")),
+                ),
+            )
     return tenant, case_id, review_id
 
 
@@ -201,6 +238,112 @@ def test_approval_operator_routes_derive_approver_and_enforce_case_scope(
         json={"decision": "APPROVED", "approver": "attacker"},
     )
     assert authority_in_body.status_code == 422
+
+
+def test_review_override_is_atomic_and_audited(db: Database, client: TestClient) -> None:
+    tenant, case_id, review_id = _review_fixture(db, exhausted=True)
+    headers = {
+        "X-Synthetic-Tenant": tenant,
+        "X-Synthetic-Subject": "ops-reviewer",
+        "Idempotency-Key": "review-override-1",
+    }
+
+    response = client.post(
+        f"/v1/cases/{case_id}/reviews/{review_id}/decision",
+        headers=headers,
+        json={
+            "decision": "CONTINUE",
+            "decision_reason": "controlled retry",
+            "override": {
+                "checkpoint_version": 4,
+                "model_calls_add": 2,
+                "deadline_extension_seconds": 60,
+                "reason": "carrier evidence is expected",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "CONTINUE"
+    with db.transaction() as connection:
+        assert connection.execute(
+            "SELECT state FROM aftercare_runs WHERE tenant_id=%s AND run_id=%s",
+            (tenant, "run-1"),
+        ).fetchone() == ("READY",)
+        assert connection.execute(
+            "SELECT model_calls_add,deadline_extension_seconds FROM aftercare_review_overrides "
+            "WHERE tenant_id=%s AND review_id=%s",
+            (tenant, review_id),
+        ).fetchone() == (2, 60)
+
+
+def test_strategy_migration_requires_then_preserves_review_gate(
+    db: Database, client: TestClient
+) -> None:
+    tenant, case_id, review_id = _review_fixture(db)
+    checkpoint = Checkpoint(
+        tenant_id=tenant,
+        case_id=case_id,
+        run_id="run-1",
+        checkpoint_version=1,
+        input_version=1,
+        case_version=1,
+        saved_fencing_token=1,
+        definition_version="v1",
+        policy_version="policy-old",
+        tool_schema_version="tools-old",
+        model_config_version="model-old",
+        strategy_id="strategy-old",
+        protocol_version="runtime-v1",
+        remaining_budget=RemainingBudget(
+            model_calls=1,
+            tool_calls=1,
+            cost_microusd=100,
+            deadline=datetime.now(UTC) + timedelta(minutes=5),
+        ),
+        next_step="review",
+        route_reason="model_strategy_changed",
+    )
+    with db.transaction() as connection:
+        connection.execute(
+            "INSERT INTO aftercare_checkpoints(tenant_id,case_id,run_id,checkpoint_version,"
+            "saved_fencing_token,payload) VALUES (%s,%s,%s,%s,%s,%s)",
+            (tenant, case_id, "run-1", 1, 1, Jsonb(checkpoint.model_dump(mode="json"))),
+        )
+    headers = {
+        "X-Synthetic-Tenant": tenant,
+        "X-Synthetic-Subject": "ops-migrator",
+        "Idempotency-Key": "strategy-migration-1",
+    }
+    response = client.post(
+        f"/v1/cases/{case_id}/runs/run-1/strategy-migration",
+        headers=headers,
+        json={
+            "checkpoint_version": 1,
+            "old_strategy_id": "strategy-old",
+            "old_model_config_version": "model-old",
+            "old_policy_version": "policy-old",
+            "old_tool_schema_version": "tools-old",
+            "new_strategy_id": "strategy-new",
+            "new_model_config_version": "model-new",
+            "new_policy_version": "policy-new",
+            "new_tool_schema_version": "tools-new",
+            "reason": "pin reviewed strategy",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["checkpoint_version_after"] == 2
+    with db.transaction() as connection:
+        assert connection.execute(
+            "SELECT state FROM aftercare_runs WHERE tenant_id=%s AND run_id=%s",
+            (tenant, "run-1"),
+        ).fetchone() == ("REVIEW",)
+    decided = client.post(
+        f"/v1/cases/{case_id}/reviews/{review_id}/decision",
+        headers={**headers, "Idempotency-Key": "strategy-review-1"},
+        json={"decision": "CONTINUE"},
+    )
+    assert decided.status_code == 200, decided.text
+    assert decided.json()["decision"] == "CONTINUE"
 
 
 def test_operator_routes_reject_synthetic_identity_when_disabled(db: Database) -> None:

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
+from aftercare_agent.model_adapters import resolve_model_strategy
 from aftercare_agent.runtime.sandbox_executor import StaticCaseBinding
 from aftercare_agent.runtime.wiring import build_model_harness, build_sandbox_executor
 
@@ -55,3 +56,17 @@ def test_pricing_beyond_the_free_tier_must_be_declared(tmp_path: Path) -> None:
         priced, executor=executor, case_binding=BINDING, store=executor.store
     )
     assert callable(harness)
+
+
+def test_model_strategy_is_explicitly_versioned() -> None:
+    strategy = resolve_model_strategy(
+        {
+            "AFTERCARE_MODEL": "provider/model-a",
+            "AFTERCARE_MODEL_CONFIG_VERSION": "model-a-config-2",
+            "AFTERCARE_MODEL_POLICY_VERSION": "policy-3",
+        }
+    )
+    assert strategy.model == "provider/model-a"
+    assert strategy.config_version == "model-a-config-2"
+    assert strategy.policy_version == "policy-3"
+    assert strategy.tool_schema_version == "tools-v1"

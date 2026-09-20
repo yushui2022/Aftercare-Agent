@@ -8,12 +8,15 @@ PostgreSQL repository for idempotent replay detection.
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Protocol
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from aftercare_agent.domain.common import (
     CaseScope,
+    ContractModel,
+    ContractViolation,
+    ErrorCode,
     Identifier,
     PositiveInt,
     SchemaVersion,
@@ -22,6 +25,7 @@ from aftercare_agent.domain.common import (
 )
 
 type ActionState = Literal["RESERVED", "REQUESTED", "UNKNOWN", "CONFIRMED", "FAILED"]
+type ProviderReceiptState = Literal["UNKNOWN", "CONFIRMED", "FAILED"]
 type AmountMinor = str
 type Currency = str
 
@@ -60,6 +64,47 @@ class ActionRecord(ActionIntent):
     fencing_token: PositiveInt | None = None
     created_at: UtcDatetime
     updated_at: UtcDatetime
+
+
+class ProviderReceipt(ContractModel):
+    """Normalized provider outcome for one already-recorded Action."""
+
+    action_id: Identifier
+    provider_idempotency_key: Identifier | None = None
+    state: ProviderReceiptState
+    provider_reference: Identifier | None = None
+    result_sha256: Sha256 | None = None
+    failure_code: Identifier | None = None
+
+    @model_validator(mode="after")
+    def validate_outcome(self) -> "ProviderReceipt":
+        if self.state == "CONFIRMED":
+            if not self.provider_reference or not self.result_sha256:
+                raise ValueError("confirmed receipt needs provider reference and result digest")
+            if self.failure_code is not None:
+                raise ValueError("confirmed receipt cannot contain a failure code")
+        elif self.result_sha256 is not None:
+            raise ValueError("result digest is only valid for a confirmed receipt")
+        if self.state == "FAILED" and not self.failure_code:
+            raise ValueError("failed receipt needs a failure code")
+        return self
+
+
+class ActionProvider(Protocol):
+    """Provider boundary; implementations must not hold a DB transaction."""
+
+    def request(self, action: ActionRecord) -> ProviderReceipt: ...
+
+    def lookup(self, action: ActionRecord) -> ProviderReceipt: ...
+
+
+def validate_provider_receipt(action: ActionRecord, receipt: ProviderReceipt) -> None:
+    """Reject a receipt that cannot belong to the requested Action."""
+
+    if receipt.action_id != action.action_id:
+        raise ContractViolation(ErrorCode.FORBIDDEN, "provider receipt belongs to another action")
+    if receipt.provider_idempotency_key != action.provider_idempotency_key:
+        raise ContractViolation(ErrorCode.CONFLICT, "provider receipt idempotency key differs")
 
 
 @dataclass(frozen=True)

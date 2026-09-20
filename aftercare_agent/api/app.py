@@ -3,7 +3,8 @@
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
@@ -12,7 +13,7 @@ import httpx
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 
 from aftercare_agent.auth import (
     AuthContext,
@@ -34,10 +35,16 @@ from aftercare_agent.auth.grants import (
     CaseGrantRecord,
     authorize_case_grant,
 )
+from aftercare_agent.config import environment_secret
 from aftercare_agent.domain.approvals import ApprovalRecord
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, Identifier
 from aftercare_agent.domain.events import DomainEvent
-from aftercare_agent.domain.reviews import ReviewRecord
+from aftercare_agent.domain.protocol import Checkpoint, RouteReason
+from aftercare_agent.domain.reviews import (
+    MAX_OVERRIDE_DEADLINE_EXTENSION_SECONDS,
+    ReviewOverrideRequest,
+    ReviewRecord,
+)
 from aftercare_agent.domain.runtime import (
     AdmissionKey,
     CaseRecord,
@@ -45,7 +52,11 @@ from aftercare_agent.domain.runtime import (
     RunRecord,
     SessionRecord,
 )
-from aftercare_agent.observability import LoggingMetrics, Metrics
+from aftercare_agent.domain.strategy_migrations import (
+    StrategyMigrationRecord,
+    StrategyMigrationRequest,
+)
+from aftercare_agent.observability import Metrics, metrics_from_environment
 from aftercare_agent.persistence import (
     MAX_PAGE_SIZE,
     AdmissionRepository,
@@ -53,10 +64,13 @@ from aftercare_agent.persistence import (
     CaseGrantRepository,
     CaseListEntry,
     CaseRepository,
+    CheckpointRepository,
     Database,
     EventRepository,
     ReviewRepository,
     RunRepository,
+    StrategyMigrationRepository,
+    assert_schema_current,
     migrate,
     sampler_from_environment,
 )
@@ -72,6 +86,34 @@ class CaseResponse(BaseModel):
     replayed: bool
 
 
+class ReviewOverrideInput(BaseModel):
+    """Monotonic budget/deadline additions for a CONTINUE decision."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    checkpoint_version: int = Field(ge=1)
+    model_calls_add: int = Field(default=0, ge=0)
+    tool_calls_add: int = Field(default=0, ge=0)
+    cost_microusd_add: int = Field(default=0, ge=0)
+    deadline_extension_seconds: int = Field(
+        default=0, ge=0, le=MAX_OVERRIDE_DEADLINE_EXTENSION_SECONDS
+    )
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def has_effect(self) -> "ReviewOverrideInput":
+        if not any(
+            (
+                self.model_calls_add,
+                self.tool_calls_add,
+                self.cost_microusd_add,
+                self.deadline_extension_seconds,
+            )
+        ):
+            raise ValueError("review override must add budget or extend the deadline")
+        return self
+
+
 class ReviewDecisionInput(BaseModel):
     """Operator decision; identity and scope always come from the request context."""
 
@@ -79,6 +121,24 @@ class ReviewDecisionInput(BaseModel):
 
     decision: Literal["CONTINUE", "CANCEL"]
     decision_reason: str | None = Field(default=None, max_length=2000)
+    override: ReviewOverrideInput | None = None
+
+
+class StrategyMigrationInput(BaseModel):
+    """Explicit strategy identity change; the pending Review remains required."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    checkpoint_version: int = Field(ge=1)
+    old_strategy_id: Identifier
+    old_model_config_version: Identifier
+    old_policy_version: Identifier
+    old_tool_schema_version: Identifier
+    new_strategy_id: Identifier
+    new_model_config_version: Identifier
+    new_policy_version: Identifier
+    new_tool_schema_version: Identifier
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class ApprovalDecisionInput(BaseModel):
@@ -105,6 +165,28 @@ class ReviewOperatorResponse(BaseModel):
     created_at: datetime
     decided_at: datetime | None
     updated_at: datetime
+
+
+class StrategyMigrationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    migration_id: str
+    case_id: str
+    run_id: str
+    checkpoint_version_before: int
+    checkpoint_version_after: int
+    old_strategy_id: str
+    old_model_config_version: str
+    old_policy_version: str
+    old_tool_schema_version: str
+    new_strategy_id: str
+    new_model_config_version: str
+    new_policy_version: str
+    new_tool_schema_version: str
+    reason: str
+    migrated_by: str
+    idempotency_key: str
+    created_at: datetime
 
 
 class ApprovalOperatorResponse(BaseModel):
@@ -159,6 +241,7 @@ class RunSummaryResponse(BaseModel):
     wait_generation: int | None
     available_at: datetime | None
     lease_until: datetime | None
+    route_reason: RouteReason | None
 
 
 class CaseListResponse(BaseModel):
@@ -288,6 +371,28 @@ def _review_projection(record: ReviewRecord) -> ReviewOperatorResponse:
     )
 
 
+def _strategy_migration_projection(record: StrategyMigrationRecord) -> StrategyMigrationResponse:
+    return StrategyMigrationResponse(
+        migration_id=record.migration_id,
+        case_id=record.case_id,
+        run_id=record.run_id,
+        checkpoint_version_before=record.checkpoint_version_before,
+        checkpoint_version_after=record.checkpoint_version_after,
+        old_strategy_id=record.old_strategy_id,
+        old_model_config_version=record.old_model_config_version,
+        old_policy_version=record.old_policy_version,
+        old_tool_schema_version=record.old_tool_schema_version,
+        new_strategy_id=record.new_strategy_id,
+        new_model_config_version=record.new_model_config_version,
+        new_policy_version=record.new_policy_version,
+        new_tool_schema_version=record.new_tool_schema_version,
+        reason=record.reason,
+        migrated_by=record.migrated_by,
+        idempotency_key=record.idempotency_key,
+        created_at=record.created_at,
+    )
+
+
 def _approval_projection(record: ApprovalRecord) -> ApprovalOperatorResponse:
     return ApprovalOperatorResponse(
         approval_id=record.approval_id,
@@ -370,8 +475,15 @@ def _administration_summary(entry: CaseListEntry, identity: AuthContext) -> Case
     )
 
 
-def _run_summary(run: RunRecord) -> RunSummaryResponse:
+def _run_summary(run: RunRecord, checkpoint: Checkpoint | None = None) -> RunSummaryResponse:
     """Project a Run without leaking owner, fence or tenant internals."""
+    route_reason = None
+    if (
+        checkpoint is not None
+        and checkpoint.run_id == run.run_id
+        and run.state in ("REVIEW", "RETRY_AT")
+    ):
+        route_reason = checkpoint.route_reason
     return RunSummaryResponse(
         run_id=run.run_id,
         state=run.state,
@@ -380,6 +492,7 @@ def _run_summary(run: RunRecord) -> RunSummaryResponse:
         wait_generation=run.wait_generation,
         available_at=run.available_at,
         lease_until=run.lease_until,
+        route_reason=route_reason,
     )
 
 
@@ -434,7 +547,9 @@ def _authorized_case_row(
 
 def _authorize_stream_event(database: Database, identity: AuthContext, case_id: str) -> None:
     """Re-check a live stream grant in a short transaction (thread target)."""
-    with database.transaction() as connection:
+    with database.transaction(
+        tenant_id=identity.tenant_id, subject_id=identity.subject_id
+    ) as connection:
         _authorized_case(connection, identity, case_id, "case:read")
 
 
@@ -487,11 +602,12 @@ def create_app(
     database: Database,
     *,
     allow_synthetic: bool = False,
+    auto_migrate: bool = True,
     oidc_verifier: TokenVerifier | None = None,
     introspector: TokenIntrospector | None = None,
     metrics: Metrics | None = None,
+    on_shutdown: Callable[[], None] | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Aftercare Agent", version="v1")
     # A configured introspector turns on revocation checking; without a
     # verifier there is no token to check, so both stay unset together.
     guard = (
@@ -505,6 +621,36 @@ def create_app(
         None if metrics is None else sampler_from_environment(database, metrics, component="api")
     )
 
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # Open and pre-warm the pool before the first request borrows from it,
+        # so an unreachable database fails the start and not a caller.
+        try:
+            database.startup()
+            with database.transaction() as connection:
+                if auto_migrate:
+                    migrate(connection)
+                assert_schema_current(connection)
+            if sampler is not None:
+                sampler.start()
+            yield
+        finally:
+            # Diagnostics never hold up a shutdown: stopping waits for at most
+            # one read of the pool counters, not for any work in flight.
+            try:
+                if sampler is not None:
+                    sampler.stop()
+            finally:
+                if on_shutdown is not None:
+                    on_shutdown()
+
+    app = FastAPI(title="Aftercare Agent", version="v1", lifespan=lifespan)
+    # Kept as a narrow diagnostic seam for embedding hosts that need to
+    # explicitly release resources after a failed lifespan start.  Normal
+    # servers should let the lifespan invoke it.
+    if on_shutdown is not None:
+        app.state.aftercare_on_shutdown = on_shutdown
+
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         """Liveness only: no dependency check and safe for process probes."""
@@ -512,10 +658,11 @@ def create_app(
 
     @app.get("/readyz")
     def readyz() -> dict[str, str]:
-        """Readiness: verify the configured database connection is usable."""
+        """Readiness: verify connectivity and the exact application schema."""
         try:
             with database.connection() as connection:
                 connection.execute("SELECT 1")
+                assert_schema_current(connection)
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="not_ready"
@@ -549,25 +696,6 @@ def create_app(
 
     Auth = Annotated[AuthContext, Depends(auth)]
 
-    @app.on_event("startup")
-    def startup() -> None:
-        # Open and pre-warm the pool before the first request borrows from it,
-        # so an unreachable database fails the start and not a caller.
-        database.startup()
-        with database.transaction() as connection:
-            migrate(connection)
-        if sampler is not None:
-            sampler.start()
-
-    if sampler is not None:
-        owned_sampler = sampler
-
-        @app.on_event("shutdown")
-        def _stop_pool_metrics() -> None:
-            # Diagnostics never hold up a shutdown: stopping waits for at most
-            # one read of the pool counters, not for any work in flight.
-            owned_sampler.stop()
-
     @app.post("/v1/cases", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
     def open_case(
         body: OpenCaseInput,
@@ -596,7 +724,9 @@ def create_app(
                 definition_version="v1",
                 input_version=1,
             )
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 result = AdmissionRepository().open(
                     connection,
                     AdmissionKey(tenant_id=identity.tenant_id, idempotency_key=idempotency_key),
@@ -642,12 +772,17 @@ def create_app(
     @app.get("/v1/cases/{case_id}/runs/{run_id}", response_model=RunSummaryResponse)
     def get_run(case_id: str, run_id: str, identity: Auth) -> RunSummaryResponse:
         try:
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 scoped_case_id, _ = _authorized_case(connection, identity, case_id, "case:read")
                 run = RunRepository().get(connection, identity.tenant_id, run_id)
                 if run is None or run.case_id != scoped_case_id:
                     raise ContractViolation(ErrorCode.FORBIDDEN, "case access denied")
-            return _run_summary(run)
+                checkpoint = CheckpointRepository().get_latest(
+                    connection, identity.tenant_id, run_id
+                )
+            return _run_summary(run, checkpoint)
         except ContractViolation as exc:
             raise _error(exc) from exc
 
@@ -670,7 +805,9 @@ def create_app(
         """
         try:
             identity.require("case:read")
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 repository = CaseRepository()
                 if identity.synthetic:
                     entries = repository.list_for_tenant(
@@ -707,11 +844,16 @@ def create_app(
     def get_case(case_id: str, identity: Auth) -> CaseDetailResponse:
         """Read one Case header and its Runs inside the caller's Case scope."""
         try:
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 entry, scoped_identity = _authorized_case_row(
                     connection, identity, case_id, "case:read"
                 )
                 runs = RunRepository().list_for_case(connection, identity.tenant_id, entry.case_id)
+                checkpoints = CheckpointRepository().latest_for_case(
+                    connection, identity.tenant_id, entry.case_id
+                )
             return CaseDetailResponse(
                 case_id=entry.case_id,
                 order_id=entry.order_id,
@@ -719,7 +861,7 @@ def create_app(
                 version=entry.version,
                 created_at=entry.created_at,
                 permissions=sorted(scoped_identity.permissions),
-                runs=[_run_summary(run) for run in runs],
+                runs=[_run_summary(run, checkpoints.get(run.run_id)) for run in runs],
             )
         except ContractViolation as exc:
             raise _error(exc) from exc
@@ -735,7 +877,9 @@ def create_app(
     ) -> ReviewListResponse:
         """List a Case's Reviews so an operator can find pending decisions."""
         try:
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 entry, _ = _authorized_case_row(connection, identity, case_id, "review:read")
                 records = ReviewRepository().list_for_case(
                     connection, identity.tenant_id, entry.case_id, limit=limit
@@ -755,7 +899,9 @@ def create_app(
     ) -> ApprovalListResponse:
         """List a Case's Approvals so an operator can find pending decisions."""
         try:
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 entry, _ = _authorized_case_row(connection, identity, case_id, "approval:read")
                 records = ApprovalRepository().list_for_case(
                     connection, identity.tenant_id, entry.case_id, limit=limit
@@ -774,7 +920,9 @@ def create_app(
         """Read one review only inside the caller's Case authorization scope."""
         try:
             scoped_review_id = _identifier(review_id, "review_id")
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 scoped_case_id, _ = _authorized_case(connection, identity, case_id, "review:read")
                 review = ReviewRepository().get(connection, identity.tenant_id, scoped_review_id)
             if review is None or review.case_id != scoped_case_id:
@@ -799,12 +947,20 @@ def create_app(
         try:
             scoped_review_id = _identifier(review_id, "review_id")
             decision_key = _required_idempotency_key(idempotency_key)
-            with database.transaction() as connection:
-                scoped_case_id, _ = _authorized_case(connection, identity, case_id, "review:decide")
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
+                scoped_case_id, scoped_identity = _authorized_case(
+                    connection, identity, case_id, "review:decide"
+                )
                 repository = ReviewRepository()
                 review = repository.get(connection, identity.tenant_id, scoped_review_id)
                 if review is None or review.case_id != scoped_case_id:
                     raise ContractViolation(ErrorCode.FORBIDDEN, "review access denied")
+                override = None
+                if body.override is not None:
+                    scoped_identity.require("review:override")
+                    override = ReviewOverrideRequest.model_validate(body.override.model_dump())
                 result = repository.decide(
                     connection,
                     identity.tenant_id,
@@ -813,8 +969,47 @@ def create_app(
                     decision=body.decision,
                     decision_idempotency_key=decision_key,
                     decision_reason=body.decision_reason,
+                    override=override,
                 )
                 return _review_projection(result)
+        except ContractViolation as exc:
+            raise _error(exc) from exc
+
+    @app.post(
+        "/v1/cases/{case_id}/runs/{run_id}/strategy-migration",
+        response_model=StrategyMigrationResponse,
+    )
+    def migrate_strategy(
+        case_id: str,
+        run_id: str,
+        body: StrategyMigrationInput,
+        identity: Auth,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> StrategyMigrationResponse:
+        """Migrate a stopped Run's strategy identity without approving its Review."""
+        try:
+            scoped_run_id = _identifier(run_id, "run_id")
+            migration_key = _required_idempotency_key(idempotency_key)
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
+                scoped_case_id, scoped_identity = _authorized_case(
+                    connection, identity, case_id, "strategy:migrate"
+                )
+                scoped_identity.require("strategy:migrate")
+                request = StrategyMigrationRequest.model_validate(
+                    {
+                        **body.model_dump(),
+                        "tenant_id": identity.tenant_id,
+                        "case_id": scoped_case_id,
+                        "run_id": scoped_run_id,
+                        "idempotency_key": migration_key,
+                    }
+                )
+                result, _ = StrategyMigrationRepository().migrate(
+                    connection, request, migrated_by=identity.subject_id
+                )
+            return _strategy_migration_projection(result)
         except ContractViolation as exc:
             raise _error(exc) from exc
 
@@ -826,7 +1021,9 @@ def create_app(
         """Read one approval only inside the caller's Case authorization scope."""
         try:
             scoped_approval_id = _identifier(approval_id, "approval_id")
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 scoped_case_id, _ = _authorized_case(connection, identity, case_id, "approval:read")
                 approval = ApprovalRepository().get(
                     connection, identity.tenant_id, scoped_approval_id
@@ -852,7 +1049,9 @@ def create_app(
         try:
             scoped_approval_id = _identifier(approval_id, "approval_id")
             decision_key = _required_idempotency_key(idempotency_key)
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 scoped_case_id, _ = _authorized_case(
                     connection, identity, case_id, "approval:decide"
                 )
@@ -881,7 +1080,9 @@ def create_app(
     ) -> CaseGrantListResponse:
         """List a Case's grants so access can be audited and handed over."""
         try:
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 scoped_case_id = _administered_case(
                     connection, identity, case_id, GRANT_READ_PERMISSION
                 )
@@ -910,7 +1111,9 @@ def create_app(
         """
         try:
             requested = frozenset(body.permissions)
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 scoped_case_id = _administered_case(
                     connection, identity, case_id, GRANT_ADMIN_PERMISSION
                 )
@@ -950,7 +1153,9 @@ def create_app(
         """Revoke one subject's access; the row stays for audit and revision checks."""
         try:
             scoped_subject_id = _identifier(subject_id, "subject_id")
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 scoped_case_id = _administered_case(
                     connection, identity, case_id, GRANT_ADMIN_PERMISSION
                 )
@@ -987,7 +1192,9 @@ def create_app(
         """
         try:
             identity.require(GRANT_READ_PERMISSION)
-            with database.transaction() as connection:
+            with database.transaction(
+                tenant_id=identity.tenant_id, subject_id=identity.subject_id
+            ) as connection:
                 entries = CaseRepository().list_for_tenant(
                     connection,
                     tenant_id=identity.tenant_id,
@@ -1035,7 +1242,9 @@ def create_app(
                     wait_seconds=wait_seconds,
                     poll_seconds=0.5,
                 )
-                with database.transaction() as connection:
+                with database.transaction(
+                    tenant_id=identity.tenant_id, subject_id=identity.subject_id
+                ) as connection:
                     _authorized_case(connection, identity, scoped_case_id, "case:read")
                 events_iter: Iterator[DomainEvent] | AsyncIterator[DomainEvent] = PostgresEventTail(
                     database
@@ -1047,7 +1256,9 @@ def create_app(
                     wait_seconds=wait_seconds,
                 )
             else:
-                with database.transaction() as connection:
+                with database.transaction(
+                    tenant_id=identity.tenant_id, subject_id=identity.subject_id
+                ) as connection:
                     _authorized_case(connection, identity, scoped_case_id, "case:read")
                     events_iter = iter(
                         EventRepository().list_case_events(
@@ -1104,8 +1315,15 @@ def create_app(
     return app
 
 
+def _binary_environment_flag(name: str, default: str) -> bool:
+    value = os.environ.get(name, default)
+    if value not in {"0", "1"}:
+        raise RuntimeError(f"{name} must be 0 or 1")
+    return value == "1"
+
+
 def create_default_app() -> FastAPI:
-    dsn = os.environ.get("DATABASE_URL", "")
+    dsn = environment_secret("DATABASE_URL") or ""
     if not dsn:
         app = FastAPI(title="Aftercare Agent", version="v1")
 
@@ -1157,7 +1375,7 @@ def create_default_app() -> FastAPI:
                 "audience and JWKS URL to be configured"
             )
         client_id = os.environ.get("AFTERCARE_OIDC_INTROSPECTION_CLIENT_ID")
-        client_secret = os.environ.get("AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET")
+        client_secret = environment_secret("AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET")
         if not client_id or not client_secret:
             raise RuntimeError(
                 "AFTERCARE_OIDC_INTROSPECTION_CLIENT_ID and "
@@ -1183,27 +1401,26 @@ def create_default_app() -> FastAPI:
         )
     # This factory owns the Database, so it owns the pool that Database opens.
     database = Database(dsn)
+
+    def close_owned_resources() -> None:
+        # An app built around a caller's Database (tests, embeddings) leaves
+        # that Database to its owner; this one built its own.  The lifespan
+        # invokes this after the sampler and keeps the operation idempotent.
+        if introspection_client is not None:
+            introspection_client.close()
+        database.close()
+
     app = create_app(
         database,
         allow_synthetic=synthetic_enabled == "1",
+        auto_migrate=_binary_environment_flag("AFTERCARE_AUTO_MIGRATE", "1"),
         oidc_verifier=verifier,
         introspector=introspector,
         # The API owns its process log, so pool health reaches operators with
         # no extra dependency; an exporter can replace this sink later (C-03).
-        metrics=LoggingMetrics(),
+        metrics=metrics_from_environment(),
+        on_shutdown=close_owned_resources,
     )
-    if introspection_client is not None:
-        owned_client = introspection_client
-
-        @app.on_event("shutdown")
-        def _close_introspection_client() -> None:
-            owned_client.close()
-
-    @app.on_event("shutdown")
-    def _close_database_pool() -> None:
-        # An app built around a caller's Database (tests, embeddings) leaves
-        # that Database to its owner; this one built its own.
-        database.close()
 
     return app
 

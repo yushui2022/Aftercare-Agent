@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -32,8 +39,8 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
         with:
           version: "0.9.26"
           enable-cache: true
@@ -41,6 +48,18 @@ jobs:
         run: uv python install 3.13.15
       - name: Install locked dependencies
         run: uv sync --locked
+      - name: Audit locked Python environment
+        run: |
+          uvx --from pip-audit==2.10.1 pip-audit \
+            --path .venv --strict --format json --progress-spinner off \
+            --output pip-audit.json
+      - name: Preserve Python audit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pip-audit-report
+          path: pip-audit.json
+          if-no-files-found: error
       - name: PostgreSQL 17 tools for the restore and archive drills
         # The service below is postgres:17, and pg_dump refuses to read a server
         # newer than itself while the runner image ships an older client.  The
@@ -72,9 +91,83 @@ jobs:
           /usr/lib/postgresql/17/bin/initdb --version
       - name: Static checks
         run: |
+          uv lock --check
           uv run --locked ruff format --check .
           uv run --locked ruff check .
           uv run --locked mypy aftercare_agent tests evals
+          uv run --locked mypy \
+            deploy/deployment_acceptance.py \
+            deploy/deployment_preflight.py \
+            deploy/release_evidence.py \
+            deploy/release_policy.py \
+            deploy/pitr_docker_drill.py \
+            deploy/verify_oci_attestations.py \
+            deploy/verify_cosign_evidence.py \
+            deploy/verify_registry_rescan.py \
+            deploy/verify_rls_evidence.py \
+            deploy/verify_kubernetes_profile.py \
+            deploy/bind_deployment_evidence.py
+          docker compose -f deploy/compose/docker-compose.yml config --quiet
+          docker compose -f deploy/compose/docker-compose.integration.yml config --quiet
+          docker compose --profile worker \
+            --env-file deploy/compose/deployment.env.example \
+            -f deploy/compose/docker-compose.deployment.yml config --quiet
+          preflight_root="$(mktemp -d)"
+          trap 'rm -rf "$preflight_root"' EXIT
+          printf '%s\n' 'postgresql://migration:ci-only@db/aftercare?sslmode=verify-full' > "$preflight_root/migration-dsn"
+          printf '%s\n' 'postgresql://runtime:ci-only@db/aftercare?sslmode=verify-full' > "$preflight_root/runtime-dsn"
+          chmod 600 "$preflight_root/migration-dsn" "$preflight_root/runtime-dsn"
+          image_digest="$(printf 'a%.0s' {1..64})"
+          sed \
+            -e "s|registry.example/aftercare-agent@sha256:replace-me|registry.example/aftercare-agent@sha256:$image_digest|" \
+            -e "s|/secure/aftercare/migration-database-url|$preflight_root/migration-dsn|" \
+            -e "s|/secure/aftercare/runtime-database-url|$preflight_root/runtime-dsn|" \
+            -e 's|replace-with-tenant-id|tenant-ci|' \
+            deploy/compose/deployment.env.example > "$preflight_root/deployment.env"
+          uv run --locked python deploy/deployment_preflight.py \
+            --env-file "$preflight_root/deployment.env" \
+            --output "$preflight_root/preflight.json"
+          python -c 'import json, pathlib; report=json.loads(pathlib.Path("'"$preflight_root"'/preflight.json").read_text()); assert report["status"] == "pass"; assert {item.get("sslmode") for item in report["checks"] if item.get("name") in {"migration_database_url", "runtime_database_url"}} == {"verify-full"}'
+          uv build --out-dir dist
+      - name: Verify the built wheel outside the source tree
+        run: |
+          set -euo pipefail
+          qa_root="$(mktemp -d)"
+          trap 'rm -rf "$qa_root"' EXIT
+          uv venv "$qa_root/venv"
+          wheel="$(find dist -maxdepth 1 -name 'aftercare_agent-*.whl' -print -quit)"
+          test -n "$wheel"
+          uv pip install --python "$qa_root/venv/bin/python" "$wheel" 'pytest>=9,<10'
+          cp -R tests "$qa_root/tests"
+          cp LICENSE SECURITY.md THIRD_PARTY_NOTICES.md CONTRIBUTING.md CHANGELOG.md \
+            .env.example .dockerignore "$qa_root/"
+          (cd "$qa_root" && "$qa_root/venv/bin/python" -I -m pytest \
+            --import-mode=importlib tests/test_package_contract.py -q)
+      - name: Integration Compose smoke
+        env:
+          AFTERCARE_INTEGRATION_EVIDENCE_DIR: ${{ runner.temp }}/aftercare-integration-evidence
+        run: |
+          set -euo pipefail
+          compose_file=deploy/compose/docker-compose.integration.yml
+          mkdir -p "$AFTERCARE_INTEGRATION_EVIDENCE_DIR"
+          trap 'docker compose -f "$compose_file" down -v' EXIT
+          docker compose -f "$compose_file" up --build -d postgres migrate api
+          # API and all one-shot checks are already started by `up`; avoid
+          # asking `run` to replay completed migration/RLS services against
+          # the same database.
+          docker compose -f "$compose_file" run --no-deps --build --rm smoke
+          uv run --locked python deploy/verify_rls_evidence.py \
+            --harden "$AFTERCARE_INTEGRATION_EVIDENCE_DIR/rls-harden.json" \
+            --verify "$AFTERCARE_INTEGRATION_EVIDENCE_DIR/rls-verify.json" \
+            --image-digest "sha256:0000000000000000000000000000000000000000000000000000000000000000" \
+            --output "$AFTERCARE_INTEGRATION_EVIDENCE_DIR/rls-evidence.json"
+      - name: Preserve integration RLS evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: integration-rls-evidence
+          path: ${{ runner.temp }}/aftercare-integration-evidence/*.json
+          if-no-files-found: warn
       - name: Test with PostgreSQL
         env:
           DATABASE_URL: postgresql://aftercare:ci-only-aftercare@127.0.0.1:5432/aftercare
@@ -84,3 +177,265 @@ jobs:
           # variable; a developer without PostgreSQL still gets a skip.
           AFTERCARE_REQUIRE_DRILLS: "1"
         run: uv run --locked pytest -q --tb=short
+      - name: Run physical PITR Docker profile
+        run: |
+          uv run --locked python deploy/pitr_docker_drill.py \
+            --output "$RUNNER_TEMP/aftercare-pitr"
+      - name: Preserve PITR evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pitr-evidence
+          path: |
+            ${{ runner.temp }}/aftercare-pitr/base/base.manifest.json
+            ${{ runner.temp }}/aftercare-pitr/pitr-run.json
+            ${{ runner.temp }}/aftercare-pitr/pitr-verified.json
+          if-no-files-found: error
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+      - uses: pnpm/action-setup@c336a2788d9774dccfdeb4823a5058ccc9f07453 # v4.3.0
+        with:
+          version: "10.28.1"
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24.13.0"
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install locked frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Test and build operator workbench
+        run: |
+          pnpm test
+          pnpm build
+
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          fetch-depth: 0
+      - name: Scan Git history for secrets
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/repo" \
+            zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            detect --source=/repo --config=/repo/.gitleaks.toml \
+            --no-banner --redact --report-format sarif \
+            --report-path=/repo/gitleaks.sarif
+      - name: Preserve secret scan report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gitleaks-report
+          path: gitleaks.sarif
+          if-no-files-found: error
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - name: Derive image audit metadata
+        id: image-metadata
+        shell: bash
+        run: |
+          echo "version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" >> "$GITHUB_OUTPUT"
+          echo "migration=$(python -c 'from pathlib import Path; print(max(int(path.stem.split("_", 1)[0]) for path in Path("aftercare_agent/persistence/migrations").glob("*.sql")))')" >> "$GITHUB_OUTPUT"
+          echo "egm=$(python -c 'import re; from pathlib import Path; print(re.search(r"evidence-gated-memory.*@([0-9a-f]{40})", Path("pyproject.toml").read_text(encoding="utf-8")).group(1))')" >> "$GITHUB_OUTPUT"
+      - name: Build locked runtime image
+        run: |
+          docker buildx build --load --file deploy/Dockerfile \
+            --build-arg AFTERCARE_VERSION="${{ steps.image-metadata.outputs.version }}" \
+            --build-arg AFTERCARE_REVISION="$GITHUB_SHA" \
+            --build-arg AFTERCARE_MIGRATION_VERSION="${{ steps.image-metadata.outputs.migration }}" \
+            --build-arg EGM_GIT_SHA="${{ steps.image-metadata.outputs.egm }}" \
+            --build-arg EGM_SCHEMA_VERSION=1 \
+            --tag aftercare-agent:ci .
+      - name: Verify runtime identity, migration entry point and packaged source ingress
+        run: |
+          test "$(docker inspect --format '{{index .Config.Labels \"org.opencontainers.image.source\"}}' aftercare-agent:ci)" = "https://github.com/yushui2022/Aftercare-Agent"
+          test "$(docker inspect --format '{{index .Config.Labels \"org.opencontainers.image.licenses\"}}' aftercare-agent:ci)" = "MIT"
+          test "$(docker inspect --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}' aftercare-agent:ci)" = "$GITHUB_SHA"
+          test "$(docker inspect --format '{{index .Config.Labels \"io.aftercare.egm.git-sha\"}}' aftercare-agent:ci)" = "${{ steps.image-metadata.outputs.egm }}"
+          test "$(docker inspect --format '{{index .Config.Labels \"io.aftercare.schema.aftercare-migration\"}}' aftercare-agent:ci)" = "${{ steps.image-metadata.outputs.migration }}"
+          test "$(docker inspect --format '{{index .Config.Labels \"io.aftercare.schema.egm\"}}' aftercare-agent:ci)" = "1"
+          docker run --rm --entrypoint python aftercare-agent:ci -c \
+            "import os; import aftercare_agent.connectors.source_auth; import aftercare_agent.investigation.source_ingress; assert os.getuid() == 10001"
+          test "$(docker inspect --format '{{json .Config.Cmd}}' aftercare-agent:ci)" = '["aftercare-api"]'
+          docker run --rm --entrypoint aftercare-api aftercare-agent:ci --help >/dev/null
+          docker run --rm --entrypoint aftercare-migrate aftercare-agent:ci --help >/dev/null
+          docker inspect aftercare-agent:ci > image-metadata.json
+      - name: Build optional observability image profile
+        run: |
+          docker buildx build --load --file deploy/Dockerfile \
+            --build-arg AFTERCARE_VERSION="${{ steps.image-metadata.outputs.version }}" \
+            --build-arg AFTERCARE_REVISION="$GITHUB_SHA" \
+            --build-arg AFTERCARE_MIGRATION_VERSION="${{ steps.image-metadata.outputs.migration }}" \
+            --build-arg EGM_GIT_SHA="${{ steps.image-metadata.outputs.egm }}" \
+            --build-arg EGM_SCHEMA_VERSION=1 \
+            --build-arg AFTERCARE_EXTRAS=observability \
+            --tag aftercare-agent:otel-ci .
+          test "$(docker inspect --format '{{index .Config.Labels \"io.aftercare.build.extras\"}}' aftercare-agent:otel-ci)" = "observability"
+          docker run --rm --entrypoint python aftercare-agent:otel-ci -c \
+            "import opentelemetry; import opentelemetry.sdk; import opentelemetry.exporter.otlp.proto.grpc"
+      - name: Scan runtime image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: aftercare-agent:ci
+          format: json
+          output: trivy-image.json
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          version: v0.70.0
+      - name: Scan optional observability image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: aftercare-agent:otel-ci
+          format: json
+          output: trivy-otel-image.json
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          version: v0.70.0
+      - name: Preserve image vulnerability report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trivy-image-report
+          path: |
+            trivy-image.json
+            trivy-otel-image.json
+          if-no-files-found: error
+      - name: Build and verify OCI SBOM and provenance
+        run: |
+          docker buildx build --file deploy/Dockerfile \
+            --build-arg AFTERCARE_VERSION="${{ steps.image-metadata.outputs.version }}" \
+            --build-arg AFTERCARE_REVISION="$GITHUB_SHA" \
+            --build-arg AFTERCARE_MIGRATION_VERSION="${{ steps.image-metadata.outputs.migration }}" \
+            --build-arg EGM_GIT_SHA="${{ steps.image-metadata.outputs.egm }}" \
+            --build-arg EGM_SCHEMA_VERSION=1 \
+            --sbom=true --provenance=mode=max \
+            --output=type=oci,dest=/tmp/aftercare-image.oci.tar .
+          python deploy/verify_oci_attestations.py /tmp/aftercare-image.oci.tar > oci-evidence.json
+      - name: Verify Kubernetes reference profile against the OCI image
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = json.loads(Path("oci-evidence.json").read_text(encoding="utf-8"))
+          image = f"registry.example/aftercare-agent@{evidence['image_digest']}"
+          output = Path(os.environ["RUNNER_TEMP"]) / "aftercare-kubernetes-profile"
+          output.mkdir(parents=True, exist_ok=True)
+          for source in Path("deploy/kubernetes").glob("*.yaml"):
+              target = output / source.name
+              rendered = (
+                  source.read_text(encoding="utf-8")
+                  .replace("registry.example/aftercare-agent@sha256:replace-me", image)
+                  .replace("replace-with-tenant-id", "tenant-ci")
+              )
+              target.write_text(rendered, encoding="utf-8")
+          print(image)
+          PY
+          image="$(python -c 'import json; print(json.load(open("oci-evidence.json"))["image_digest"])')"
+          python deploy/verify_kubernetes_profile.py \
+            --directory "$RUNNER_TEMP/aftercare-kubernetes-profile" \
+            --image "registry.example/aftercare-agent@$image" \
+            --issuer https://idp.example/ \
+            --audience aftercare-api \
+            --jwks-url https://idp.example/.well-known/jwks.json \
+            --tenant-id tenant-ci \
+            --output kubernetes-profile-evidence.json
+      - name: Preserve image release evidence inputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image-release-evidence
+          path: |
+            image-metadata.json
+            oci-evidence.json
+            kubernetes-profile-evidence.json
+          if-no-files-found: error
+      - name: Smoke the image entry point
+        run: |
+          docker run --detach --name aftercare-image-smoke --publish 18000:8000 aftercare-agent:ci
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:18000/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs aftercare-image-smoke
+          exit 1
+      - name: Remove smoke container
+        if: always()
+        run: docker rm --force aftercare-image-smoke 2>/dev/null || true
+
+  release-evidence:
+    runs-on: ubuntu-latest
+    needs: [test, security, image]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+      - name: Download image evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: image-release-evidence
+          path: evidence/image
+      - name: Download Python audit evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pip-audit-report
+          path: evidence/pip
+      - name: Download image vulnerability evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: trivy-image-report
+          path: evidence/trivy
+      - name: Download secret scan evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gitleaks-report
+          path: evidence/gitleaks
+      - name: Download PITR profile evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pitr-evidence
+          path: evidence/pitr
+      - name: Build release evidence manifest
+        run: |
+          python deploy/release_evidence.py \
+            --image-metadata evidence/image/image-metadata.json \
+            --oci-evidence evidence/image/oci-evidence.json \
+            --pip-audit evidence/pip/pip-audit.json \
+            --trivy evidence/trivy/trivy-image.json \
+            --gitleaks evidence/gitleaks/gitleaks.sarif \
+            --pitr-manifest evidence/pitr/base/base.manifest.json \
+            --pitr-evidence evidence/pitr/pitr-run.json \
+            --pitr-verified evidence/pitr/pitr-verified.json \
+            --kubernetes-profile-evidence evidence/image/kubernetes-profile-evidence.json \
+            --output release-evidence.json
+          python deploy/release_policy.py release-evidence.json \
+            --output release-decision.json
+      - name: Preserve release evidence and decision
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-evidence
+          path: |
+            release-evidence.json
+            release-decision.json
+          if-no-files-found: error

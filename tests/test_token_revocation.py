@@ -11,6 +11,7 @@ import hashlib
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import jwt
@@ -641,6 +642,7 @@ INTROSPECTION_ENV = (
     "AFTERCARE_OIDC_INTROSPECTION_URL",
     "AFTERCARE_OIDC_INTROSPECTION_CLIENT_ID",
     "AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET",
+    "AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET_FILE",
 )
 
 
@@ -698,39 +700,37 @@ def test_introspection_url_must_be_https(monkeypatch: pytest.MonkeyPatch) -> Non
         create_default_app()
 
 
-def test_no_owned_client_shutdown_hook_is_registered_without_introspection(
+def test_default_app_uses_lifespan_without_deprecated_shutdown_hooks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _environment(monkeypatch, **OIDC_ENV)
-    # The app owns the pool it opened and the sampler that reports it; there
-    # is no outbound client to close without introspection.
-    assert [hook.__name__ for hook in create_default_app().router.on_shutdown] == [
-        "_stop_pool_metrics",
-        "_close_database_pool",
-    ]
+    app = create_default_app()
+    assert app.router.on_startup == []
+    assert app.router.on_shutdown == []
+    assert app.router.lifespan_context is not None
+    # The app owns the pool it opened; cleanup is idempotent even when a
+    # supervisor asks for release after a failed lifespan start.
+    app.state.aftercare_on_shutdown()
+    app.state.aftercare_on_shutdown()
 
 
-def test_configured_introspection_registers_an_owned_client_shutdown_hook(
-    monkeypatch: pytest.MonkeyPatch,
+def test_configured_introspection_is_closed_by_lifespan_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    secret = tmp_path / "introspection-secret"
+    secret.write_text("provider-secret\n", encoding="utf-8")
     _environment(
         monkeypatch,
         **OIDC_ENV,
         AFTERCARE_OIDC_INTROSPECTION_URL=ENDPOINT,
         AFTERCARE_OIDC_INTROSPECTION_CLIENT_ID="aftercare-api",
-        AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET="provider-secret",
+        AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET_FILE=str(secret),
     )
     app = create_default_app()
-    hooks = {hook.__name__: hook for hook in app.router.on_shutdown}
-    assert sorted(hooks) == [
-        "_close_database_pool",
-        "_close_introspection_client",
-        "_stop_pool_metrics",
-    ]
-    hooks["_close_introspection_client"]()  # closes the owned httpx client
-    # A shutdown hook also runs on a failed startup, so closing an unopened pool
-    # and closing the same client twice both have to stay safe.
-    hooks["_close_database_pool"]()
-    hooks["_close_database_pool"]()
-    hooks["_stop_pool_metrics"]()  # a sampler that never started stops too
-    hooks["_stop_pool_metrics"]()
+    assert app.router.on_startup == []
+    assert app.router.on_shutdown == []
+    assert app.router.lifespan_context is not None
+    # A shutdown path also runs after a failed startup, so closing an unopened
+    # pool and the same httpx client twice must stay safe.
+    app.state.aftercare_on_shutdown()
+    app.state.aftercare_on_shutdown()

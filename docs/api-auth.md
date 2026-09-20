@@ -35,12 +35,15 @@ uvicorn aftercare_agent.api.app:app
 API 端到端测试覆盖同键重放、同键改参冲突、跨租户读取拒绝和生产模式拒绝合成身份。
 测试使用临时 PostgreSQL 与合成数据；不会发送真实业务动作。
 
-容器探针使用 `/healthz`（仅表示进程存活）和 `/readyz`（执行一次数据库连通性检查）。
-就绪检查失败时返回 `503`；它不替代迁移策略、连接池健康度或真实 OIDC 授权。
+容器探针使用 `/healthz`（仅表示进程存活）和 `/readyz`（检查数据库连通性及当前
+Aftercare migration 版本/checksum）。就绪检查失败时返回 `503`。deployment profile
+使用独立 `aftercare-migrate` Job，并令 API/Worker 设置 `AFTERCARE_AUTO_MIGRATE=0`；
+完整身份与启动顺序见 [deployment profile](deployment.md)。探针不替代连接池容量测量或
+真实 OIDC 授权。
 
 ## 控制面 Review/Approval
 
-控制面路由只接受决定本身和可选的理由。请求体使用 `extra="forbid"`，因此不能携带
+控制面路由只接受决定本身、可选的理由和（仅限有额外权限时的）预算 override。请求体使用 `extra="forbid"`，因此不能携带
 `tenant_id`、`case_id`、`reviewer`、`approver` 或其他权限字段。租户来自认证上下文，工单
 来自路径并经过 `AuthContext.require_case()`，执行人的主体来自认证上下文的 `subject_id`：
 
@@ -48,7 +51,24 @@ API 端到端测试覆盖同键重放、同键改参冲突、跨租户读取拒�
 {"decision": "CONTINUE", "decision_reason": "证据已核对"}
 ```
 
-Review 需要 `review:read`/`review:decide`，审批需要 `approval:read`/`approval:decide`。
+预算耗尽或 deadline 失效的 Run 不能用普通 `CONTINUE` 绕过门禁。持有额外
+`review:override` 的操作员可以在同一次决定中提交单调增加的 checkpoint 版本、模型/工具/成本
+预算和最多 7 天的 deadline 延长，例如：
+
+```json
+{"decision":"CONTINUE","decision_reason":"主管批准受控重试",
+ "override":{"checkpoint_version":7,"model_calls_add":2,"tool_calls_add":1,
+ "cost_microusd_add":5000,"deadline_extension_seconds":3600,
+ "reason":"承运商补充回执预计在一小时内到达"}}
+```
+
+override、更新后的 checkpoint、Review 决定和 `REVIEW→READY` 状态转换在一个 PostgreSQL
+事务中提交，并写入不可变的 `aftercare_review_overrides` 审计表及 `review.decided` 事件快照。
+checkpoint 版本变化、缺少对应的耗尽维度或没有 `review:override` 权限都会 fail closed；当前只
+支持预算/deadline 增量，模型策略切换通过独立的 `strategy:migrate` 入口处理；迁移本身不
+替代后续 Review 决定。
+
+Review 需要 `review:read`/`review:decide`，预算 override 另外需要 `review:override`，策略迁移另外需要 `strategy:migrate`，审批需要 `approval:read`/`approval:decide`。
 决定端点必须携带 `Idempotency-Key` Header；它会经过 Identifier 约束校验，并作为底层
 Repository 的决定幂等键。相同主体、决定、理由和键的重放返回同一不可变决定；修改其中任意
 一项返回 `409`。Repository 会在一个短数据库事务内再次锁定 Case 和门控记录，因而 API
@@ -120,8 +140,24 @@ Token 的 `case_ids` 只能进一步收窄数据库结果，Token scope 与数�
 受审计入口；管理 UI、RLS、实时授权事件和真实 IdP 演练仍然没有（Token 撤销/introspection
 见下一节）。长寿命 Token、把全租户权限映射给普通用户都不应直接用于生产。
 需要人工控制面时，仍须在权限映射和 CaseGrant 中显式授予 `review:*`/`approval:*` scope。
-运行依赖为 `PyJWT[crypto]` 与 `httpx`，密钥轮换、JWKS 可用性、授权映射和生产审计留痕
-仍需 D-01 后续验收。
+
+### JWT + CaseGrant 闭环验收（D-01-09）
+
+仓库现在有一条真实边界回归 `tests/test_oidc_casegrant_acceptance.py`：它使用生产
+`JwtJwksVerifier` 验证实际 RSA 签名 JWT，再由 API 在 PostgreSQL 中解析 CaseGrant。
+同一条链路依次证明“没有授权返回 `403`、授予 `case:read` 后返回 `200`、撤销后再次返回
+`403`”；Token 的 `case_ids` 仍只是数据库授权的收窄条件。JWKS 使用确定性的测试传输，
+所以这条回归不连接外部 IdP，也不把合成身份当作替代路径。接入目标 IdP 前，可在临时
+PostgreSQL 上运行：
+
+```powershell
+$env:DATABASE_URL = "postgresql://..."
+uv run --locked pytest tests/test_oidc_casegrant_acceptance.py -q
+```
+
+这证明的是应用边界和数据库授权闭环，不等于目标 IdP 的密钥轮换、网络策略、introspection、
+RLS 或生产权限运营已经验收；这些仍需在选定部署环境中单独留证。运行依赖为
+`PyJWT[crypto]` 与 `httpx`。
 
 ## Token 撤销与 Introspection（D-01-04）
 
@@ -133,6 +169,9 @@ $env:AFTERCARE_OIDC_INTROSPECTION_URL = "https://idp.example/oauth2/introspect"
 $env:AFTERCARE_OIDC_INTROSPECTION_CLIENT_ID = "aftercare-api"
 $env:AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET = "<provider secret>"
 ```
+
+部署环境也可只设置 `AFTERCARE_OIDC_INTROSPECTION_CLIENT_SECRET_FILE`，令其指向
+secret manager 挂载的单行文件；不能同时设置明文变量与 `_FILE` 变量。
 
 - 这三个变量必须与 OIDC 三元组同时配置。URL 必须是静态 HTTPS（不接受 query 或
   fragment），凭据缺失或 URL 不合法时进程启动即失败，不会静默降级成"只验签"。
@@ -173,7 +212,7 @@ RLS、权限管理 UI 与生产演练。撤销判定不替代 CaseGrant：它回
 管理权是租户级角色，管理面**不**解析调用者自己的 `CaseGrant`：若管理动作也要求先持有该
 Case 的 grant，第一条授权永远发不出去。防止它变成提权通道的是另外两条不变量：
 
-- 闭集：可授予权限只有 `case:read`、`review:read`、`review:decide`、`approval:read`、
+- 闭集：可授予权限只有 `case:read`、`review:read`、`review:decide`、`review:override`、`strategy:migrate`、`approval:read`、
   `approval:decide`。`case:create` 与 `grant:*` 故意不在其中——一张 Case 行不能放大成
   租户级权限；闭集之外的字符串返回 `400` 且不落库。
 - 委派上限：不能授出调用者自己没有的权限，越界返回 `403`，因此管理面无法自我提权。需要

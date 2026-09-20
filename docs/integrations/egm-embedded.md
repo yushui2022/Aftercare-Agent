@@ -1,6 +1,6 @@
 # EGM 0.6：服务于 Aftercare 的嵌入式证据模块
 
-更新日期：2026-09-07。EGM 0.6 为源码版本，尚未发布 PyPI。本仓库已有可执行证据
+更新日期：2026-09-20。EGM 0.6 为源码版本，尚未发布 PyPI。本仓库已有可执行证据
 适配层，不是完整售后平台；本页说明已实现能力及尚未完成的生产条件。
 
 ## 1. 默认架构
@@ -43,7 +43,7 @@ Principal 的身份来自已认证请求/调度，不来自模型参数。
 ## 3. 本地安装与运行
 
 默认不再要求并排克隆或 editable 安装 EGM。Aftercare 的 pyproject/uv.lock 固定 EGM
-提交 `9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd`，包含 0.6 的 application 和
+提交 `5d1302e3eb799764c23d8a8e6872abf8547da4ee`，包含 0.6 的 application、来源约束撤回边界和
 PostgreSQL 实现，只启用 postgres extra，不带入 EGM 的 dev/server extras。
 准备 Python 3.13.15、uv 和 Git，在 Aftercare-Agent 根目录执行：
 
@@ -79,7 +79,7 @@ adapter = AftercareEvidence(
 ```
 
 多机部署时将 provider 换为 PostgresProvider；显式迁移、连接工厂和宿主事务示例见
-[EGM 嵌入指南](https://github.com/yushui2022/Evidence-Gated-Memory/blob/9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd/docs/embedded.md)
+[EGM 嵌入指南](https://github.com/yushui2022/Evidence-Gated-Memory/blob/5d1302e3eb799764c23d8a8e6872abf8547da4ee/docs/embedded.md)
 （本轮锁定安装已从远端取得该提交；这不表示重新核验了远端 main 或 CI）。
 迁移凭证与运行凭证分离，配置可靠 search_path、TLS、连接池和超时；这些不是示例自动完成的。
 

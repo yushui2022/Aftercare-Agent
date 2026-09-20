@@ -43,7 +43,7 @@
 
 ## D：生产准入、容量和有依据的扩展
 
-依据启用功能完成真实认证/渠道审查、安全检查、备份恢复、保留删除、RPO/RTO、压测、成本与人工接管。备份、恢复演练、保留删除、恢复点之后的外部动作核对、按部署预算的新鲜度检查（演练记录写回备份目录），以及 WAL 归档的连续性/推进/覆盖检查已由 `aftercare-backup` 交付并留下本机实测（[ADR-0008](docs/decisions/0008-backup-and-restore-drills.md)、[ADR-0009](docs/decisions/0009-backup-freshness-and-drill-records.md)、[ADR-0010](docs/decisions/0010-wal-archive-checks.md)、[运维文档](docs/operations/backup-restore.md)）；按时间点的 PITR 演练本身、异地副本、备份加密、按部署目标的 RPO/RTO 数值与调度接线仍待完成。真实接入的授权和数据检查必须在调用前完成，不能延后到最终上线日。
+依据启用功能完成真实认证/渠道审查、安全检查、备份恢复、保留删除、RPO/RTO、压测、成本与人工接管。备份、恢复演练、保留删除、恢复点之后的外部动作核对、按部署预算的新鲜度检查（演练记录写回备份目录），以及 WAL 归档的连续性/推进/覆盖检查已由 `aftercare-backup` 交付并留下本机实测（[ADR-0008](docs/decisions/0008-backup-and-restore-drills.md)、[ADR-0009](docs/decisions/0009-backup-freshness-and-drill-records.md)、[ADR-0010](docs/decisions/0010-wal-archive-checks.md)、[运维文档](docs/operations/backup-restore.md)）；本机 Docker profile 已实际跑通物理基线、WAL 前滚和时间点恢复，目标部署环境的 PITR、异地副本、备份加密、按部署目标的 RPO/RTO 数值与调度接线仍待完成。真实接入的授权和数据检查必须在调用前完成，不能延后到最终上线日。
 
 Kafka、NATS JetStream、Redis Streams、ACP、Letta/TencentDB Agent Memory、额外模型路由仍是候选能力。只有确认解决了实际问题，并说明迁移、运维成本与验收方式后才引入。
 

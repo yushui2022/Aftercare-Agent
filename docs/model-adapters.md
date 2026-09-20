@@ -22,6 +22,21 @@ Case scope、工具 schema、预算和 Action Ledger 再次门控；模型不能
 
 当前适配器仍是 A3-01 的边界实现，不代表已经接入真实模型、SSE、沙箱或业务动作。
 
+## ModelStrategy 与恢复时的版本边界
+
+`aftercare_agent.model_adapters.strategy.ModelStrategy` 是部署配置的窄接缝，集中解析
+`strategy_id`、provider model、`config_version`、`policy_version` 和
+`tool_schema_version`。新 Run 会把这些身份写入 checkpoint；其中 `config_version` 默认
+取模型标识，也可以由 `AFTERCARE_MODEL_CONFIG_VERSION` 显式设置。这样切换模型、提示策略
+或工具 schema 时不会只改一处环境变量而无审计地影响已有 Run。
+
+恢复已有 checkpoint 时，当前 `config_version` 与 checkpoint 不一致会在任何模型调用前
+路由为 `model_strategy_changed → REVIEW`。普通 Review `CONTINUE` 不能把它当作预算耗尽
+来放行；持有 `strategy:migrate` Case 权限的操作员可用显式策略迁移入口提交旧/新身份、
+版本和理由。迁移产生新的 checkpoint 和 `review.strategy_migrated` 事件，但只把路由变成
+`strategy_migration_ready`，不替代人工 Review。旧 Run 要么继续使用同一配置版本，要么经过
+可审计迁移；新 Run 才能使用新的策略版本。
+
 `SessionTranscriptLoader` 是持久会话和模型协议之间的受信窄接口。它接收
 `SessionMessageRepository` 返回的当前 Session 消息引用，使用宿主提供的
 `ArtifactResolver` 读取原文，并重新校验 Case 范围、连续序号、UTF-8、大小和 SHA-256。

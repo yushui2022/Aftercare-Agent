@@ -30,13 +30,13 @@ Node 24 在本次核查的官方计划中属于 LTS；前端落地时再次检�
 | 身份验证 | PyJWT + cryptography；provider-neutral JWKS 验签适配器与 RFC 7662 撤销判定 | D-01；具体 IdP 与 CaseGrant 服务待选 |
 | 模型接口 | FakeModelAdapter 先行；官方 OpenAI Python SDK 的 Responses 适配器随后 | A1-03 / A3-01 |
 | 质量检查 | Ruff、mypy、pytest、pytest-asyncio；依任务加入测试依赖 | A0-01 |
-| 观测 | 起步结构化日志与关联 ID；随后 OpenTelemetry SDK/Collector | A1-03 / C-03 |
+| 观测 | 起步结构化日志与关联 ID；`observability` optional extra 提供锁定的 OpenTelemetry SDK/OTLP exporter，Collector/provider 由目标平台配置 | A1-03 / C-03 |
 
-依赖在引入时锁定经过测试的精确版本。当前 [pyproject.toml](../pyproject.toml) / [uv.lock](../uv.lock) 已包含 Aftercare 0.1.0a0、EGM、FastAPI、httpx、PyJWT/cryptography、直接使用的 Pydantic 和质量工具；模型 SDK、前端或整套观测平台仍未加入。Pydantic 必须直接声明，不能因为 EGM 间接安装就漏掉 Aftercare 自己的依赖。
+依赖在引入时锁定经过测试的精确版本。当前 [pyproject.toml](../pyproject.toml) / [uv.lock](../uv.lock) 已包含 Aftercare 0.1.0a0、EGM、FastAPI、httpx、PyJWT/cryptography、直接使用的 Pydantic、质量工具和可选的 OTel SDK/OTLP exporter；模型 SDK、Collector 和整套观测平台仍未加入。Pydantic 必须直接声明，不能因为 EGM 间接安装就漏掉 Aftercare 自己的依赖。
 
 当前锁定的主要版本：Pydantic 2.13.5、psycopg/psycopg-binary 3.3.5、psycopg-pool 3.3.1、PyYAML 6.0.3、Ruff 0.16.6、mypy 1.20.2、pytest 9.1.1、pytest-asyncio 1.4.0；构建采用 setuptools 84.0.0、wheel 0.48.0、packaging 26.3。完整版本与来源以锁文件/构建配置为准；安装、质量与产物检查见[开发指南](development.md)。这份清单不表示已有 PostgreSQL 服务或生产镜像。
 
-EGM 源码基线固定为 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd，包版本 0.6.0。普通构建从确切 Git 提交解析/构建并进入锁文件；发布镜像可使用该提交构建的内部 wheel。开发用相邻仓库 editable 覆盖只能显式开启，必须记录源码差异，不能以此声称是可复现发布。只需要核心和 postgres 能力时，不把 EGM 的 dev/server extras 带进生产镜像。
+EGM 源码基线固定为 5d1302e3eb799764c23d8a8e6872abf8547da4ee，包版本 0.6.0。普通构建从确切 Git 提交解析/构建并进入锁文件；当前 Linux 镜像已从正式 GitHub URL 构建并核对安装来源。开发用相邻仓库 editable 覆盖只能显式开启，必须记录源码差异，不能以此声称是可复现发布。只需要核心和 postgres 能力时，不把 EGM 的 dev/server extras 带进生产镜像。
 
 日常采用 uv sync --locked 校验元数据与锁文件一致；不能把 --frozen 当成“已检查依赖声明没有漂移”，它跳过锁文件时效检查。EGM Git 来源也写入标准包依赖元数据，不只藏在 uv 专属覆盖配置里；单独安装 wheel 仍须沿用锁定环境或审核后的依赖约束。[uv 锁定与同步](https://docs.astral.sh/uv/concepts/projects/sync/)
 
@@ -50,7 +50,7 @@ Worker 的租约心跳是唯一的长持有者：它从池里借一条连接（`
 
 首版不引入 ORM；使用 Repository 和显式 Unit of Work 组织参数化 SQL。既有 EGM join 接受同步 psycopg 连接，Aftercare 的同事务操作必须沿用相同连接及外层事务，不通过另一个池“看似同库”地写入。
 
-池健康按 [ADR-0007](decisions/0007-pool-metrics-and-capacity.md) 发布：`Database.stats()` 是唯一读取口（只含整数，装不下租户/工单/语句/DSN），每进程一个采样器按 `aftercare.db.pool.*` 发 gauge 与 counter，唯一标签是 `component`。默认每 10 s 一次并写标准库日志一行 JSON，`AFTERCARE_POOL_METRICS=0` 关闭，`AFTERCARE_POOL_METRICS_INTERVAL_SECONDS` 改间隔；OTel bridge 是可选类，导出器/采样/留存仍属 C-03。`max_size` 是“按并发有界”的默认值而不是容量结论：定标要用 `aftercare-capacity` 的实测 sweep，版本、工作负载、失败率、延迟与资源成本一起公布，样例参数不当 SLA，方法与三份本机报告见[容量报告](capacity/README.md)。
+池健康按 [ADR-0007](decisions/0007-pool-metrics-and-capacity.md) 发布：`Database.stats()` 是唯一读取口（只含整数，装不下租户/工单/语句/DSN），每进程一个采样器按 `aftercare.db.pool.*` 发 gauge 与 counter，唯一标签是 `component`。默认每 10 s 一次并写标准库日志一行 JSON，`AFTERCARE_POOL_METRICS=0` 关闭，`AFTERCARE_POOL_METRICS_INTERVAL_SECONDS` 改间隔；Worker 另以短事务只读查询发布 `aftercare.queue.runnable_runs` 与 `aftercare.queue.oldest_age_seconds`，`AFTERCARE_QUEUE_METRICS=0` 关闭。OTel bridge 是可选类；核心镜像默认不带 SDK，`AFTERCARE_EXTRAS=observability` 才安装锁定依赖，provider、endpoint、采样和留存仍属 C-03 目标环境配置。`max_size` 是“按并发有界”的默认值而不是容量结论：定标要用 `aftercare-capacity` 的实测 sweep，版本、工作负载、失败率、延迟与资源成本一起公布，样例参数不当 SLA，方法与三份本机报告见[容量报告](capacity/README.md)。
 
 业务迁移使用按版本编号的 SQL 文件和一个受限迁移命令：校验已应用文件摘要、互斥执行迁移、记录版本、默认事务执行，失败不假报成功。初版不支持在普通事务迁移中偷偷执行必须非事务运行的操作；需要时单独设计运维步骤。Aftercare 与 EGM 保留各自迁移版本，不合并成一个不透明 schema_version。
 

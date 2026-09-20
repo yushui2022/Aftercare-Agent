@@ -41,7 +41,7 @@ from aftercare_agent.runtime.harness import run_fake_harness
 from evals.cases.catalog import NOW, POLICY, REGISTRY, SCOPE, catalogue
 from evals.runner import assess_proposal, expected_case
 
-EVALUATOR_VERSION: Final = "a3-04-v1"
+EVALUATOR_VERSION: Final = "a3-04-v1.1"
 PROPOSAL_TOOL: Final = "submit_investigation_proposal"
 MODEL_ID: Final = "synthetic-loop-model"
 

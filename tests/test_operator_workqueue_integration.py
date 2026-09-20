@@ -6,10 +6,12 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.types.json import Jsonb
 
 from aftercare_agent.actions import ActionIntent
 from aftercare_agent.api.app import create_app
 from aftercare_agent.domain.approvals import ApprovalRequest
+from aftercare_agent.domain.protocol import Checkpoint, RemainingBudget
 from aftercare_agent.domain.reviews import ReviewRequest
 from aftercare_agent.domain.runtime import CaseRecord, RunRecord
 from aftercare_agent.persistence import (
@@ -54,6 +56,7 @@ def _open_case(
                 definition_version="v1",
                 input_version=1,
                 state=run_state,  # type: ignore[arg-type]
+                fencing_token=0 if run_state == "READY" else 1,
             ),
         )
     return tenant, case_id, run_id
@@ -110,6 +113,41 @@ def test_case_queue_lists_pending_review_without_internal_fields(
 ) -> None:
     tenant, case_id, run_id = _open_case(db, run_state="REVIEW")
     with db.transaction() as connection:
+        checkpoint = Checkpoint(
+            tenant_id=tenant,
+            case_id=case_id,
+            run_id=run_id,
+            checkpoint_version=1,
+            input_version=1,
+            case_version=1,
+            saved_fencing_token=1,
+            definition_version="model-v1",
+            policy_version="policy-v1",
+            tool_schema_version="tools-v1",
+            model_config_version="model-v1",
+            protocol_version="runtime-v1",
+            remaining_budget=RemainingBudget(
+                model_calls=1,
+                tool_calls=1,
+                cost_microusd=1,
+                deadline=datetime.now(UTC) + timedelta(minutes=5),
+            ),
+            next_step="review",
+            route_reason="executor_rejected",
+        )
+        connection.execute(
+            "INSERT INTO aftercare_checkpoints("
+            "tenant_id,case_id,run_id,checkpoint_version,saved_fencing_token,payload) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (
+                tenant,
+                case_id,
+                run_id,
+                checkpoint.checkpoint_version,
+                checkpoint.saved_fencing_token,
+                Jsonb(checkpoint.model_dump(mode="json")),
+            ),
+        )
         ReviewRepository().request(
             connection,
             ReviewRequest(
@@ -134,6 +172,14 @@ def test_case_queue_lists_pending_review_without_internal_fields(
     assert "evidence_sha256" not in reviews[0]
     assert "policy_version" not in reviews[0]
     assert "tenant_id" not in reviews[0]
+
+    detail = client.get(f"/v1/cases/{case_id}", headers=headers)
+    assert detail.status_code == 200
+    assert detail.json()["runs"][0]["route_reason"] == "executor_rejected"
+
+    direct = client.get(f"/v1/cases/{case_id}/runs/{run_id}", headers=headers)
+    assert direct.status_code == 200
+    assert direct.json()["route_reason"] == "executor_rejected"
 
 
 def test_case_queue_lists_pending_approval_without_internal_fields(

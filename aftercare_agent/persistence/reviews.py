@@ -1,13 +1,32 @@
 """PostgreSQL persistence for the trusted REVIEW gate."""
 
+import hashlib
+import json
+from datetime import timedelta
 from typing import Any, Literal
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode
-from aftercare_agent.domain.reviews import ReviewRecord, ReviewRequest
+from aftercare_agent.domain.protocol import Checkpoint
+from aftercare_agent.domain.reviews import (
+    ReviewOverrideRecord,
+    ReviewOverrideRequest,
+    ReviewRecord,
+    ReviewRequest,
+)
 
 from .gate_events import append_review_decided, append_review_requested
+
+_NON_RESUMABLE_CONTINUE_REASONS = frozenset(
+    {
+        "model_budget_exhausted",
+        "tool_budget_exhausted",
+        "cost_budget_exhausted",
+        "deadline_passed",
+    }
+)
 
 _FIELDS = (
     "tenant_id",
@@ -28,9 +47,30 @@ _FIELDS = (
     "updated_at",
 )
 
+_OVERRIDE_FIELDS = (
+    "tenant_id",
+    "case_id",
+    "run_id",
+    "review_id",
+    "override_id",
+    "checkpoint_version",
+    "model_calls_add",
+    "tool_calls_add",
+    "cost_microusd_add",
+    "deadline_extension_seconds",
+    "reason",
+    "created_by",
+    "idempotency_key",
+    "created_at",
+)
+
 
 def _record(row: tuple[Any, ...]) -> ReviewRecord:
     return ReviewRecord.model_validate(dict(zip(_FIELDS, row, strict=False)))
+
+
+def _override_record(row: tuple[Any, ...]) -> ReviewOverrideRecord:
+    return ReviewOverrideRecord.model_validate(dict(zip(_OVERRIDE_FIELDS, row, strict=False)))
 
 
 class ReviewRepository:
@@ -160,8 +200,15 @@ class ReviewRepository:
         decision: Literal["CONTINUE", "CANCEL"],
         decision_idempotency_key: str,
         decision_reason: str | None = None,
+        override: ReviewOverrideRequest | None = None,
     ) -> ReviewRecord:
-        """Record one decision and atomically resolve its REVIEW Run."""
+        """Record one decision and atomically resolve its REVIEW Run.
+
+        A budget/deadline override, when supplied, is applied to a new
+        checkpoint in the same transaction as the decision and the Run state
+        transition.  There is no intermediate state in which a Run is READY
+        without its corresponding audit record and updated budget.
+        """
         initial = self.get(conn, tenant_id, review_id)
         if initial is None:
             raise ContractViolation(ErrorCode.FORBIDDEN, "review not found")
@@ -178,11 +225,13 @@ class ReviewRepository:
         if current.case_id != initial.case_id or current.run_id != initial.run_id:
             raise ContractViolation(ErrorCode.CONFLICT, "review scope changed")
         if current.decision is not None:
+            stored_override = self._get_override_by_key(conn, tenant_id, decision_idempotency_key)
             if (
                 current.decision == decision
                 and current.reviewer == reviewer
                 and current.decision_idempotency_key == decision_idempotency_key
                 and current.decision_reason == decision_reason
+                and self._same_override(stored_override, override)
             ):
                 # The initial decision and Run resolution commit together.
                 # The Run may already have advanced or entered a later
@@ -195,6 +244,18 @@ class ReviewRepository:
             raise ContractViolation(ErrorCode.CONFLICT, "review input version changed")
         if reviewer == current.requested_by:
             raise ContractViolation(ErrorCode.FORBIDDEN, "requester cannot review its own run")
+        if decision == "CONTINUE":
+            applied_override = self._assert_resume_budget(
+                conn,
+                current,
+                override,
+                reviewer=reviewer,
+                decision_idempotency_key=decision_idempotency_key,
+            )
+        elif override is not None:
+            raise ContractViolation(ErrorCode.INVALID_INPUT, "override requires CONTINUE")
+        else:
+            applied_override = None
         updated = conn.execute(
             "UPDATE aftercare_reviews SET decision=%s,reviewer=%s,"
             "decision_idempotency_key=%s,decision_reason=%s,decided_at=clock_timestamp(),"
@@ -212,8 +273,179 @@ class ReviewRepository:
         assert updated is not None
         result = _record(updated)
         self._resolve_locked(conn, result, run)
-        append_review_decided(conn, result)
+        append_review_decided(conn, result, override=applied_override)
         return result
+
+    @staticmethod
+    def _get_override_by_key(
+        conn: psycopg.Connection[Any], tenant_id: str, idempotency_key: str
+    ) -> ReviewOverrideRecord | None:
+        row = conn.execute(
+            "SELECT " + ",".join(_OVERRIDE_FIELDS) + " FROM aftercare_review_overrides "
+            "WHERE tenant_id=%s AND idempotency_key=%s",
+            (tenant_id, idempotency_key),
+        ).fetchone()
+        return None if row is None else _override_record(row)
+
+    @staticmethod
+    def _same_override(
+        current: ReviewOverrideRecord | None, requested: ReviewOverrideRequest | None
+    ) -> bool:
+        if current is None or requested is None:
+            return current is None and requested is None
+        return (
+            current.checkpoint_version == requested.checkpoint_version
+            and current.model_calls_add == requested.model_calls_add
+            and current.tool_calls_add == requested.tool_calls_add
+            and current.cost_microusd_add == requested.cost_microusd_add
+            and current.deadline_extension_seconds == requested.deadline_extension_seconds
+            and current.reason == requested.reason
+        )
+
+    @staticmethod
+    def _latest_checkpoint(
+        conn: psycopg.Connection[Any], review: ReviewRecord
+    ) -> Checkpoint | None:
+        row = conn.execute(
+            "SELECT checkpoint_version, payload FROM aftercare_checkpoints "
+            "WHERE tenant_id=%s AND case_id=%s AND run_id=%s "
+            "ORDER BY checkpoint_version DESC LIMIT 1 FOR UPDATE",
+            (review.tenant_id, review.case_id, review.run_id),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            checkpoint_version = int(row[0])
+            checkpoint = Checkpoint.model_validate_json(json.dumps(row[1], ensure_ascii=False))
+        except (TypeError, ValueError) as exc:
+            raise ContractViolation(
+                ErrorCode.RETRYABLE, "latest review checkpoint is invalid"
+            ) from exc
+        if checkpoint_version != checkpoint.checkpoint_version:
+            raise ContractViolation(
+                ErrorCode.RETRYABLE, "latest review checkpoint version is inconsistent"
+            )
+        if (checkpoint.tenant_id, checkpoint.case_id, checkpoint.run_id) != (
+            review.tenant_id,
+            review.case_id,
+            review.run_id,
+        ):
+            raise ContractViolation(ErrorCode.FORBIDDEN, "review checkpoint scope mismatch")
+        return checkpoint
+
+    @classmethod
+    def _assert_resume_budget(
+        cls,
+        conn: psycopg.Connection[Any],
+        review: ReviewRecord,
+        override: ReviewOverrideRequest | None,
+        *,
+        reviewer: str,
+        decision_idempotency_key: str,
+    ) -> ReviewOverrideRecord | None:
+        """Validate a CONTINUE and, when authorized, stage its new checkpoint."""
+        checkpoint = cls._latest_checkpoint(conn, review)
+        if checkpoint is not None and checkpoint.route_reason == "model_strategy_changed":
+            raise ContractViolation(
+                ErrorCode.CONFLICT,
+                "model strategy changed; deploy an explicit strategy migration before continuing",
+            )
+        if checkpoint is None or checkpoint.route_reason not in _NON_RESUMABLE_CONTINUE_REASONS:
+            if override is not None:
+                raise ContractViolation(
+                    ErrorCode.CONFLICT, "review override requires an exhausted budget or deadline"
+                )
+            return None
+        reason = checkpoint.route_reason
+        if override is None:
+            code = ErrorCode.BUDGET_EXHAUSTED if reason != "deadline_passed" else ErrorCode.CONFLICT
+            raise ContractViolation(code, "review needs an explicit budget or deadline override")
+        if override.checkpoint_version != checkpoint.checkpoint_version:
+            raise ContractViolation(ErrorCode.CONFLICT, "review checkpoint version changed")
+        required = {
+            "model_budget_exhausted": override.model_calls_add > 0,
+            "tool_budget_exhausted": override.tool_calls_add > 0,
+            "cost_budget_exhausted": override.cost_microusd_add > 0,
+            "deadline_passed": override.deadline_extension_seconds > 0,
+        }
+        if not required[reason]:
+            raise ContractViolation(
+                ErrorCode.INVALID_INPUT,
+                f"override must increase the exhausted {reason.removesuffix('_exhausted')} budget",
+            )
+        budget = checkpoint.remaining_budget
+        maximum = 2**63 - 1
+        values = {
+            "model_calls": budget.model_calls + override.model_calls_add,
+            "tool_calls": budget.tool_calls + override.tool_calls_add,
+            "cost_microusd": budget.cost_microusd + override.cost_microusd_add,
+        }
+        if any(value > maximum for value in values.values()):
+            raise ContractViolation(
+                ErrorCode.INVALID_INPUT, "review override exceeds budget limits"
+            )
+        try:
+            deadline = budget.deadline + timedelta(seconds=override.deadline_extension_seconds)
+        except OverflowError as exc:
+            raise ContractViolation(
+                ErrorCode.INVALID_INPUT, "review deadline is out of range"
+            ) from exc
+        updated_checkpoint = checkpoint.model_copy(
+            update={
+                "checkpoint_version": checkpoint.checkpoint_version + 1,
+                "remaining_budget": budget.model_copy(update={**values, "deadline": deadline}),
+                "next_step": "model",
+                "route_reason": None,
+                "available_at": None,
+                "pending_tool": None,
+                "pending_proposal_json": None,
+                "wait_id": None,
+                "wait_generation": None,
+                "resume_next_step": None,
+            }
+        )
+        conn.execute(
+            "INSERT INTO aftercare_checkpoints(tenant_id,case_id,run_id,checkpoint_version,"
+            "saved_fencing_token,payload) VALUES (%s,%s,%s,%s,%s,%s)",
+            (
+                updated_checkpoint.tenant_id,
+                updated_checkpoint.case_id,
+                updated_checkpoint.run_id,
+                updated_checkpoint.checkpoint_version,
+                updated_checkpoint.saved_fencing_token,
+                Jsonb(updated_checkpoint.model_dump(mode="json")),
+            ),
+        )
+        override_id = (
+            "review-override-"
+            + hashlib.sha256(
+                f"{review.tenant_id}:{review.review_id}:{decision_idempotency_key}".encode()
+            ).hexdigest()
+        )
+        row = conn.execute(
+            "INSERT INTO aftercare_review_overrides("
+            + ",".join(_OVERRIDE_FIELDS[:-1])
+            + ") VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+            "RETURNING " + ",".join(_OVERRIDE_FIELDS),
+            (
+                review.tenant_id,
+                review.case_id,
+                review.run_id,
+                review.review_id,
+                override_id,
+                checkpoint.checkpoint_version,
+                override.model_calls_add,
+                override.tool_calls_add,
+                override.cost_microusd_add,
+                override.deadline_extension_seconds,
+                override.reason,
+                reviewer,
+                decision_idempotency_key,
+            ),
+        ).fetchone()
+        if row is None:
+            raise ContractViolation(ErrorCode.RETRYABLE, "review override outcome is unknown")
+        return _override_record(row)
 
     def resolve_review(
         self,

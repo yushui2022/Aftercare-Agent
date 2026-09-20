@@ -183,6 +183,7 @@ export function CaseDetailPane({
                 <th>Run</th>
                 <th>状态</th>
                 <th>输入版本</th>
+                <th>路由原因</th>
                 <th>等待</th>
                 <th>租约到期</th>
               </tr>
@@ -197,6 +198,7 @@ export function CaseDetailPane({
                     </span>
                   </td>
                   <td>{run.input_version}</td>
+                  <td className="mono">{run.route_reason ?? "—"}</td>
                   <td className="mono">
                     {run.wait_id === null
                       ? "—"

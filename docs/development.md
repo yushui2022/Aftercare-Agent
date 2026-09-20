@@ -6,8 +6,9 @@
 
 - Python：常规 CPython 3.13.15，固定在 .python-version；包声明支持 >=3.13.15,<3.14。其他补丁或平台需要另行验证。
 - 环境工具：uv >=0.9.26；本次实际使用 0.9.26。还需要 Git 和首次安装时访问 PyPI、GitHub 的网络。
-- Aftercare：开发版本 0.1.0a0，没有发布到 PyPI，也没有选择项目许可证。
-- EGM：0.6.0，直接依赖固定完整提交 9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd，只启用 postgres extra。
+- Aftercare：开发版本 0.1.0a0，没有发布到 PyPI；项目许可证为 MIT，发布前仍需完成版本、签名和目标仓库验收。
+- EGM：0.6.0，直接依赖固定完整提交 5d1302e3eb799764c23d8a8e6872abf8547da4ee，只启用 postgres extra。
+- OTel：默认不进入核心镜像；需要指标 OTel bridge 时用锁定的 `observability` optional extra 构建镜像（`AFTERCARE_EXTRAS=observability`），provider、endpoint、采样和留存仍由目标平台配置。
 
 依赖声明见 [pyproject.toml](../pyproject.toml)，精确解析结果见 [uv.lock](../uv.lock)。不需要并排克隆 EGM；默认安装不能引用相邻工作区的未提交内容。普通 pip 安装单独的 wheel 不会自动使用 uv.lock，不能据此声称传递依赖完全相同。
 
@@ -53,7 +54,9 @@ uv sync --locked
 uv run --locked ruff check .
 uv run --locked ruff format --check .
 uv run --locked mypy
+uv run --locked mypy deploy/deployment_acceptance.py deploy/deployment_preflight.py deploy/release_evidence.py deploy/release_policy.py deploy/pitr_docker_drill.py deploy/verify_oci_attestations.py deploy/bind_deployment_evidence.py deploy/verify_kubernetes_profile.py
 uv run --locked pytest -q
+uvx --from pip-audit==2.10.1 pip-audit --path .venv --strict --progress-spinner off
 ```
 
 逐条检查退出码；安装或前一项失败时不要继续宣布全部通过。更改依赖时才显式运行 uv lock 并评审锁文件差异；日常执行使用 --locked，不能用跳过时效检查的 --frozen 掩盖元数据漂移。[uv 同步语义](https://docs.astral.sh/uv/concepts/projects/sync/)
@@ -61,10 +64,23 @@ uv run --locked pytest -q
 这一套在切片收尾时跑一次完整流程，不要在调试循环里反复跑全量；改动集中在一个模块时先跑相关子集。
 测试和文档的数量上限见 [AGENTS.md](../AGENTS.md) 的“测试与文档预算”：新增测试行数不超过新增产品行数的一半，只为不变量、边界和真实集成写用例。跨文件共用的 PostgreSQL fixture 只保留 [tests/conftest.py](../tests/conftest.py) 里的 `dsn`/`database`/`db`，需要额外准备数据的文件再各自定义并遮蔽它们。
 
+Kubernetes 参考 profile 的离线结构校验可单独运行；它不需要集群或云凭据，只验证四个工作负载之间的镜像、租户、Secret、Job 与安全基线是否一致。CI 还会在 Linux runner 上生成临时 owner-only DSN Secret，真实执行 deployment preflight，核对 `sslmode=verify-full` 和迁移/runtime Secret 分离：
+
+```powershell
+uv run --locked python deploy/verify_kubernetes_profile.py `
+  --image ghcr.io/example/aftercare@sha256:<immutable-digest> `
+  --issuer https://issuer.example.com `
+  --audience aftercare-api `
+  --jwks-url https://issuer.example.com/.well-known/jwks.json `
+  --tenant-id tenant-demo
+```
+
+这一步不能替代目标集群里的 migration/RLS check Job、Secret/TLS、真实 IdP、备份与回滚演练；这些仍要在选定部署环境留存机器证据。
+
 检查范围：
 
 - Ruff：Python、类型存根和 pyproject 配置，不修改历史文章中的示例代码。
-- mypy：aftercare_agent 和 tests 的严格检查。follow_imports=silent 只限制外部依赖诊断；不是关闭本项目类型检查。
+- mypy：aftercare_agent 和 tests 的严格检查；部署审计脚本另以显式文件列表严格检查。follow_imports=silent 只限制外部依赖诊断；不是关闭本项目类型检查。
 - EGM 0.6 部分返回值没有注解；适配器只在此边界使用 TypedDict 和 cast，测试验证响应信封。cast 不进行运行时校验，也不提供新的权限保证；后续返回协议变更必须同步验证。
 - [适配器回归](../tests/test_evidence_adapter.py)：成功/失败回执、固定声明、角色与租户隔离、重放及响应信封。
 - [安装包契约](../tests/test_package_contract.py)：固定 Git 来源、包元数据、py.typed、内置 aftercare schema 和 PostgreSQL 迁移资源；不连接数据库。
@@ -100,9 +116,12 @@ uv run --locked pytest -q
 - 本机是 PostgreSQL 16.13，CI 是 `postgres:17`，两者不是同一版本；本机通过不等于 CI
   通过，远端结果才是权威。
 - 集成测试与本地进程默认走连接池：每进程 min 1 / max 8 条连接、借用超时 5 s，可用 `AFTERCARE_DB_POOL_MIN_SIZE`、`AFTERCARE_DB_POOL_MAX_SIZE`、`AFTERCARE_DB_ACQUIRE_TIMEOUT_SECONDS` 覆盖；池在首次借用或 API `startup()` 时打开，构造 `Database` 不产生线程与连接。`Database.direct(dsn)` 明确走“每个工作单元一条连接”，只用于对照与一次性脚本；决策、代价与不变量见 [ADR-0006](decisions/0006-bounded-connection-pool.md)。
+- 需要租户数据库上下文的短事务使用 `Database.transaction(tenant_id=..., subject_id=...)`；值必须来自已验证身份或锁定的 Case/Run scope，不能来自请求体或模型输出。接缝用事务本地 PostgreSQL GUC，并在无上下文事务中显式清空 `aftercare.tenant_id`/`aftercare.subject_id`，所以连接池借还不会把上一个租户带给下一个事务。部署 RLS 策略应把空字符串按无上下文处理；完整 rollout 见 [ADR-0015](decisions/0015-target-deployment-and-rls-boundary.md)。
 - `tests/persistence/test_worker.py::test_worker_heartbeat_keeps_long_slice_lease_alive` 的预算不能再收紧：用例现在是 1 s 租约 / 100 ms 间隔 / 1.5 s 切片，而它存在的理由是 200 ms 租约会让心跳的建连去和它要保的截止时间赛跑（本机建连 p50 115 ms / 最大 215 ms，而续期事务 p50 0.8 ms）。D-04 之后心跳从连接池借连接，稳态下不再付建连，但池刚建立、连接被判坏或池被占满时仍可能付一次，因此预算保持不变。
-- 池指标与容量定标（[ADR-0007](decisions/0007-pool-metrics-and-capacity.md)）：每个进程默认每 10 s 采一次 `Database.stats()`，以一行 JSON 写进 `aftercare_agent.metrics` logger；`AFTERCARE_POOL_METRICS=0` 关闭，`AFTERCARE_POOL_METRICS_INTERVAL_SECONDS` 改间隔。要判断 `max_size`/`min_size` 该不该调，用 `aftercare-capacity` 扫一遍：`--p95-budget-ms` 是判据，退出码 0/1 可直接用在 CI 里，`--service-time-ms` 决定工作单元占槽多久，`--min-size` 决定突发要不要付握手。方法与读法见[容量报告](capacity/README.md)。
-- 备份与恢复演练（[ADR-0008](decisions/0008-backup-and-restore-drills.md)、[ADR-0009](decisions/0009-backup-freshness-and-drill-records.md)、[ADR-0010](decisions/0010-wal-archive-checks.md)）：`aftercare-backup create --directory <dir>` 在同一次 `REPEATABLE READ` 快照里取 schema/行数并让 `pg_dump --snapshot` 导出，`verify` 离线核对清单与 dump，`drill` 把 dump 恢复到新建临时库后逐表比对行数再删除副本、并写一份 `<name>.drill.json`（失败也写），`retention` 先出计划再由 `--apply` 执行，`reconcile` 列出 `UNKNOWN` 与恢复点之后被更新的 Action，`status` 按部署给出的 RPO/演练预算判定新鲜度（不配置预算时只报告，退出码 0/1/2），`wal` 检查 WAL 归档是否连续、归档器是否还在推进、归档是否覆盖最新那份 dump（滞后预算同样没有默认值，`--dsn` 可选）。客户端 `pg_dump`/`pg_restore` 的 major 不能低于服务端，否则工具在写文件前就失败；本机要用 `D:\postgresql\16\bin` 时把它加到 PATH，或用 `AFTERCARE_PG_DUMP`/`AFTERCARE_PG_RESTORE` 指路径。上列集成测试需要这两个二进制，缺了会带原因跳过；但在 CI 里跳过算失败（`AFTERCARE_REQUIRE_DRILLS=1`）——作业既然专门装了工具与服务器，跳过就意味着它比声称的跑得少，而绿色的作业不能盖着一个没跑的演练。用法与实测见[运维文档](operations/backup-restore.md)。
+- 池指标与容量定标（[ADR-0007](decisions/0007-pool-metrics-and-capacity.md)）：每个进程默认每 10 s 采一次 `Database.stats()`，以一行 JSON 写进 `aftercare_agent.metrics` logger；`AFTERCARE_POOL_METRICS=0` 关闭，`AFTERCARE_POOL_METRICS_INTERVAL_SECONDS` 改间隔。Worker 还发布 runnable queue 的 `aftercare.queue.runnable_runs` 与 `aftercare.queue.oldest_age_seconds`，`AFTERCARE_QUEUE_METRICS=0` 关闭；独立 Worker CLI 默认安装 INFO 日志 handler，保证这些 JSON 行可见。要判断 `max_size`/`min_size` 该不该调，用 `aftercare-capacity` 扫一遍：`--p95-budget-ms` 是判据，退出码 0/1 可直接用在 CI 里，`--service-time-ms` 决定工作单元占槽多久，`--min-size` 决定突发要不要付握手。方法与读法见[容量报告](capacity/README.md)。
+- 备份与恢复演练（[ADR-0008](decisions/0008-backup-and-restore-drills.md)、[ADR-0009](decisions/0009-backup-freshness-and-drill-records.md)、[ADR-0010](decisions/0010-wal-archive-checks.md)）：`aftercare-backup create --directory <dir>` 在同一次 `REPEATABLE READ` 快照里取 schema/行数并让 `pg_dump --snapshot` 导出，`verify` 离线核对清单与 dump，`drill` 把 dump 恢复到新建临时库后逐表比对行数再删除副本、并写一份 `<name>.drill.json`（失败也写），`retention` 先出计划再由 `--apply` 执行，`reconcile` 列出 `UNKNOWN` 与恢复点之后被更新的 Action，`status` 按部署给出的 RPO/演练预算判定新鲜度（不配置预算时只报告，退出码 0/1/2），`wal` 检查 WAL 归档是否连续、归档器是否还在推进、归档是否覆盖最新那份 dump（滞后预算同样没有默认值，`--dsn` 可选），`pitr` 只校验目标平台实际执行的时间点恢复报告，并把报告绑定到物理 `pg_basebackup` 清单的文件摘要、字节数和 WAL 起止位置；逻辑 `pg_dump` 清单不能作为 PITR 基线，校验器不执行 PITR。客户端 `pg_dump`/`pg_restore` 的 major 不能低于服务端，否则工具在写文件前就失败；本机要用 `D:\postgresql\16\bin` 时把它加到 PATH，或用 `AFTERCARE_PG_DUMP`/`AFTERCARE_PG_RESTORE` 指路径。上列集成测试需要这两个二进制，缺了会带原因跳过；但在 CI 里跳过算失败（`AFTERCARE_REQUIRE_DRILLS=1`）——作业既然专门装了工具与服务器，跳过就意味着它比声称的跑得少，而绿色的作业不能盖着一个没跑的演练。用法与实测见[运维文档](operations/backup-restore.md)。
+- 本机 PITR profile：`python deploy/pitr_docker_drill.py --output <dir>` 用 `postgres:17` 实际执行 `pg_basebackup`、WAL 归档和第二实例的 `restore_command` 时间点恢复，并生成物理基线清单、五项 PITR 检查和 `aftercare-backup pitr` 校验结果；输出中的业务表是合成探针，生产必须换成真实业务不变量和 Action 对账查询。它保留证据、清理容器，不实现对象存储、流量切换或生产调度。
+- CI 的 PostgreSQL job 还会运行同一个 Docker profile，并归档物理清单、恢复报告和验证器输出；`release-evidence` 会校验三份 JSON 的摘要绑定并把 `pitr_profile` 与文件摘要带入发布清单。归档不包含恢复数据目录，因此它证明的是恢复链路和证据契约持续可执行，不是目标环境的 RPO/RTO。
 
 ## 4. 构建 sdist，再由 sdist 构建 wheel
 
@@ -111,7 +130,7 @@ uv build --sdist --out-dir dist
 uv build --wheel --out-dir dist dist/aftercare_agent-0.1.0a0.tar.gz
 ```
 
-产物写入项目 dist/，不提交到 Git。版本变化时同步文件名；不要只打 wheel 而漏验 sdist 中的源文件。构建依赖和 uv 构建约束均已固定在 pyproject 中；这保证所选构建工具版本，不意味着已证明跨机器逐字节相同的构建。
+产物写入项目 dist/，不提交到 Git。版本变化时同步文件名；不要只打 wheel 而漏验 sdist 中的源文件。构建依赖和 uv 构建约束均已固定在 pyproject 中；这保证所选构建工具版本，不意味着已证明跨机器逐字节相同的构建。CI 还会把 wheel 安装到仓库外的临时虚拟环境，用 `-I` 运行 `tests/test_package_contract.py`，避免源码目录遮蔽发布包。
 
 Aftercare wheel 只需包含适配器包、类型标记与 dist-info；EGM 的 schema/SQL 必须在 EGM 自己的安装包中存在。README 会进入包元数据，所以改完 README 后应重新构建最终验收产物。
 
@@ -166,4 +185,4 @@ EGM 目前以 Git 来源安装，因此来源测试要求 direct_url.json 中存
 
 ## 6. 仍然没有的入口
 
-真实业务连接器、模型和沙箱仍未交付。A1-04/A2 已提供仅供本地开发的 [Compose smoke 环境](../deploy/compose/README.md)、常驻轮询、租约心跳和 Outbox publisher；A3-03 已提供有界 SSE 回放/tail 和 `web/` 工作台，但不含真实身份登录，也不能代替生产部署、安全审计、依赖漏洞扫描和性能验收。`aftercare-capacity` 给的是单机池容量方法，不是跨环境容量结论。`aftercare-backup` 给的是备份、演练、新鲜度检查、WAL 归档检查与核对的口径和工具，不含按时间点的 PITR 演练本身、异地副本、备份加密；RPO/RTO 的**数值**仍要按部署确定，工具只提供可执行的预算检查，调度接线也还没有在目标环境跑过。现有 SQLite 回归也不能代替真实 PostgreSQL 租约、事务和故障恢复测试。
+真实业务连接器、模型和沙箱仍未交付。A1-04/A2 已提供仅供本地开发的 [Compose smoke 环境](../deploy/compose/README.md)、常驻轮询、租约心跳和 Outbox publisher；A3-03 已提供有界 SSE 回放/tail 和 `web/` 工作台，但不含真实身份登录，也不能代替生产部署、镜像签名和性能验收。`pip-audit==2.10.1` 只审计当前 Python 环境，CI 另用固定 digest 的 Trivy 扫描运行镜像 OS/library 依赖，并用固定 digest 的 Gitleaks 扫描完整 Git 历史；这些结果都不能代替目标镜像仓库的持续复扫和平台级 secret protection。`aftercare-capacity` 给的是单机池容量方法，不是跨环境容量结论。`aftercare-backup` 给的是备份、演练、新鲜度检查、WAL 归档检查与核对的口径和工具，不含按时间点的 PITR 演练本身、异地副本、备份加密；RPO/RTO 的**数值**仍要按部署确定，工具只提供可执行的预算检查，调度接线也还没有在目标环境跑过。现有 SQLite 回归也不能代替真实 PostgreSQL 租约、事务和故障恢复测试。

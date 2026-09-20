@@ -1,15 +1,26 @@
 """Connector answers reach the evidence ledger; skipped without PostgreSQL."""
 
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 
+import pytest
 from evidence_gated_memory.application import Principal
 
 from aftercare_agent.artifacts import ContentAddressedArtifactStore
-from aftercare_agent.connectors import CommerceConnector, CommerceSources, load_commerce_dataset
-from aftercare_agent.domain.common import RunScope
+from aftercare_agent.connectors import (
+    CommerceConnector,
+    CommerceSources,
+    HmacSourceCredential,
+    HmacSourceEventVerifier,
+    SignedSourceRequest,
+    SourceIdentity,
+    build_signed_source_request,
+    load_commerce_dataset,
+)
+from aftercare_agent.domain.common import ContractViolation, ErrorCode, RunScope
 from aftercare_agent.domain.investigation import (
     ClaimProposal,
     FreshnessPolicy,
@@ -23,8 +34,10 @@ from aftercare_agent.domain.investigation import (
 from aftercare_agent.domain.protocol import ToolRequest
 from aftercare_agent.domain.runtime import CaseRecord
 from aftercare_agent.investigation import (
+    AuthenticatedSourceIngress,
     ConnectorEvidenceRecorder,
     InvestigationEvidenceAdapter,
+    RunScopedEvidenceRecorder,
     registered_source_kinds,
 )
 from aftercare_agent.persistence import Database, RunRepository
@@ -74,6 +87,19 @@ def _request(name: str, call_id: str, arguments: str = "{}") -> ToolRequest:
     return ToolRequest(call_id=call_id, name=name, arguments_json=arguments)
 
 
+def _signed_source_request(
+    secret: bytes, *, content: bytes, observed_at: datetime
+) -> SignedSourceRequest:
+    return build_signed_source_request(
+        secret,
+        key_id="erp-key-1",
+        delivery_id="erp-delivery-1",
+        issued_at=NOW,
+        observed_at=observed_at,
+        content=content,
+    )
+
+
 def _executor(
     db: Database, tmp_path: Path
 ) -> tuple[SandboxedToolExecutor, InvestigationEvidenceAdapter]:
@@ -116,6 +142,18 @@ def test_a_connector_answer_reaches_the_ledger_once_and_survives_replay(
     db: Database, tmp_path: Path
 ) -> None:
     with db.transaction() as connection:
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_revocations WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_projections WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_buyer_cursors WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_bindings WHERE tenant_id=%s", (TENANT,)
+        )
         connection.execute(
             "DELETE FROM aftercare_investigation_observations WHERE tenant_id=%s", (TENANT,)
         )
@@ -170,3 +208,123 @@ def test_a_connector_answer_reaches_the_ledger_once_and_survives_replay(
     assert assessment.missing == (MissingMaterial.BUYER_STATEMENT,)
     assert assessment.disposition is InvestigationDisposition.NEEDS_MATERIAL
     assert assessment.authorizes_external_action is False
+
+
+def test_buyer_history_import_advances_a_durable_cursor_after_evidence(
+    db: Database, tmp_path: Path
+) -> None:
+    with db.transaction() as connection:
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_revocations WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_projections WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_buyer_cursors WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_bindings WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_observations WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute("DELETE FROM aftercare_cases WHERE tenant_id=%s", (TENANT,))
+        RunRepository().create_case(
+            connection, CaseRecord(tenant_id=TENANT, case_id=CASE, order_id=ORDER, version=1)
+        )
+    connector = CommerceConnector(load_commerce_dataset(SAMPLE), sources=SOURCES)
+    recorder = RunScopedEvidenceRecorder(database=db, connector=connector)
+    store = ContentAddressedArtifactStore(tmp_path / "buyer-history")
+    scope = RunScope(tenant_id=TENANT, case_id=CASE, run_id="run-history")
+
+    assert recorder.import_buyer_history(scope=scope, store=store, page_size=1) == 1
+    assert recorder.import_buyer_history(scope=scope, store=store, page_size=1) == 0
+    context = json.loads(recorder.evidence_context(scope))
+    assert [item["kind"] for item in context["observations"]] == ["buyer_statement"]
+    assert "text" not in context["observations"][0]["facts"]
+
+    with db.connection() as connection:
+        evidence = connection.execute(
+            "SELECT kind,source_id FROM aftercare_investigation_observations "
+            "WHERE tenant_id=%s AND case_id=%s",
+            (TENANT, CASE),
+        ).fetchall()
+        cursor = connection.execute(
+            "SELECT message_id FROM aftercare_investigation_buyer_cursors "
+            "WHERE tenant_id=%s AND case_id=%s AND source_id=%s",
+            (TENANT, CASE, SOURCES.buyer_channel),
+        ).fetchone()
+    assert evidence == [("buyer_statement", SOURCES.buyer_channel)]
+    assert cursor == ("msg-3001",)
+
+
+def test_authenticated_source_replay_converges_across_workers(db: Database, tmp_path: Path) -> None:
+    with db.transaction() as connection:
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_revocations WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_projections WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_buyer_cursors WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_egm_bindings WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute(
+            "DELETE FROM aftercare_investigation_observations WHERE tenant_id=%s", (TENANT,)
+        )
+        connection.execute("DELETE FROM aftercare_cases WHERE tenant_id=%s", (TENANT,))
+        RunRepository().create_case(
+            connection, CaseRecord(tenant_id=TENANT, case_id=CASE, order_id=ORDER, version=1)
+        )
+    secret = b"authenticated-source-test-secret-32-bytes"
+    connector = CommerceConnector(load_commerce_dataset(SAMPLE), sources=SOURCES)
+    answer = connector.lookup_order(tenant_id=TENANT, order_id=ORDER)
+    request = _signed_source_request(
+        secret, content=answer.content(), observed_at=answer.observed_at
+    )
+    verifier = HmacSourceEventVerifier(
+        {
+            "erp-key-1": HmacSourceCredential(
+                identity=SourceIdentity(
+                    tenant_id=TENANT,
+                    source_id=SOURCES.order_ledger,
+                    tool="lookup_order",
+                ),
+                secret=secret,
+            )
+        }
+    )
+    scope = RunScope(tenant_id=TENANT, case_id=CASE, run_id="source-run")
+    store = ContentAddressedArtifactStore(tmp_path / "authenticated-source")
+
+    def ingress() -> AuthenticatedSourceIngress:
+        return AuthenticatedSourceIngress(
+            verifier=verifier,
+            recorder=RunScopedEvidenceRecorder(database=db, connector=connector),
+            store=store,
+        )
+
+    first = ingress().ingest(request, scope=scope, now=NOW)
+    replay = ingress().ingest(request, scope=scope, now=NOW)
+    assert replay == first
+    with db.connection() as connection:
+        count = connection.execute(
+            "SELECT count(*) FROM aftercare_investigation_observations "
+            "WHERE tenant_id=%s AND case_id=%s",
+            (TENANT, CASE),
+        ).fetchone()
+    assert count == (1,)
+
+    changed = json.loads(answer.content())
+    changed["status"] = "cancelled"
+    changed_content = json.dumps(changed, sort_keys=True, separators=(",", ":")).encode()
+    conflicting = _signed_source_request(
+        secret, content=changed_content, observed_at=request.observed_at
+    )
+    with pytest.raises(ContractViolation) as caught:
+        ingress().ingest(conflicting, scope=scope, now=NOW)
+    assert caught.value.code is ErrorCode.CONFLICT

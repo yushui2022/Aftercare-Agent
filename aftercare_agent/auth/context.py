@@ -84,6 +84,8 @@ def synthetic_context(*, enabled: bool, tenant_id: str, subject_id: str) -> Auth
                 "case:read",
                 "review:read",
                 "review:decide",
+                "review:override",
+                "strategy:migrate",
                 "approval:read",
                 "approval:decide",
                 # Grant administration is a tenant-level operator scope, so the

@@ -1,0 +1,56 @@
+name: 缺陷报告
+description: 报告可以稳定复现的行为错误或安全边界回归
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认这不是安全漏洞。可利用的安全问题不要公开填写，按 [SECURITY.md](https://github.com/yushui2022/Aftercare-Agent/blob/main/SECURITY.md) 的私密渠道报告。
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      description: 填写发布版本、分支或完整提交 SHA。
+      placeholder: 0.1.0a0 / 0123456...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: Python、PostgreSQL、容器/编排平台和相关 profile。
+      placeholder: Windows 11, Python 3.13.15, PostgreSQL 17, local profile
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 提供最小的合成输入、命令和实际结果。请移除凭证、客户资料和完整对话。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期与实际行为
+      description: 分别说明应该发生什么、实际发生什么，以及是否影响证据门、租户边界或外部动作。
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: 已完成的验证
+      description: 填写运行过的测试或日志摘要；不要粘贴密钥、DSN 或客户数据。
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我使用的是合成或已获授权的数据。
+          required: true
+        - label: 我没有在 Issue 中放入凭证、个人信息或可利用的安全细节。
+          required: true
+        - label: 我阅读了 CONTRIBUTING.md，并区分了本机验证与目标环境验收。
+          required: true

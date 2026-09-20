@@ -203,6 +203,7 @@ def _function_call(
     expected = {
         "lookup_order": {"order_id"},
         "lookup_tracking": {"order_id"},
+        "lookup_buyer_message": set(),
         "request_material_draft": {"questions"},
     }.get(name)
     if expected is not None and set(arguments) - expected:

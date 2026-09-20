@@ -50,7 +50,7 @@ class OutboxPublisher:
         # Claim and commit before invoking a broker/client.  A crash after
         # publish but before ack is intentionally a duplicate-delivery case;
         # inbox/idempotency at the consumer is the correctness boundary.
-        with self.database.transaction() as connection:
+        with self.database.transaction(tenant_id=tenant_id, subject_id=owner) as connection:
             deliveries = self.events.claim_outbox(connection, tenant_id, owner, lease, limit=limit)
         acknowledged = 0
         retried = 0
@@ -68,13 +68,17 @@ class OutboxPublisher:
                     ):
                         publisher.publish(delivery.event)
             except Exception as exc:
-                with self.database.transaction() as connection:
+                with self.database.transaction(
+                    tenant_id=delivery.tenant_id, subject_id=owner
+                ) as connection:
                     self.events.retry_outbox(
                         connection, delivery, error=type(exc).__name__, delay=retry_delay
                     )
                 retried += 1
             else:
-                with self.database.transaction() as connection:
+                with self.database.transaction(
+                    tenant_id=delivery.tenant_id, subject_id=owner
+                ) as connection:
                     self.events.ack_outbox(connection, delivery)
                 acknowledged += 1
         return PublishResult(claimed=len(deliveries), acknowledged=acknowledged, retried=retried)

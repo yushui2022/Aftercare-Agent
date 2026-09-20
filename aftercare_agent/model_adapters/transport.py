@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from aftercare_agent.config import environment_secret
+
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-flash"
 
@@ -49,7 +51,14 @@ class ProviderEndpoint:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> ProviderEndpoint:
         source = os.environ if env is None else env
-        key = _first_present(source, _API_KEY_ENV)
+        key = next(
+            (
+                value.strip()
+                for name in _API_KEY_ENV
+                if (value := environment_secret(name, environ=source)) and value.strip()
+            ),
+            None,
+        )
         if key is None:
             raise ValueError("no provider key configured; set " + " or ".join(_API_KEY_ENV))
         base = _first_present(source, _BASE_URL_ENV) or DEFAULT_BASE_URL

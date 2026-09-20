@@ -7,13 +7,15 @@ Git revision; source-directory and wheel isolation are checked separately.
 import json
 from importlib.metadata import distribution
 from importlib.resources import as_file, files
+from pathlib import Path
 
 from evidence_gated_memory.schemas.builtin import AFTERCARE
 from evidence_gated_memory.schemas.loader import load_schema
 from evidence_gated_memory.storage.postgres import PostgresProvider
 
-EGM_COMMIT = "9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd"
+EGM_COMMIT = "5d1302e3eb799764c23d8a8e6872abf8547da4ee"
 EGM_REPOSITORY = "https://github.com/yushui2022/Evidence-Gated-Memory.git"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_aftercare_metadata_pins_reviewed_egm_with_postgres() -> None:
@@ -21,6 +23,11 @@ def test_aftercare_metadata_pins_reviewed_egm_with_postgres() -> None:
 
     assert installed.metadata["Name"] == "aftercare-agent"
     assert installed.version == "0.1.0a0"
+    assert installed.metadata["License-Expression"] == "MIT"
+    assert set(installed.metadata.get_all("License-File") or ()) == {
+        "LICENSE",
+        "THIRD_PARTY_NOTICES.md",
+    }
     requirements = {item.replace(" ", "") for item in installed.requires or []}
     expected = f"evidence-gated-memory[postgres]@git+{EGM_REPOSITORY}@{EGM_COMMIT}"
     assert expected in requirements
@@ -82,6 +89,13 @@ def test_aftercare_postgres_migration_is_packaged() -> None:
     approvals = migrations.joinpath("010_approvals.sql")
     approval_wait = migrations.joinpath("011_approval_wait_binding.sql")
     projection = migrations.joinpath("005_projection.sql")
+    investigation_egm = migrations.joinpath("017_investigation_egm_bindings.sql")
+    buyer_cursors = migrations.joinpath("018_investigation_buyer_cursors.sql")
+    egm_projections = migrations.joinpath("019_investigation_egm_projections.sql")
+    egm_revocations = migrations.joinpath("020_investigation_egm_revocations.sql")
+    review_overrides = migrations.joinpath("021_review_overrides.sql")
+    strategy_migrations = migrations.joinpath("022_strategy_migrations.sql")
+    tenant_rls = migrations.joinpath("023_tenant_rls.sql")
     assert events.is_file() and "aftercare_outbox" in events.read_text(encoding="utf-8")
     assert waits.is_file() and "aftercare_wait_wakeups" in waits.read_text(encoding="utf-8")
     assert delivery.is_file() and "delivery_attempts" in delivery.read_text(encoding="utf-8")
@@ -93,3 +107,48 @@ def test_aftercare_postgres_migration_is_packaged() -> None:
     assert projection.is_file() and "aftercare_projection_positions" in projection.read_text(
         encoding="utf-8"
     )
+    assert investigation_egm.is_file()
+    assert "aftercare_investigation_egm_bindings" in investigation_egm.read_text(encoding="utf-8")
+    assert buyer_cursors.is_file()
+    assert "aftercare_investigation_buyer_cursors" in buyer_cursors.read_text(encoding="utf-8")
+    assert egm_projections.is_file()
+    assert "aftercare_investigation_egm_projections" in egm_projections.read_text(encoding="utf-8")
+    assert egm_revocations.is_file()
+    assert "aftercare_investigation_egm_revocations" in egm_revocations.read_text(encoding="utf-8")
+    assert review_overrides.is_file()
+    assert "aftercare_review_overrides" in review_overrides.read_text(encoding="utf-8")
+    assert strategy_migrations.is_file()
+    assert tenant_rls.is_file()
+    assert "aftercare_tenant_context" in tenant_rls.read_text(encoding="utf-8")
+    assert "aftercare_strategy_migrations" in strategy_migrations.read_text(encoding="utf-8")
+
+
+def test_installed_investigation_schema_is_packaged() -> None:
+    resource = files("aftercare_agent.investigation.schemas").joinpath("investigation.yaml")
+    assert resource.is_file()
+    schema = resource.read_text(encoding="utf-8")
+    assert "name: aftercare_investigation" in schema
+    assert "order_record" in schema
+    assert "logistics_observation" in schema
+    assert "buyer_statement" in schema
+
+
+def test_open_source_release_files_are_present_and_safe() -> None:
+    for name in (
+        "LICENSE",
+        "SECURITY.md",
+        "THIRD_PARTY_NOTICES.md",
+        "CONTRIBUTING.md",
+        "CHANGELOG.md",
+        ".env.example",
+        ".dockerignore",
+    ):
+        assert (REPOSITORY_ROOT / name).is_file(), name
+
+    env_example = (REPOSITORY_ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "AFTERCARE_MODEL_API_KEY=" in env_example
+    assert "sk-" not in env_example
+
+    dockerignore = (REPOSITORY_ROOT / ".dockerignore").read_text(encoding="utf-8")
+    assert ".env" in dockerignore
+    assert "!.env.example" in dockerignore

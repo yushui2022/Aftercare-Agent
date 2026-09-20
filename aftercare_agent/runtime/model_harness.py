@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Literal, Protocol, runtime_checkable
 
 from aftercare_agent.domain.common import ContractViolation, ErrorCode, RunScope, utc
+from aftercare_agent.domain.investigation import parse_investigation_proposal
 from aftercare_agent.domain.protocol import (
     ArtifactReference,
     Checkpoint,
@@ -38,11 +39,16 @@ from aftercare_agent.model_adapters.responses import (
     ToolSpec,
     normalize_error,
 )
+from aftercare_agent.model_adapters.strategy import DEFAULT_STRATEGY_ID
 from aftercare_agent.model_adapters.transport import ProviderError
 
 from .harness import HarnessResult
 
+type BeforeRun = Callable[[RunScope], None]
+
 MODEL_HARNESS_DEFINITION = "model-v1"
+DEFAULT_POLICY_VERSION = "policy-v1"
+DEFAULT_TOOL_SCHEMA_VERSION = "tools-v1"
 
 type InputRenderer = Callable[[Checkpoint], ResponsesInput]
 
@@ -77,6 +83,9 @@ def _initial_checkpoint(
     now: datetime,
     limits: HarnessLimits,
     model_config_version: str,
+    strategy_id: str = DEFAULT_STRATEGY_ID,
+    policy_version: str = DEFAULT_POLICY_VERSION,
+    tool_schema_version: str = DEFAULT_TOOL_SCHEMA_VERSION,
 ) -> Checkpoint:
     return Checkpoint(
         tenant_id=tenant_id,
@@ -87,8 +96,9 @@ def _initial_checkpoint(
         case_version=1,
         saved_fencing_token=1,
         definition_version=MODEL_HARNESS_DEFINITION,
-        policy_version="policy-v1",
-        tool_schema_version="tools-v1",
+        policy_version=policy_version,
+        tool_schema_version=tool_schema_version,
+        strategy_id=strategy_id,
         model_config_version=model_config_version,
         protocol_version="runtime-v1",
         remaining_budget=RemainingBudget(
@@ -144,6 +154,7 @@ def _route(
             "next_step": next_step,
             "route_reason": reason,
             "pending_tool": None,
+            "pending_proposal_json": None,
             "available_at": available_at,
         }
     )
@@ -166,8 +177,24 @@ def _model_step(
     if budget.model_calls < 1:
         return _route(current, next_step="review", reason="model_budget_exhausted", budget=budget)
     try:
+        rendered_input = render_input(current)
+    except ContractViolation as error:
+        if error.code in {
+            ErrorCode.RETRYABLE,
+            ErrorCode.RATE_LIMITED,
+            ErrorCode.OUTCOME_UNKNOWN,
+        }:
+            return _route(
+                current,
+                next_step="retry",
+                reason="input_rejected",
+                budget=budget,
+                available_at=utc(now) + retry_backoff,
+            )
+        return _route(current, next_step="review", reason="input_rejected", budget=budget)
+    try:
         response = adapter.complete(
-            ResponsesRequest(model=model, input=render_input(current), tools=tools)
+            ResponsesRequest(model=model, input=rendered_input, tools=tools)
         )
     except (ProviderError, ContractViolation) as exc:
         charged = _spent_one_call(budget)
@@ -231,12 +258,17 @@ def _model_step(
         )
     if not response.text:
         return _route(current, next_step="review", reason="empty_turn", budget=charged)
+    try:
+        proposal = parse_investigation_proposal(response.text)
+    except ContractViolation:
+        return _route(current, next_step="review", reason="proposal_rejected", budget=charged)
     return current.model_copy(
         update={
             "checkpoint_version": current.checkpoint_version + 1,
             "remaining_budget": charged,
-            "next_step": "complete",
+            "next_step": "evaluate",
             "route_reason": None,
+            "pending_proposal_json": proposal.model_dump_json(),
             "available_at": None,
         }
     )
@@ -305,31 +337,54 @@ def run_model_harness(
     max_steps: int = 8,
     adapter: ResponsesAdapter,
     model: str,
+    model_config_version: str | None = None,
+    strategy_id: str = DEFAULT_STRATEGY_ID,
+    policy_version: str = DEFAULT_POLICY_VERSION,
+    tool_schema_version: str = DEFAULT_TOOL_SCHEMA_VERSION,
     tools: tuple[ToolSpec, ...],
     limits: HarnessLimits,
     executor: ToolExecutor,
     render_input: InputRenderer,
     pricing: ModelPricing,
+    before_run: BeforeRun | None = None,
 ) -> HarnessResult:
-    """Advance a model-driven plan by at most ``max_steps`` bounded phases.
+    """Advance a model-driven plan to the next durable external-call boundary.
 
-    Returns on ``max_steps`` as well as on completion so the caller can give
-    the lease back; the returned checkpoint is always resumable, including the
-    exact tool that was pending when the slice ran out of steps.
+    ``max_steps`` remains a hard upper bound, but a real model or tool call
+    always ends the slice.  The Worker must fence and save the resulting
+    checkpoint before another external phase starts.  This prevents a process
+    crash after a paid model turn from silently buying that turn again, and it
+    prevents a completed connector answer from existing only in process
+    memory while the next provider call is already in flight.
     """
 
     if max_steps < 1:
         raise ContractViolation(ErrorCode.INVALID_INPUT, "max_steps must be positive")
+    resolved_model_config_version = model_config_version or model
     current = checkpoint or _initial_checkpoint(
         tenant_id=tenant_id,
         case_id=case_id,
         run_id=run_id,
         now=now,
         limits=limits,
-        model_config_version=model,
+        model_config_version=resolved_model_config_version,
+        strategy_id=strategy_id,
+        policy_version=policy_version,
+        tool_schema_version=tool_schema_version,
     )
     if (current.tenant_id, current.case_id, current.run_id) != (tenant_id, case_id, run_id):
         raise ContractViolation(ErrorCode.FORBIDDEN, "checkpoint scope mismatch")
+    if checkpoint is not None and (
+        current.strategy_id != strategy_id
+        or current.model_config_version != resolved_model_config_version
+    ):
+        routed = _route(
+            current,
+            next_step="review",
+            reason="model_strategy_changed",
+            budget=current.remaining_budget,
+        )
+        return HarnessResult(routed, len(routed.tool_results), False)
     if current.next_step in ("review", "retry"):
         # Resuming a routed checkpoint means the host made it runnable again: a
         # REVIEW Run has no queue row, and a RETRY_AT Run waits for its
@@ -339,6 +394,30 @@ def run_model_harness(
         current = current.model_copy(
             update={"next_step": "model", "route_reason": None, "available_at": None}
         )
+    if before_run is not None:
+        try:
+            before_run(RunScope(tenant_id=tenant_id, case_id=case_id, run_id=run_id))
+        except ContractViolation as error:
+            if error.code in {
+                ErrorCode.RETRYABLE,
+                ErrorCode.RATE_LIMITED,
+                ErrorCode.OUTCOME_UNKNOWN,
+            }:
+                routed = _route(
+                    current,
+                    next_step="retry",
+                    reason="executor_rejected",
+                    budget=current.remaining_budget,
+                    available_at=utc(now) + limits.retry_backoff,
+                )
+            else:
+                routed = _route(
+                    current,
+                    next_step="review",
+                    reason="executor_rejected",
+                    budget=current.remaining_budget,
+                )
+            return HarnessResult(routed, len(routed.tool_results), False)
     allowed_tools = frozenset(tool.name for tool in tools)
     for _ in range(max_steps):
         if current.next_step == "complete":
@@ -358,17 +437,30 @@ def run_model_harness(
                 now=now,
                 retry_backoff=limits.retry_backoff,
             )
-            continue
+            break
         if current.next_step == "tool":
             current = _tool_step(current, executor=executor, allowed_tools=allowed_tools, now=now)
-            continue
+            break
         if current.next_step == "evaluate":
-            current = current.model_copy(
-                update={
-                    "checkpoint_version": current.checkpoint_version + 1,
-                    "next_step": "complete",
-                }
-            )
-            continue
+            payload = current.pending_proposal_json
+            if payload is None:
+                current = _route(
+                    current,
+                    next_step="review",
+                    reason="proposal_rejected",
+                    budget=current.remaining_budget,
+                )
+                break
+            try:
+                proposal = parse_investigation_proposal(payload)
+            except ContractViolation:
+                current = _route(
+                    current,
+                    next_step="review",
+                    reason="proposal_rejected",
+                    budget=current.remaining_budget,
+                )
+                break
+            return HarnessResult(current, len(current.tool_results), False, proposal)
         raise ContractViolation(ErrorCode.CONFLICT, "model harness cannot resume this step")
     return HarnessResult(current, len(current.tool_results), current.next_step == "complete")

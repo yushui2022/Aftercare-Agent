@@ -35,6 +35,7 @@ aftercare-backup retention --directory <dir> [--keep-last N] [--keep-daily N] [-
 aftercare-backup reconcile --dsn <url> (--recovery-point <iso> | --directory <dir>)
 aftercare-backup status    --directory <dir> [--rpo-seconds N] [--drill-interval-seconds N]
 aftercare-backup wal       --archive-dir <dir> [--dsn <url>] [--directory <dir>]
+aftercare-backup pitr      --base-manifest <base.manifest.json> --evidence <pitr-run.json> [--json <verified.json>]
 ```
 
 DSN 缺省取 `DATABASE_URL`。退出码：`0` 通过、`1` 检查未通过、`2` 缺参数或环境不允许
@@ -158,7 +159,36 @@ aftercare-backup wal --archive-dir <dir> [--dsn <url>] [--directory <dir>] [--na
 0 * * * * /usr/local/bin/aftercare-backup create --directory /srv/backups >>/var/log/aftercare-backup.log 2>&1 && /usr/local/bin/aftercare-backup drill --directory /srv/backups --upgrade >>/var/log/aftercare-backup.log 2>&1 && /usr/local/bin/aftercare-backup status --directory /srv/backups --rpo-seconds 86400 --drill-interval-seconds 604800 >>/var/log/aftercare-backup.log 2>&1 && /usr/local/bin/aftercare-backup wal --archive-dir /srv/pgwal --dsn "$DATABASE_URL" --directory /srv/backups --archive-lag-seconds 900 >>/var/log/aftercare-backup.log 2>&1
 ```
 
-## 8. 恢复点之后的外部动作核对
+## 8. 时间点恢复（PITR）证据
+
+`wal` 只证明归档具备前滚的前置条件；它不会启动另一个 PostgreSQL，也不会声称业务状态已经在目标时刻恢复。真正的 PITR 由目标平台的恢复器执行，执行完后把固定格式的报告交给下面的校验器：
+
+仓库附带一个可复现的本机 Docker profile，用于把这条链路跑通并生成同一格式的证据：
+
+```powershell
+python deploy/pitr_docker_drill.py `
+  --output G:\DevCache\Temp\aftercare-pitr-drill-<run-id>
+```
+
+它使用 `postgres:17`，启动一个开启 `archive_mode` 的主实例，执行物理 `pg_basebackup`，
+在基线之后写入合成探针和 Action，再启动第二个实例按目标时间恢复。成功输出目录包含
+`base\base.tar`、`base\base.manifest.json`、`pitr-run.json` 和 `pitr-verified.json`；该 profile
+中的业务核对是本地合成表，目的是验证恢复器和证据绑定，生产部署必须替换成真实业务不变量与
+Action 对账查询。脚本会在结束时删除容器，保留输出文件；它不上传对象存储、不切换流量，也不
+代表任何生产 RPO/RTO。
+
+```powershell
+aftercare-backup pitr \
+  --base-manifest <base.manifest.json> \
+  --evidence <pitr-run.json> \
+  --json <pitr-verified.json>
+```
+
+校验器把报告绑定到物理 `pg_basebackup` 清单的名称、归档文件 SHA-256、字节数和 WAL 起止位置。逻辑 `pg_dump` 清单仍用于常规备份演练，但不能冒充 PITR 的基线。校验器拒绝恢复目标不晚于物理基线完成时间、恢复 LSN 没有越过基线停止位置、混用另一份物理备份或不完整的检查集。报告必须包含以下五项，并为每个 `pass` 附外部证据引用：`base_backup`、`wal_archive`、`target_reached`、`application_state`、`action_reconciliation`。任何 `not_run` 或 `fail` 都得到 `hold`；缺字段、时间倒退或绑定不一致直接退出 2。
+
+报告中的 `application_state` 应引用恢复后针对业务不变量的查询或核对结果，不能只引用 PostgreSQL 进程“启动成功”；`action_reconciliation` 应引用恢复点之后的 `UNKNOWN`/变更 Action 核对。校验器保存输入报告的 SHA-256，便于把平台日志、恢复目标、RTO 和审计记录归档到同一次演练。它只校验证据，不实现 `pg_basebackup`、`restore_command` 或云厂商对象存储；目标环境仍须提供并实际运行这些步骤。
+
+## 9. 恢复点之后的外部动作核对
 
 ```powershell
 aftercare-backup reconcile --directory <dir> --json review.json
@@ -169,7 +199,7 @@ Action** 与供应商核对，不能换幂等键重发），以及 `updated_at` 
 点再提前 60 s（`--safety-margin-seconds`），把与 dump 赛跑的那个提交留在清单里。工具不调用
 供应商、不解析回执、不自动改状态；`--fail-on-open` 让清单非空时退出码为 1，可用于发布门禁。
 
-## 9. 保留删除
+## 10. 保留删除
 
 ```powershell
 aftercare-backup retention --directory <dir> --keep-last 7 --keep-daily 30   # 先看计划
@@ -180,7 +210,7 @@ aftercare-backup retention --directory <dir> --keep-last 7 --keep-daily 30 --app
 其余删除。任何会删空的计划都被拒绝，名字必须匹配受限模式（防止把删除引到目录外）。先看
 计划再 `--apply`，不要直接自动化执行未经阅读的计划。
 
-## 10. 本机实测（2026-09-15）
+## 11. 本机实测（2026-09-15）
 
 Windows 11 / 临时 PostgreSQL 16.13 / CPython 3.13.15 / 客户端 16.13，数据库含整套回归
 留下的合成数据：dump 111,950 字节、31 张 `aftercare_` 表、schema 迁移 16。
@@ -197,11 +227,11 @@ restore drill aftercare-20260915T120729Z: ok
 [`2026-09-15-restore-drill.json`](2026-09-15-restore-drill.json)。这些数字只说明方法与口径，
 不是 SLA。
 
-## 11. 尚未覆盖
+## 12. 尚未覆盖
 
-按时间点恢复（PITR）**演练本身**、对象存储/异地副本、备份加密与密钥托管、按部署目标给出的
+按时间点恢复（PITR）**执行器和真实演练**、对象存储/异地副本、备份加密与密钥托管、按部署目标给出的
 RPO/RTO **数值**、多租户级选择性恢复、恢复过程中的流量切换脚本，以及演练失败后的自动升级
 路径。归档是否连续、归档器是否在推进、归档是否覆盖最新 dump 已经可以判定（见第 7 节），
-新鲜度与演练间隔同样可以判定（见第 6 节），但**两个都还没有数值**：`--rpo-seconds`、
+新鲜度与演练间隔同样可以判定（见第 6 节），PITR 证据的绑定和完整性可以判定（见第 8 节），但**两个都还没有数值**：`--rpo-seconds`、
 `--drill-interval-seconds` 与 `--archive-lag-seconds` 都没有默认值，必须由部署给出。调度接线
 只在文档里给出，没有在目标环境执行过。

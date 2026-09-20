@@ -1,9 +1,12 @@
 """Read-only business connectors over deployment-imported, tenant-scoped exports."""
 
 from .commerce import (
+    BUYER_FACTS_SCHEMA,
+    MAX_BUYER_MESSAGE_PAGE_SIZE,
     MAX_TRACKING_EVENTS,
     ORDER_FACTS_SCHEMA,
     TRACKING_FACTS_SCHEMA,
+    BuyerMessagePage,
     CommerceConnector,
     CommerceSources,
     ConnectorAnswer,
@@ -19,21 +22,44 @@ from .dataset import (
     TrackingEvent,
     load_commerce_dataset,
 )
+from .source_auth import (
+    HmacSourceCredential,
+    HmacSourceEventVerifier,
+    SignedSourceRequest,
+    SourceEventVerifier,
+    SourceIdentity,
+    VerifiedSourceEvent,
+    build_signed_source_request,
+    canonical_source_json,
+    sign_source_request,
+)
 
 __all__ = [
     "BuyerMessage",
+    "BUYER_FACTS_SCHEMA",
+    "BuyerMessagePage",
     "CommerceConnector",
     "CommerceDataset",
     "CommerceSources",
     "ConnectorAnswer",
+    "HmacSourceCredential",
+    "HmacSourceEventVerifier",
     "LineItem",
     "MAX_TRACKING_EVENTS",
+    "MAX_BUYER_MESSAGE_PAGE_SIZE",
     "Money",
     "ORDER_FACTS_SCHEMA",
     "Order",
     "Payment",
     "Shipment",
+    "SignedSourceRequest",
+    "SourceEventVerifier",
+    "SourceIdentity",
     "TRACKING_FACTS_SCHEMA",
     "TrackingEvent",
+    "VerifiedSourceEvent",
+    "build_signed_source_request",
+    "canonical_source_json",
     "load_commerce_dataset",
+    "sign_source_request",
 ]

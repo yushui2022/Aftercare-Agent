@@ -1,0 +1,6 @@
+title = "Aftercare Agent secret scanning"
+
+[[allowlists]]
+description = "Synthetic idempotency keys used only by the operator API contract test"
+paths = ['''^tests/test_operator_api_integration\.py$''']
+regexes = ['''approval-decision-[0-9]+''']

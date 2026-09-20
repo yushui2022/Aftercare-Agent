@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题
+    url: https://github.com/yushui2022/Aftercare-Agent/security/advisories/new
+    about: 请使用私密安全报告，不要在公开 Issue 中描述可利用细节。
+  - name: 使用与设计讨论
+    url: https://github.com/yushui2022/Aftercare-Agent/discussions
+    about: 适合讨论使用方式、设计取舍和尚未形成缺陷报告的问题。

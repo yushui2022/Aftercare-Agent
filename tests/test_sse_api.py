@@ -28,8 +28,10 @@ class _PollRecordingDatabase(Database):
         self.backends: list[int] = []
 
     @contextmanager
-    def transaction(self) -> Iterator[psycopg.Connection[Any]]:
-        with super().transaction() as connection:
+    def transaction(
+        self, *, tenant_id: str | None = None, subject_id: str | None = None
+    ) -> Iterator[psycopg.Connection[Any]]:
+        with super().transaction(tenant_id=tenant_id, subject_id=subject_id) as connection:
             row = connection.execute("SELECT pg_backend_pid()").fetchone()
             assert row is not None
             self.backends.append(int(row[0]))

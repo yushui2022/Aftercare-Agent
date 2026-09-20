@@ -7,15 +7,24 @@ name = "aftercare-agent"
 version = "0.1.0a0"
 description = "Trusted evidence integration for a planned durable after-sales agent."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.13.15,<3.14"
 dependencies = [
-    "evidence-gated-memory[postgres] @ git+https://github.com/yushui2022/Evidence-Gated-Memory.git@9c7c5d196f8e703fdc7c70546cff0dc94cc78dcd",
+    "evidence-gated-memory[postgres] @ git+https://github.com/yushui2022/Evidence-Gated-Memory.git@5d1302e3eb799764c23d8a8e6872abf8547da4ee",
     "pydantic>=2,<3",
     "psycopg[binary,pool]>=3.3,<4",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
     "PyJWT[crypto]>=2.10,<3",
     "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+observability = [
+    "opentelemetry-api>=1.30,<2",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.30,<2",
+    "opentelemetry-sdk>=1.30,<2",
 ]
 
 [project.urls]
@@ -25,11 +34,16 @@ Repository = "https://github.com/yushui2022/Aftercare-Agent"
 aftercare-backup = "aftercare_agent.ops.backup:main"
 aftercare-capacity = "aftercare_agent.capacity:main"
 aftercare-demo = "aftercare_agent.demo:main"
+aftercare-api = "aftercare_agent.api.cli:main"
+aftercare-migrate = "aftercare_agent.persistence.migrate_cli:main"
+aftercare-rls = "aftercare_agent.persistence.rls:main"
 aftercare-worker = "aftercare_agent.runtime.worker_cli:main"
 
 [dependency-groups]
 dev = [
     "mypy>=1.19,<2",
+    "pyyaml>=6,<7",
+    "types-PyYAML>=6,<7",
     "pytest>=9,<10",
     "pytest-asyncio>=1,<2",
     "ruff>=0.14,<1",
@@ -40,7 +54,7 @@ include = ["aftercare_agent*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-aftercare_agent = ["py.typed", "persistence/migrations/*.sql", "connectors/data/*.json"]
+aftercare_agent = ["py.typed", "persistence/migrations/*.sql", "connectors/data/*.json", "investigation/schemas/*.yaml"]
 
 [tool.uv]
 required-version = ">=0.9.26"

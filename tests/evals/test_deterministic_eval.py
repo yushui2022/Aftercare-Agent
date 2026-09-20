@@ -8,7 +8,7 @@ from evals.runner import evaluate_all, evaluate_case, result_digest
 
 def test_all_synthetic_cases_match_v1_expectations() -> None:
     results = evaluate_all()
-    assert len(results) == 12
+    assert len(results) == 14
     assert all(result.passed for result in results)
 
 

@@ -62,5 +62,8 @@ ADR-0006 做了两件事：把连接池启用起来，并把 `min 1 / max 8 / �
   要看相对值，不要拿绝对毫秒当跨环境常数。
 - 只在**一台开发机**上测过。生产、CI、容器内的容量结论仍然未定；这份数字的用途是固定方法与口径，
   不是宣布一个 SLA。
-- 仍未完成：OTel 导出器/采样/留存（C-03）、面向业务的队列年龄（Run 队列等待时间）指标、
-  在容器与 CI 环境复跑同一条 sweep。
+- 已补齐 Worker 的业务队列诊断：`aftercare.queue.runnable_runs` 与
+  `aftercare.queue.oldest_age_seconds` 使用短事务只读快照，唯一标签仍是
+  `component`，不会领取任务或改变租约；`AFTERCARE_QUEUE_METRICS=0` 可关闭。
+- 仍未完成：OTel 导出器/采样/留存（C-03）、在容器与 CI 环境复跑同一条 sweep，以及目标
+  环境的队列年龄告警阈值与容量结论。

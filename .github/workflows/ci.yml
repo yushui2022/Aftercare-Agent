@@ -262,12 +262,12 @@ jobs:
             --tag aftercare-agent:ci .
       - name: Verify runtime identity, migration entry point and packaged source ingress
         run: |
-          test "$(docker inspect --format '{{index .Config.Labels \"org.opencontainers.image.source\"}}' aftercare-agent:ci)" = "https://github.com/yushui2022/Aftercare-Agent"
-          test "$(docker inspect --format '{{index .Config.Labels \"org.opencontainers.image.licenses\"}}' aftercare-agent:ci)" = "MIT"
-          test "$(docker inspect --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}' aftercare-agent:ci)" = "$GITHUB_SHA"
-          test "$(docker inspect --format '{{index .Config.Labels \"io.aftercare.egm.git-sha\"}}' aftercare-agent:ci)" = "${{ steps.image-metadata.outputs.egm }}"
-          test "$(docker inspect --format '{{index .Config.Labels \"io.aftercare.schema.aftercare-migration\"}}' aftercare-agent:ci)" = "${{ steps.image-metadata.outputs.migration }}"
-          test "$(docker inspect --format '{{index .Config.Labels \"io.aftercare.schema.egm\"}}' aftercare-agent:ci)" = "1"
+          test "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' aftercare-agent:ci)" = "https://github.com/yushui2022/Aftercare-Agent"
+          test "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.licenses"}}' aftercare-agent:ci)" = "MIT"
+          test "$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' aftercare-agent:ci)" = "$GITHUB_SHA"
+          test "$(docker inspect --format '{{index .Config.Labels "io.aftercare.egm.git-sha"}}' aftercare-agent:ci)" = "${{ steps.image-metadata.outputs.egm }}"
+          test "$(docker inspect --format '{{index .Config.Labels "io.aftercare.schema.aftercare-migration"}}' aftercare-agent:ci)" = "${{ steps.image-metadata.outputs.migration }}"
+          test "$(docker inspect --format '{{index .Config.Labels "io.aftercare.schema.egm"}}' aftercare-agent:ci)" = "1"
           docker run --rm --entrypoint python aftercare-agent:ci -c \
             "import os; import aftercare_agent.connectors.source_auth; import aftercare_agent.investigation.source_ingress; assert os.getuid() == 10001"
           test "$(docker inspect --format '{{json .Config.Cmd}}' aftercare-agent:ci)" = '["aftercare-api"]'

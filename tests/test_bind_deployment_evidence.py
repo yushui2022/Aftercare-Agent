@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -105,9 +105,8 @@ def test_preflight_binding_rejects_a_different_image() -> None:
 
 def test_preflight_binding_rejects_weak_database_tls() -> None:
     evidence = _preflight()
-    next(item for item in evidence["checks"] if item["name"] == "migration_database_url")[
-        "sslmode"
-    ] = "require"
+    checks = cast(list[dict[str, Any]], evidence["checks"])
+    next(item for item in checks if item["name"] == "migration_database_url")["sslmode"] = "require"
 
     with pytest.raises(ValueError, match="not verified for the accepted image"):
         bind_preflight(_record(), evidence, evidence_ref="preflight.json")

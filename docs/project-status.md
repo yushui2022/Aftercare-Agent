@@ -23,6 +23,10 @@
 - 2026-09-20 / P0-README-RELEASE-PRESENTATION（本机，未提交）：重写 README 的开源定位、证据门核心链、成熟度分层、三种运行配置、快速开始、真实部署路线、边界和文档导航；新增 `docs/assets/aftercare-evidence-gate.png` 作为架构配图。README 本地链接检查 **35 个通过**，Ruff 与 diff check 通过；不改变业务运行时或发布门禁。
 - 2026-09-21 / P0-ADAPTATION-GUIDE（本机，未提交）：新增 `docs/adapting-aftercare.md`，说明 Fork/基线、业务输入与识别、证据门、EGM、模型、Action Provider、真实部署替换项、常见风险、分层验收和发布检查表；README 顶部增加拉取改造入口，文档导航同步更新。全仓 Markdown **78 个文件、296 个本地链接，0 个断链**；Ruff、format 和 diff check 通过；未改变业务运行时。
 - 2026-09-21 / P0-README-ENTERPRISE-HOME（本机，未提交）：将 README 重做为企业级开源项目首页：加入居中 Hero、状态徽章、核心责任表、能力清单、成熟度、5 分钟开始、改造路径、三种 profile、部署路线、项目结构、文档入口和边界说明；保留当前 `v0.1-alpha` 与未生产验收事实。README 179 行，全仓 Markdown 链接检查 **290 个通过、0 个断链**，diff check 通过。
+- 2026-09-21 / P0-CI-IMAGE-AND-README-VISUAL（本机，未提交）：修正远程 CI 暴露的严格 mypy 测试类型错误，以及 Docker `inspect` Go 模板的错误转义；替换 README 主视觉为更克制的证据门架构插画 `docs/assets/aftercare-evidence-gate.png`。本机 mypy（189 个源文件）和相关 11 项回归通过；远程 runner 需在推送后复核。
+- 2026-09-21 / P0-README-VISUAL-CONTEXT（本机，未提交）：在同一主视觉中补足 Aftercare 的跨境电商业务语义：配送员、包裹/分拣线、全球航运路线、飞机与货轮元素作为证据输入流，保留中心证据门、人工复核与受控动作结构；未改变 README 引用路径或运行时行为。
+- 2026-09-21 / P0-README-SERVICE-CONTEXT（本机，未提交）：继续收紧主视觉右侧的信息密度，加入客服坐席、企业服务台、工单/会话卡片、团队协作与运营面板，让证据门输出明确连接到 Aftercare 的客服处理和企业治理；未改变 README 引用路径或运行时行为。
+- 2026-09-21 / P0-README-CORE-CONSOLE（本机，未提交）：重做主视觉中心与右下角输出区：用轻量玻璃证据中枢和悬浮证据节点替代厚重盾牌，用企业动作/审计控制台替代方块与大盾牌；保留客服与物流语义，未改变 README 引用路径或运行时行为。
 - 2026-09-20 / P0-RELEASE-DOC-AUDIT（本机，未提交）：扫描仓库内排除依赖缓存的 77 份 Markdown，本地相对链接 **0 个断开**；按 CI 同形状生成合成 deployment env，在本机直接运行 `deployment_preflight.py`，机器报告 `status=pass`、两个 DSN 均为 `sslmode=verify-full`。Windows 下 Secret mode 显示为 `0666`，符合代码约定：owner-only mode 只在 POSIX 控制机检查，Linux runner 仍会执行 `chmod 600` 路径。
 
 ## 2. 核验过的源码基线

@@ -21,6 +21,8 @@
 - 2026-09-20 / P0-DEPLOYMENT-PREFLIGHT-CI（本机，未提交）：CI 静态检查新增 Linux runner 合成 deployment env：生成两个 `0600` DSN Secret，均使用 `sslmode=verify-full`，替换不可变镜像与 tenant，占位 profile 后实际运行 `deploy/deployment_preflight.py`，并断言机器报告为 `pass` 且两个 DSN 的 TLS 摘要正确。workflow contract 定向回归与全量回归随后为 **3 passed**、**669 passed, 144 skipped, 2 warnings**；远程 runner 尚未实际执行。
 - 2026-09-20 / P0-ACCEPTANCE-TLS-EVIDENCE（本机，未提交）：deployment acceptance 与 release evidence binding 现在同时验证 migration/runtime 两条 preflight 数据库检查的 `sslmode=verify-full`，缺字段或弱 TLS 会在绑定阶段 fail closed；新增两条回归覆盖证据降级。定向发布/验收回归 **28 passed**，离线全量 **671 passed, 144 skipped, 2 warnings**；远程 runner 尚未实际执行。
 - 2026-09-20 / P0-README-RELEASE-PRESENTATION（本机，未提交）：重写 README 的开源定位、证据门核心链、成熟度分层、三种运行配置、快速开始、真实部署路线、边界和文档导航；新增 `docs/assets/aftercare-evidence-gate.png` 作为架构配图。README 本地链接检查 **35 个通过**，Ruff 与 diff check 通过；不改变业务运行时或发布门禁。
+- 2026-09-21 / P0-ADAPTATION-GUIDE（本机，未提交）：新增 `docs/adapting-aftercare.md`，说明 Fork/基线、业务输入与识别、证据门、EGM、模型、Action Provider、真实部署替换项、常见风险、分层验收和发布检查表；README 顶部增加拉取改造入口，文档导航同步更新。全仓 Markdown **78 个文件、296 个本地链接，0 个断链**；Ruff、format 和 diff check 通过；未改变业务运行时。
+- 2026-09-21 / P0-README-ENTERPRISE-HOME（本机，未提交）：将 README 重做为企业级开源项目首页：加入居中 Hero、状态徽章、核心责任表、能力清单、成熟度、5 分钟开始、改造路径、三种 profile、部署路线、项目结构、文档入口和边界说明；保留当前 `v0.1-alpha` 与未生产验收事实。README 179 行，全仓 Markdown 链接检查 **290 个通过、0 个断链**，diff check 通过。
 - 2026-09-20 / P0-RELEASE-DOC-AUDIT（本机，未提交）：扫描仓库内排除依赖缓存的 77 份 Markdown，本地相对链接 **0 个断开**；按 CI 同形状生成合成 deployment env，在本机直接运行 `deployment_preflight.py`，机器报告 `status=pass`、两个 DSN 均为 `sslmode=verify-full`。Windows 下 Secret mode 显示为 `0666`，符合代码约定：owner-only mode 只在 POSIX 控制机检查，Linux runner 仍会执行 `chmod 600` 路径。
 
 ## 2. 核验过的源码基线

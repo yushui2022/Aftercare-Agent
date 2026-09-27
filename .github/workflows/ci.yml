@@ -150,6 +150,11 @@ jobs:
           set -euo pipefail
           compose_file=deploy/compose/docker-compose.integration.yml
           mkdir -p "$AFTERCARE_INTEGRATION_EVIDENCE_DIR"
+          # The one-shot RLS containers run as image UID 10001.  GitHub's
+          # runner creates its temp directory with the runner UID, so make
+          # this disposable evidence mount writable without weakening the
+          # non-root runtime image or any production volume permissions.
+          chmod 777 "$AFTERCARE_INTEGRATION_EVIDENCE_DIR"
           trap 'docker compose -f "$compose_file" down -v' EXIT
           docker compose -f "$compose_file" up --build -d postgres migrate api
           # API and all one-shot checks are already started by `up`; avoid
@@ -284,7 +289,7 @@ jobs:
             --build-arg EGM_SCHEMA_VERSION=1 \
             --build-arg AFTERCARE_EXTRAS=observability \
             --tag aftercare-agent:otel-ci .
-          test "$(docker inspect --format '{{index .Config.Labels \"io.aftercare.build.extras\"}}' aftercare-agent:otel-ci)" = "observability"
+          test "$(docker inspect --format '{{index .Config.Labels "io.aftercare.build.extras"}}' aftercare-agent:otel-ci)" = "observability"
           docker run --rm --entrypoint python aftercare-agent:otel-ci -c \
             "import opentelemetry; import opentelemetry.sdk; import opentelemetry.exporter.otlp.proto.grpc"
       - name: Scan runtime image for high and critical vulnerabilities

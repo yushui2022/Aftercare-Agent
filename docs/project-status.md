@@ -27,6 +27,7 @@
 - 2026-09-21 / P0-README-VISUAL-CONTEXT（本机，未提交）：在同一主视觉中补足 Aftercare 的跨境电商业务语义：配送员、包裹/分拣线、全球航运路线、飞机与货轮元素作为证据输入流，保留中心证据门、人工复核与受控动作结构；未改变 README 引用路径或运行时行为。
 - 2026-09-21 / P0-README-SERVICE-CONTEXT（本机，未提交）：继续收紧主视觉右侧的信息密度，加入客服坐席、企业服务台、工单/会话卡片、团队协作与运营面板，让证据门输出明确连接到 Aftercare 的客服处理和企业治理；未改变 README 引用路径或运行时行为。
 - 2026-09-21 / P0-README-CORE-CONSOLE（本机，未提交）：重做主视觉中心与右下角输出区：用轻量玻璃证据中枢和悬浮证据节点替代厚重盾牌，用企业动作/审计控制台替代方块与大盾牌；保留客服与物流语义，未改变 README 引用路径或运行时行为。
+- 2026-09-27 / P0-REMOTE-CI-RECOVERY（本机，进行中）：修复远程 CI 最新运行暴露的 observability 镜像 `docker inspect` 模板转义问题，并复现 integration Compose 中 `force-rls` 退出码 2；目标是让 image/test/release-evidence 三条链重新可验证。验证与远程 runner 结果待本轮收尾。
 - 2026-09-20 / P0-RELEASE-DOC-AUDIT（本机，未提交）：扫描仓库内排除依赖缓存的 77 份 Markdown，本地相对链接 **0 个断开**；按 CI 同形状生成合成 deployment env，在本机直接运行 `deployment_preflight.py`，机器报告 `status=pass`、两个 DSN 均为 `sslmode=verify-full`。Windows 下 Secret mode 显示为 `0666`，符合代码约定：owner-only mode 只在 POSIX 控制机检查，Linux runner 仍会执行 `chmod 600` 路径。
 
 ## 2. 核验过的源码基线

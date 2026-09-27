@@ -182,7 +182,7 @@ def _prepare_postgres_mounts(docker: Docker, container: str) -> None:
 
 
 def _make_backup_host_readable(docker: Docker, container: str) -> None:
-    """Expose the tar/manifest created by postgres to the host verifier."""
+    """Expose the backup to the host-side manifest and restore verifier."""
 
     docker.run(
         [
@@ -192,7 +192,10 @@ def _make_backup_host_readable(docker: Docker, container: str) -> None:
             container,
             "sh",
             "-ec",
-            "chmod -R a+rX /var/lib/postgresql/base-out",
+            # The host process writes base.manifest.json beside the tar and
+            # extracts that tar into a second temporary directory.  Keep
+            # these permissions scoped to the disposable drill mount.
+            "chmod -R a+rwX /var/lib/postgresql/base-out",
         ]
     )
 

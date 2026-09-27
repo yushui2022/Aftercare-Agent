@@ -158,6 +158,45 @@ def _mount(path: Path, destination: str, *, read_only: bool = False) -> str:
     return f"type=bind,source={path.resolve()},destination={destination}{suffix}"
 
 
+def _prepare_postgres_mounts(docker: Docker, container: str) -> None:
+    """Make host bind mounts usable by the image's postgres UID.
+
+    GitHub-hosted Linux runners create the temporary output directory with the
+    runner UID, while the PostgreSQL process inside the container runs as
+    ``postgres``.  The drill is deliberately a disposable local/CI profile;
+    prepare only its two temporary mounts and keep the production image
+    non-root.
+    """
+
+    docker.run(
+        [
+            "exec",
+            "-u",
+            "0",
+            container,
+            "sh",
+            "-ec",
+            "chown postgres:postgres /var/lib/postgresql/archive /var/lib/postgresql/base-out",
+        ]
+    )
+
+
+def _make_backup_host_readable(docker: Docker, container: str) -> None:
+    """Expose the tar/manifest created by postgres to the host verifier."""
+
+    docker.run(
+        [
+            "exec",
+            "-u",
+            "0",
+            container,
+            "sh",
+            "-ec",
+            "chmod -R a+rX /var/lib/postgresql/base-out",
+        ]
+    )
+
+
 def run_drill(*, output: Path, image: str, keep_containers: bool, timeout: float) -> dict[str, Any]:
     if shutil.which("docker") is None:
         raise RuntimeError("docker is not available on PATH")
@@ -208,6 +247,7 @@ def run_drill(*, output: Path, image: str, keep_containers: bool, timeout: float
             ]
         )
         _wait_ready(docker, primary)
+        _prepare_postgres_mounts(docker, primary)
         _query(
             docker,
             primary,
@@ -233,6 +273,7 @@ def run_drill(*, output: Path, image: str, keep_containers: bool, timeout: float
                 "-P",
             ]
         )
+        _make_backup_host_readable(docker, primary)
         backup_finished = _utc_now()
         base_tar = base_dir / "base.tar"
         if not base_tar.is_file():
